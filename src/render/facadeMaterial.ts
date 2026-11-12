@@ -12,7 +12,12 @@ export const GROUND_FLOOR_H = 4;
 export const STOREY_H = 3.1;
 const BAY_W = 3.4;
 
-export function makeFacadeMaterial(atlas: THREE.Texture): THREE.MeshLambertMaterial {
+/**
+ * @param key unique program cache key per atlas
+ * @param perBuilding one bay variant for the whole building (curtain-wall
+ *   towers) instead of a random variant per bay (patchwork old blocks)
+ */
+export function makeFacadeMaterial(atlas: THREE.Texture, key = 'saddarFacade', perBuilding = false): THREE.MeshLambertMaterial {
   const mat = new THREE.MeshLambertMaterial({ map: atlas });
   mat.onBeforeCompile = (shader) => {
     shader.vertexShader = shader.vertexShader
@@ -61,7 +66,7 @@ export function makeFacadeMaterial(atlas: THREE.Texture): THREE.MeshLambertMater
             float bay = floor(vFacade.x / ${BAY_W.toFixed(2)});
             float u = fract(vFacade.x / ${BAY_W.toFixed(2)});
             float row = vFacade.y < ${GROUND_FLOOR_H.toFixed(1)} ? -1.0 : floor((vFacade.y - ${GROUND_FLOOR_H.toFixed(1)}) / ${STOREY_H.toFixed(2)});
-            float variant = floor(fHash(dot(vec3(bay, row, vSeed), vec3(1.37, 7.11, 0.731))) * 4.0);
+            float variant = floor(fHash(${perBuilding ? 'vSeed * 0.731 + 3.1' : 'dot(vec3(bay, row, vSeed), vec3(1.37, 7.11, 0.731))'}) * 4.0);
             vec2 uv;
             if (row < 0.0) {
               uv = vec2((variant + u) * 0.25, (vFacade.y / ${GROUND_FLOOR_H.toFixed(1)}) * 0.5);
@@ -79,6 +84,6 @@ export function makeFacadeMaterial(atlas: THREE.Texture): THREE.MeshLambertMater
       );
   };
   // Distinct program cache key so other Lambert materials aren't affected.
-  mat.customProgramCacheKey = () => 'saddarFacade';
+  mat.customProgramCacheKey = () => key;
   return mat;
 }

@@ -545,3 +545,173 @@ export function mazarFaceTexture(): THREE.Texture {
     return finish(c);
   });
 }
+
+// ---------------------------------------------------------------------------
+// Lyari settlements & Shahrah-e-Faisal towers (world-space atlases, same
+// layout as saddarFacadeAtlas: 4 variants across, top half = 3.1 m storey,
+// bottom half = 4 m ground floor).
+// ---------------------------------------------------------------------------
+
+/** Unplastered grey block / red brick riverbank housing. */
+export function settlementFacadeAtlas(): THREE.Texture {
+  return cached('settlementAtlas', () => {
+    const [c, ctx] = canvas(512, 256);
+    const rng = new Rng(91);
+    const WALLS = ['#a6a39c', '#a8553c', '#b9b2a2', '#97948d'];
+    for (let b = 0; b < 4; b++) {
+      const x0 = b * 128;
+      ctx.fillStyle = WALLS[b];
+      ctx.fillRect(x0, 0, 128, 256);
+      // Masonry coursing: blocks (big) or bricks (small).
+      const brick = b === 1;
+      const ch = brick ? 6 : 14, cw = brick ? 18 : 30;
+      if (b !== 2) {
+        ctx.fillStyle = brick ? 'rgba(235,215,190,0.35)' : 'rgba(60,58,54,0.28)';
+        for (let y = 0, r = 0; y < 256; y += ch, r++) {
+          ctx.fillRect(x0, y, 128, 1);
+          for (let x = (r % 2) * (cw / 2); x < 128; x += cw) ctx.fillRect(x0 + x, y, 1, ch);
+        }
+        for (let i = 0; i < 40; i++) {
+          ctx.fillStyle = `rgba(${brick ? '120,50,30' : '70,70,70'},${rng.range(0.08, 0.2)})`;
+          ctx.fillRect(x0 + rng.int(0, 120), rng.int(0, 250), cw - 2, ch - 1);
+        }
+      } else {
+        // Patchy plaster with damp stains.
+        for (let i = 0; i < 25; i++) {
+          ctx.fillStyle = `rgba(90,80,65,${rng.range(0.05, 0.14)})`;
+          ctx.fillRect(x0 + rng.int(0, 100), rng.int(0, 230), rng.int(10, 40), rng.int(10, 40));
+        }
+      }
+      // Concrete slab band between storeys.
+      ctx.fillStyle = '#8f8c86';
+      ctx.fillRect(x0, 118, 128, 10);
+      // Upper storey: small grilled window (+ AC or exhaust fan).
+      const wx = x0 + 30 + (b % 2) * 18, wy = 34;
+      ctx.fillStyle = '#25292b';
+      ctx.fillRect(wx, wy, 46, 48);
+      ctx.fillStyle = b === 3 ? '#3d6f8f' : '#6b6f72';
+      for (let x = wx + 4; x < wx + 46; x += 8) ctx.fillRect(x, wy, 2, 48);
+      ctx.fillRect(wx, wy + 22, 46, 2);
+      if (b === 0) {
+        ctx.fillStyle = '#d6d2c6';
+        ctx.fillRect(wx + 52, wy + 30, 30, 18);
+      }
+      // Rust / water streaks.
+      for (let k = 0; k < 4; k++) {
+        ctx.fillStyle = `rgba(70,50,35,${rng.range(0.1, 0.22)})`;
+        ctx.fillRect(wx + rng.int(0, 46), wy + 48, rng.int(2, 4), rng.int(12, 40));
+      }
+      // Ground floor: steel door / shutter / blue door / blank wall + vent.
+      const sy = 150;
+      if (b === 0) {
+        ctx.fillStyle = '#5d6a73';
+        ctx.fillRect(x0 + 12, sy, 104, 106);
+        ctx.fillStyle = 'rgba(0,0,0,0.25)';
+        for (let y = sy + 3; y < 256; y += 5) ctx.fillRect(x0 + 12, y, 104, 1);
+      } else if (b === 1 || b === 3) {
+        ctx.fillStyle = b === 1 ? '#2f6f8f' : '#6e7f3c';
+        ctx.fillRect(x0 + 40, sy + 10, 44, 96);
+        ctx.fillStyle = 'rgba(0,0,0,0.3)';
+        ctx.fillRect(x0 + 44, sy + 16, 16, 40);
+        ctx.fillRect(x0 + 64, sy + 16, 16, 40);
+      } else {
+        ctx.fillStyle = '#2b2b29';
+        ctx.fillRect(x0 + 70, sy + 20, 30, 24);
+      }
+      // Grime near the ground.
+      const g = ctx.createLinearGradient(0, 200, 0, 256);
+      g.addColorStop(0, 'rgba(60,50,40,0)');
+      g.addColorStop(1, 'rgba(60,50,40,0.35)');
+      ctx.fillStyle = g;
+      ctx.fillRect(x0, 200, 128, 56);
+    }
+    return finish(c);
+  });
+}
+
+/** Corporate glass / precast towers along Shahrah-e-Faisal. One style per building. */
+export function towerFacadeAtlas(): THREE.Texture {
+  return cached('towerAtlas', () => {
+    const [c, ctx] = canvas(512, 256);
+    const glass = (x: number, y: number, w: number, h: number, top: string, bot: string) => {
+      const g = ctx.createLinearGradient(0, y, 0, y + h);
+      g.addColorStop(0, top);
+      g.addColorStop(1, bot);
+      ctx.fillStyle = g;
+      ctx.fillRect(x, y, w, h);
+    };
+    for (let b = 0; b < 4; b++) {
+      const x0 = b * 128;
+      if (b === 0) {
+        // Blue-green curtain wall with thin mullions and a spandrel band.
+        glass(x0, 0, 128, 128, '#9cc3cf', '#3f6f80');
+        ctx.fillStyle = '#5b7f8c';
+        ctx.fillRect(x0, 104, 128, 24);
+        ctx.fillStyle = '#d7dee0';
+        for (let x = 0; x < 128; x += 32) ctx.fillRect(x0 + x, 0, 3, 128);
+        ctx.fillRect(x0, 102, 128, 3);
+      } else if (b === 1) {
+        // Precast concrete with a dark ribbon window.
+        ctx.fillStyle = '#e4ded2';
+        ctx.fillRect(x0, 0, 128, 128);
+        glass(x0, 22, 128, 64, '#7d93a0', '#2c3a44');
+        ctx.fillStyle = '#c9c2b4';
+        for (let x = 0; x < 128; x += 42) ctx.fillRect(x0 + x, 22, 4, 64);
+      } else if (b === 2) {
+        // Dark reflective glass grid.
+        glass(x0, 0, 128, 128, '#6f8da3', '#1f2c38');
+        ctx.fillStyle = '#9aa7b0';
+        for (let x = 0; x < 128; x += 64) ctx.fillRect(x0 + x, 0, 4, 128);
+        ctx.fillRect(x0, 124, 128, 4);
+        ctx.fillRect(x0, 60, 128, 2);
+      } else {
+        // Concrete grid with punched square windows.
+        ctx.fillStyle = '#d3cec4';
+        ctx.fillRect(x0, 0, 128, 128);
+        for (let x = 8; x < 128; x += 40) glass(x0 + x, 18, 30, 78, '#8aa1ad', '#34424c');
+        ctx.fillStyle = 'rgba(0,0,0,0.12)';
+        ctx.fillRect(x0, 120, 128, 8);
+      }
+      // Ground floor: lobby / showroom glazing under a canopy band.
+      ctx.fillStyle = b === 1 || b === 3 ? '#cfc8ba' : '#4d5e68';
+      ctx.fillRect(x0, 128, 128, 128);
+      ctx.fillStyle = '#e9e6de';
+      ctx.fillRect(x0, 128, 128, 22);
+      glass(x0 + 6, 156, 116, 100, '#a9bec8', '#3a4a52');
+      ctx.fillStyle = '#c8cdd0';
+      for (let x = 6; x < 128; x += 29) ctx.fillRect(x0 + x, 156, 3, 100);
+    }
+    return finish(c);
+  });
+}
+
+/** Rate-list board at the expressway toll plaza. */
+export function tollBoardTexture(): THREE.Texture {
+  return cached('tollBoard', () => {
+    const [c, ctx] = canvas(256, 320);
+    ctx.fillStyle = '#f4f6f8';
+    ctx.fillRect(0, 0, 256, 320);
+    ctx.fillStyle = '#123f8c';
+    ctx.fillRect(0, 0, 256, 64);
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 30px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('RATE LIST', 128, 44);
+    ctx.fillStyle = '#123f8c';
+    ctx.font = 'bold 22px sans-serif';
+    const rows = [['CAR / JEEP', '30'], ['HIACE', '50'], ['COASTER', '80'], ['TRUCK', '150']];
+    rows.forEach(([k, v], i) => {
+      const y = 104 + i * 44;
+      ctx.textAlign = 'left';
+      ctx.fillText(k, 18, y);
+      ctx.textAlign = 'right';
+      ctx.fillText(v, 238, y);
+      ctx.fillRect(14, y + 12, 228, 2);
+    });
+    ctx.fillStyle = '#c62828';
+    ctx.font = 'bold 18px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('HELPLINE 130', 128, 300);
+    return finish(c);
+  });
+}

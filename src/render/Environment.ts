@@ -9,12 +9,14 @@ import {
   asphaltTexture,
   billboardTexture,
   dirtTexture,
-  facadeTexture,
   kerbStripeTexture,
   saddarFacadeAtlas,
+  settlementFacadeAtlas,
   signTexture,
   stripesTexture,
+  towerFacadeAtlas,
 } from './textures';
+import { buildCorridors, FOOTBRIDGES, hasCrescentLight, inRiver, PLANTER_Z, RIVER_Z0, RIVER_Z1, riverFar, TOLL_Z } from './Corridors';
 import { makeFacadeMaterial, GROUND_FLOOR_H, STOREY_H } from './facadeMaterial';
 import { buildLandmarks, excluded, FLYOVERS } from './Landmarks';
 import { buildSaddar, FOOTPATH_W, SADDAR_END } from './Saddar';
@@ -52,6 +54,7 @@ export class Environment {
     this.buildHazards(hazards, factory);
     this.buildGantries();
     buildLandmarks(this.group, this.lowSpec);
+    buildCorridors(this.group, this.lowSpec);
   }
 
   // ---------------------------------------------------------------------------
@@ -104,28 +107,17 @@ export class Environment {
     shoulderMesh.receiveShadow = true;
     this.group.add(shoulderMesh);
 
-    // Kerbs, median walls, parapets.
-    const walls = new StripBuilder();
-    const kerbA = new THREE.Color('#e8e2d0');
-    const medianCol = new THREE.Color('#d4cfc4');
     const base: XFn = (z) => elevationAt(z);
     const kerbTop: XFn = (z) => elevationAt(z) + (ZONES[zoneIndexAt(z)].elevated || elevationAt(z) > 0.5 ? 1.05 : 0.3);
-    walls.wall(shoulderEdge, base, kerbTop, SADDAR_END, END_Z, kerbA, 1);
-    walls.wall((z) => shoulderEdge(z) - 0.3, base, kerbTop, SADDAR_END, END_Z, kerbA, -1);
-    walls.flat((z) => shoulderEdge(z) - 0.3, shoulderEdge, kerbTop, SADDAR_END, END_Z, () => kerbA, 1, 1);
-    // Median jersey barrier.
-    const mTop: XFn = (z) => elevationAt(z) + 0.85;
-    walls.wall((z) => right(z) + 0.05, base, mTop, SADDAR_END, END_Z, medianCol, -1);
-    walls.wall((z) => right(z) + 1.35, base, mTop, SADDAR_END, END_Z, medianCol, 1);
-    walls.flat((z) => right(z) + 0.05, (z) => right(z) + 1.35, mTop, SADDAR_END, END_Z, () => medianCol, 1, 1);
+    // Median: jersey barrier, dropping to a low planted kerb on Shahrah-e-Faisal.
+    const mTop: XFn = (z) => elevationAt(z) + 0.85 - 0.49 * Math.min(1, Math.max(0, (z - PLANTER_Z + 20) / 20));
     // Outer parapet on the far side of the opposite carriageway.
     const farEdge: XFn = (z) => right(z) + 1.4 + (right(z) - left(z));
-    walls.wall(farEdge, base, kerbTop, SADDAR_END, END_Z, kerbA, -1);
 
-    // Saddar: the same kerbs and median, painted black-and-yellow.
+    // Kerbs, jersey barriers and parapets: painted black-and-yellow throughout.
     const painted = new StripBuilder();
     const w = new THREE.Color('#ffffff');
-    const S0 = START_Z, S1 = SADDAR_END;
+    const S0 = START_Z, S1 = END_Z;
     painted.wall(shoulderEdge, base, kerbTop, S0, S1, w, 1, STRIPE_STEP, 0.5);
     painted.wall((z) => shoulderEdge(z) - 0.3, base, kerbTop, S0, S1, w, -1, STRIPE_STEP, 0.5);
     painted.flat((z) => shoulderEdge(z) - 0.3, shoulderEdge, kerbTop, S0, S1, () => w, 1, 0.5, STRIPE_STEP, true);
@@ -135,12 +127,8 @@ export class Environment {
     painted.wall(farEdge, base, kerbTop, S0, S1, w, -1, STRIPE_STEP, 0.5);
     const paintedMesh = new THREE.Mesh(painted.build(), new THREE.MeshLambertMaterial({ map: kerbStripeTexture(), side: THREE.DoubleSide }));
     paintedMesh.receiveShadow = true;
+    paintedMesh.castShadow = !this.lowSpec;
     this.group.add(paintedMesh);
-
-    const wallMesh = new THREE.Mesh(walls.build(), new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide }));
-    wallMesh.receiveShadow = true;
-    wallMesh.castShadow = !this.lowSpec;
-    this.group.add(wallMesh);
 
     // Lane markings (dashes) + edge lines.
     const marks = new StripBuilder();
@@ -228,14 +216,6 @@ export class Environment {
         this.group.add(m);
       }
     }
-    // Lyari river channel below the expressway (sluggish, greenish).
-    const river = new THREE.Mesh(
-      new THREE.PlaneGeometry(26, z1 - z0 - 200),
-      new THREE.MeshLambertMaterial({ color: '#56664a' }),
-    );
-    river.rotation.x = -Math.PI / 2;
-    river.position.set(-34, -0.03, -(z0 + z1) / 2);
-    this.group.add(river);
   }
 
   private buildScenery(): void {
@@ -245,13 +225,15 @@ export class Environment {
     // --- Buildings (instanced) --------------------------------------------
     const bGeo = new THREE.BoxGeometry(1, 1, 1);
     bGeo.translate(0, 0.5, 0);
-    const bMat = new THREE.MeshLambertMaterial({ map: facadeTexture() });
-    const buildings: { x: number; z: number; w: number; d: number; h: number; c: THREE.Color }[] = [];
+    type Block = { x: number; z: number; w: number; d: number; h: number; c: THREE.Color };
+    const settlements: Block[] = [];
+    const towers: Block[] = [];
     const saddar: (SaddarBuilding & { c: THREE.Color })[] = [];
     // Old Saddar: sun-bleached cream, yellow stone, faded pastels.
     const saddarPal = ['#efe4c8', '#e6d3a3', '#d9c49c', '#f2ead8', '#cfd8c4', '#e3c9bd', '#c9d5dc', '#e8d9b0', '#d6c2a0'];
-    const modernPal = ['#a9c0cf', '#d8dde2', '#8fa7b8', '#e9e1d4', '#c3b8a5'];
-    const lyariPal = ['#d8c8a8', '#c9b28c', '#bfae94', '#d6c3b0', '#b9a58a'];
+    // Atlases carry the base colours; tints just vary them.
+    const towerPal = ['#ffffff', '#eef3f6', '#e2ebf0', '#f4efe6', '#dfe4e8'];
+    const settlePal = ['#ffffff', '#f1ece4', '#e6e2da', '#f6efe6', '#d9d5cc'];
     for (const side of [-1, 1] as const) {
       let z = START_Z + 20;
       while (z < END_Z) {
@@ -272,43 +254,53 @@ export class Environment {
           z += w + (rng.chance(0.15) ? rng.range(3, 6) : rng.range(0, 0.6));
           continue;
         }
-        const w = rng.range(9, 22);
-        const d = rng.range(10, 18);
-        let h: number;
-        let gap: number;
-        let pal: string[];
         if (zone.elevated || zi === 0) {
-          // Low-rise settlements below the expressway.
-          h = rng.range(3, 9);
-          gap = rng.range(4, 18);
-          pal = lyariPal;
-        } else {
-          h = rng.range(10, 45);
-          gap = rng.range(8, 20);
-          pal = modernPal;
+          // Lyari: dense 1-4 storey block and brick housing packed up to the
+          // expressway; on the left it lines the far bank of the river.
+          const w = rng.range(5, 11);
+          const zc = z + w / 2;
+          const riverside = side < 0 && zc > RIVER_Z0 - 20 && zc < RIVER_Z1 + 10;
+          let x = riverside ? riverFar(zc) - 1.5 : edge + side * rng.range(3, 10);
+          for (let row = 0; row < 2; row++) {
+            const d = rng.range(7, 12);
+            const n = Number(rng.weighted({ 0: 2, 1: 4, 2: 3, 3: 1 } as Record<string, number>));
+            const bx = x + side * (d / 2);
+            if (!excluded(side, z, z + w) && !inRiver(bx, d / 2, z, z + w)) {
+              settlements.push({ x: bx, z: zc, w, d, h: GROUND_FLOOR_H + n * STOREY_H, c: new THREE.Color(rng.pick(settlePal)) });
+            }
+            x = bx + side * (d / 2 + rng.range(1.5, 4));
+          }
+          z += w + (rng.chance(0.2) ? rng.range(2, 6) : rng.range(0, 0.8));
+          continue;
         }
-        const setback = zone.elevated || zi === 0 ? rng.range(18, 50) : rng.range(14, 26);
-        const x = edge + side * (0.3 + setback + d / 2);
-        const river = zone.elevated && side < 0 && Math.abs(x + 34) < 18;
-        if (!river && !excluded(side, z, z + w)) {
-          buildings.push({ x, z: z + w / 2, w, d, h, c: new THREE.Color(rng.pick(pal)) });
+        // Shahrah-e-Faisal: 4-15 storey corporate glass and precast towers.
+        const w = rng.range(14, 26);
+        const d = rng.range(12, 20);
+        const n = Number(rng.weighted({ 3: 2, 5: 3, 7: 3, 9: 2, 12: 2, 15: 1 } as Record<string, number>));
+        const x = edge + side * (0.3 + rng.range(14, 26) + d / 2);
+        if (!excluded(side, z, z + w)) {
+          towers.push({ x, z: z + w / 2, w, d, h: GROUND_FLOOR_H + n * STOREY_H, c: new THREE.Color(rng.pick(towerPal)) });
         }
-        z += w + gap;
+        z += w + rng.range(8, 20);
       }
     }
-    const bMesh = new THREE.InstancedMesh(bGeo, bMat, buildings.length);
-    buildings.forEach((b, i) => {
-      dummy.position.set(b.x, 0, -b.z);
-      dummy.scale.set(b.d, b.h, b.w);
-      dummy.rotation.set(0, 0, 0);
-      dummy.updateMatrix();
-      bMesh.setMatrixAt(i, dummy.matrix);
-      bMesh.setColorAt(i, b.c);
-    });
-    bMesh.castShadow = !this.lowSpec;
-    bMesh.receiveShadow = true;
-    this.group.add(bMesh);
-
+    const placeBlocks = (list: Block[], mat: THREE.Material) => {
+      const mesh = new THREE.InstancedMesh(bGeo, mat, list.length);
+      list.forEach((b, i) => {
+        dummy.position.set(b.x, 0, -b.z);
+        dummy.scale.set(b.d, b.h, b.w);
+        dummy.rotation.set(0, 0, 0);
+        dummy.updateMatrix();
+        mesh.setMatrixAt(i, dummy.matrix);
+        mesh.setColorAt(i, b.c);
+      });
+      mesh.castShadow = !this.lowSpec;
+      mesh.receiveShadow = true;
+      this.group.add(mesh);
+    };
+    placeBlocks(settlements, makeFacadeMaterial(settlementFacadeAtlas(), 'settlementFacade'));
+    placeBlocks(towers, makeFacadeMaterial(towerFacadeAtlas(), 'towerFacade', true));
+    this.buildRoofClutter(rng, settlements, towers);
     // Saddar blocks: facade tiles in world space (correct storeys + shopfronts).
     const sMesh = new THREE.InstancedMesh(bGeo, makeFacadeMaterial(saddarFacadeAtlas()), saddar.length);
     saddar.forEach((b, i) => {
@@ -358,7 +350,8 @@ export class Environment {
         if (rng.chance(0.7)) put(road.left - road.shoulder - 2.5);
         if (rng.chance(0.5)) put(road.right + 1.4 + (road.right - road.left) + 2.5);
       } else if (zi === 1) {
-        if (rng.chance(0.4)) put(road.left - road.shoulder - rng.range(6, 30));
+        const px = road.left - road.shoulder - rng.range(6, 30);
+        if (rng.chance(0.4) && !inRiver(px, 1, z, z)) put(px);
         if (rng.chance(0.3)) put(road.right + 20 + rng.range(0, 30));
       }
     }
@@ -384,6 +377,7 @@ export class Environment {
     const lightGeo = mergeGeometries([pole, arm, arm2, lamp, lamp2]);
     const lights: THREE.Matrix4[] = [];
     for (let z = START_Z; z < END_Z; z += 40) {
+      if (hasCrescentLight(z) || FOOTBRIDGES.some((f) => Math.abs(f - z) < 6)) continue;
       const road = sampleRoad(z);
       dummy.position.set(road.right + 0.7, elevationAt(z) + 0.85, -z);
       dummy.scale.set(1, 1, 1);
@@ -405,7 +399,8 @@ export class Environment {
       const road = sampleRoad(z);
       const zone = ZONES[zoneIndexAt(z)];
       const side = rng.chance(0.65) ? -1 : 1;
-      if (z < SADDAR_END + 40 || FLYOVERS.some((f) => Math.abs(f.z - z) < 25)) continue;
+      if (z < SADDAR_END + 40 || FLYOVERS.some((f) => Math.abs(f.z - z) < 25) || FOOTBRIDGES.some((f) => Math.abs(f - z) < 25) || Math.abs(z - TOLL_Z) < 40) continue;
+      if (side < 0 && inRiver(road.left - road.shoulder - 6, 3, z, z)) continue;
       const base = 0;
       const h = zone.elevated ? elevationAt(z) + 6 : 9;
       const x = side < 0 ? road.left - road.shoulder - rng.range(4, 8) : road.right + 1.4 + (road.right - road.left) + rng.range(4, 8);
@@ -426,6 +421,45 @@ export class Environment {
       post.position.set(x, base + (h - base) / 2, -z);
       this.group.add(post);
     }
+  }
+
+  /** Water tanks on the housing; plant rooms and masts on the towers. */
+  private buildRoofClutter(rng: Rng, settlements: { x: number; z: number; w: number; d: number; h: number }[], towers: { x: number; z: number; w: number; d: number; h: number }[]): void {
+    const d = new THREE.Object3D();
+    const tanks: THREE.Matrix4[] = [];
+    const tankCols: THREE.Color[] = [];
+    const TANKS = ['#2f5fa8', '#1f4f9a', '#222222', '#e8e4da', '#3a6fc0'];
+    for (const b of settlements) {
+      const n = rng.chance(0.75) ? rng.int(1, 2) : 0;
+      for (let k = 0; k < n; k++) {
+        d.position.set(b.x + rng.range(-b.d / 2 + 0.8, b.d / 2 - 0.8), b.h, -(b.z + rng.range(-b.w / 2 + 0.8, b.w / 2 - 0.8)));
+        const s = rng.range(0.8, 1.15);
+        d.scale.set(s, s, s);
+        d.updateMatrix();
+        tanks.push(d.matrix.clone());
+        tankCols.push(new THREE.Color(TANKS[rng.int(0, TANKS.length - 1)]));
+      }
+    }
+    const tank = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.6, 0.6, 1.3, 10).translate(0, 0.65, 0), new THREE.MeshLambertMaterial(), tanks.length);
+    tanks.forEach((m, i) => {
+      tank.setMatrixAt(i, m);
+      tank.setColorAt(i, tankCols[i]);
+    });
+    tank.castShadow = !this.lowSpec;
+    this.group.add(tank);
+
+    const rooms: THREE.Matrix4[] = [];
+    for (const b of towers) {
+      d.position.set(b.x + rng.range(-1, 1), b.h, -b.z);
+      d.scale.set(b.d * rng.range(0.35, 0.55), rng.range(2.5, 4), b.w * rng.range(0.3, 0.5));
+      d.updateMatrix();
+      rooms.push(d.matrix.clone());
+    }
+    const box = new THREE.BoxGeometry(1, 1, 1).translate(0, 0.5, 0);
+    const room = new THREE.InstancedMesh(box, new THREE.MeshLambertMaterial({ color: '#cfcac0' }), rooms.length);
+    rooms.forEach((m, i) => room.setMatrixAt(i, m));
+    room.castShadow = !this.lowSpec;
+    this.group.add(room);
   }
 
   private buildHazards(hm: HazardManager, factory: VehicleFactory): void {
@@ -601,6 +635,9 @@ export class Environment {
       this.group.add(sign);
     };
     for (const cp of CHECKPOINTS) addGantry(cp.z - 10, [cp.label, `CHECKPOINT  +${cp.bonus}s`], '#0b6e3a');
+
+    // Green direction board before Karsaz, English + Urdu.
+    addGantry(3195, ['↑ AIRPORT  ·  KARSAZ ←', 'ایئرپورٹ  ·  کارساز'], '#0b6e3a');
 
     // Destination gantry; the Teen Talwar monument stands just beyond it.
     addGantry(FINISH_Z, ['CLIFTON · TEEN TALWAR', 'DESTINATION'], '#1b5e20');

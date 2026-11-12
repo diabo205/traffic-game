@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { FINISH_Z, sampleRoad } from '../sim/road';
 import { corridorEdges, FOOTPATH_W } from './Saddar';
-import { clockFaceTexture, gothicWallTexture, mazarFaceTexture, signTexture } from './textures';
+import { clockFaceTexture, gothicWallTexture, kerbStripeTexture, mazarFaceTexture, signTexture } from './textures';
 
 /**
  * Low-poly Karachi landmarks placed along the route. Render-only.
@@ -143,7 +143,7 @@ function buildMazar(group: THREE.Group, shadow: boolean): void {
   for (let z = -100; z <= 100; z += 0.9) rails.push(new THREE.BoxGeometry(0.06, 1.1, 0.06).translate(edge + 0.3, 1.35, zc + z));
   rails.push(new THREE.BoxGeometry(0.08, 0.08, 205).translate(edge + 0.3, 1.9, zc));
   const railGeo = mergeGeometries(rails);
-  if (railGeo) mesh(g, railGeo, lam('#2e6b3a'), 0, 0, 0, false);
+  if (railGeo) mesh(g, railGeo, lam('#1e1f20'), 0, 0, 0, false); // black wrought-iron spears
   // Approach avenue of palms is suggested by a pale path.
   const path = new THREE.Mesh(new THREE.PlaneGeometry(60, 10), lam('#e8e2d2'));
   path.rotation.x = -Math.PI / 2;
@@ -246,11 +246,25 @@ function buildTeenTalwar(group: THREE.Group, shadow: boolean): void {
   g.position.set(x, 0, z);
   const white = lam('#f3f2ec');
 
-  mesh(g, new THREE.CylinderGeometry(6.2, 6.4, 0.45, 20), lam('#e9e6dc'), 0, 0.22, 0, false);
-  mesh(g, new THREE.CylinderGeometry(5.8, 5.8, 0.5, 20), lam('#7d9c56'), 0, 0.5, 0, false);
-  mesh(g, new THREE.BoxGeometry(9.5, 2.4, 3.2), white, 0, 1.95, 0, shadow);
-  mesh(g, new THREE.BoxGeometry(10.2, 0.4, 3.8), lam('#d9d6cc'), 0, 3.35, 0, shadow);
-
+  // Roundabout island: black-and-yellow kerb ring, grass mound, red plinth.
+  const ringTex = kerbStripeTexture().clone();
+  ringTex.repeat.set(24, 1);
+  ringTex.needsUpdate = true;
+  mesh(g, new THREE.CylinderGeometry(6.3, 6.3, 0.4, 32, 1, true), new THREE.MeshLambertMaterial({ map: ringTex, side: THREE.DoubleSide }), 0, 0.2, 0, false);
+  const mound = new THREE.SphereGeometry(6.2, 20, 6, 0, Math.PI * 2, 0, Math.PI / 2);
+  mound.scale(1, 0.18, 1);
+  mesh(g, mound, lam('#6f9a45'), 0, 0.2, 0, false);
+  mesh(g, new THREE.CylinderGeometry(4.4, 4.6, 0.9, 24), lam('#8e3b30'), 0, 1.25, 0, shadow);
+  mesh(g, new THREE.CylinderGeometry(4.0, 4.0, 0.35, 24), lam('#a3483b'), 0, 1.85, 0, shadow);
+  // Faceted marble base under each sword, pierced by a pointed arch.
+  const archShape = new THREE.Shape();
+  archShape.moveTo(-0.5, 0);
+  archShape.lineTo(-0.5, 1.2);
+  archShape.quadraticCurveTo(-0.5, 1.75, 0, 2.0);
+  archShape.quadraticCurveTo(0.5, 1.75, 0.5, 1.2);
+  archShape.lineTo(0.5, 0);
+  const archGeo = new THREE.ShapeGeometry(archShape, 4);
+  const dark = lam('#2a2723');
   const swords: Array<[number, number, number]> = [
     [-2.9, 21, 0.14],
     [0, 25, 0],
@@ -258,7 +272,13 @@ function buildTeenTalwar(group: THREE.Group, shadow: boolean): void {
   ];
   for (const [sx, len, lean] of swords) {
     const s = new THREE.Group();
-    s.position.set(sx, 3.55, 0);
+    // Hexagonal, rotated so a flat face looks along the road (apothem 1.08).
+    mesh(g, new THREE.CylinderGeometry(1.25, 1.25, 2.6, 6), white, sx, 3.3, 0, shadow).rotation.y = Math.PI / 6;
+    for (const f of [1, -1]) {
+      const a = mesh(g, archGeo, dark, sx, 2.05, f * 1.1, false);
+      if (f < 0) a.rotation.y = Math.PI;
+    }
+    s.position.set(sx, 4.6, 0);
     s.rotation.z = lean;
     g.add(s);
     mesh(s, new THREE.SphereGeometry(0.42, 8, 6), white, 0, 0.3, 0, shadow); // pommel
