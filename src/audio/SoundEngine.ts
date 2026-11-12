@@ -1,0 +1,291 @@
+/**
+ * Procedural Web Audio synth — no audio files.
+ * Engine (3-cylinder 660cc buzz), horn, brake screech, thuds, crashes, splash.
+ * The AudioContext is created/resumed on the first user gesture (unlock()).
+ */
+
+export interface EngineParams {
+  /** m/s, signed */
+  speed: number;
+  throttle: number;
+  /** current zone top speed (for gear spread) */
+  topSpeed: number;
+  horn: boolean;
+  /** 0..1 tyre screech amount */
+  screech: number;
+  running: boolean;
+}
+
+/** Gear upshift points as fractions of top speed (5-speed manual). */
+const GEARS = [0, 0.18, 0.36, 0.56, 0.78, 1.2];
+
+export class SoundEngine {
+  private ctx: AudioContext | null = null;
+  private master!: GainNode;
+  private noise!: AudioBuffer;
+  private muted = false;
+
+  // Engine voice.
+  private engOsc1!: OscillatorNode;
+  private engOsc2!: OscillatorNode;
+  private engSub!: OscillatorNode;
+  private engFilter!: BiquadFilterNode;
+  private engGain!: GainNode;
+  private rpm = 900;
+
+  // Horn voice.
+  private hornGain!: GainNode;
+
+  // Screech voice.
+  private screechGain!: GainNode;
+
+  // Wind / road noise.
+  private roadGain!: GainNode;
+  private roadFilter!: BiquadFilterNode;
+
+  get unlocked(): boolean {
+    return this.ctx !== null && this.ctx.state === 'running';
+  }
+
+  get isMuted(): boolean {
+    return this.muted;
+  }
+
+  /** Must be called from a user-gesture handler. Safe to call repeatedly. */
+  unlock(): void {
+    if (this.ctx) {
+      if (this.ctx.state === 'suspended') void this.ctx.resume();
+      return;
+    }
+    const Ctor = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!Ctor) return;
+    const ctx = new Ctor();
+    this.ctx = ctx;
+    this.master = ctx.createGain();
+    this.master.gain.value = this.muted ? 0 : 0.55;
+    const comp = ctx.createDynamicsCompressor();
+    comp.threshold.value = -14;
+    comp.ratio.value = 4;
+    this.master.connect(comp).connect(ctx.destination);
+
+    // White noise buffer shared by noise voices.
+    this.noise = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
+    const d = this.noise.getChannelData(0);
+    for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+
+    this.buildEngine(ctx);
+    this.buildHorn(ctx);
+    this.buildScreech(ctx);
+    this.buildRoad(ctx);
+    if (ctx.state === 'suspended') void ctx.resume();
+  }
+
+  setMuted(m: boolean): void {
+    this.muted = m;
+    if (this.ctx) this.master.gain.setTargetAtTime(m ? 0 : 0.55, this.ctx.currentTime, 0.05);
+  }
+
+  private loopNoise(ctx: AudioContext): AudioBufferSourceNode {
+    const src = ctx.createBufferSource();
+    src.buffer = this.noise;
+    src.loop = true;
+    src.start();
+    return src;
+  }
+
+  private buildEngine(ctx: AudioContext): void {
+    this.engFilter = ctx.createBiquadFilter();
+    this.engFilter.type = 'lowpass';
+    this.engFilter.frequency.value = 900;
+    this.engFilter.Q.value = 4;
+    this.engGain = ctx.createGain();
+    this.engGain.gain.value = 0;
+    this.engOsc1 = ctx.createOscillator();
+    this.engOsc1.type = 'sawtooth';
+    this.engOsc2 = ctx.createOscillator();
+    this.engOsc2.type = 'square';
+    this.engSub = ctx.createOscillator();
+    this.engSub.type = 'triangle';
+    const g2 = ctx.createGain();
+    g2.gain.value = 0.35;
+    const gSub = ctx.createGain();
+    gSub.gain.value = 0.6;
+    this.engOsc1.connect(this.engFilter);
+    this.engOsc2.connect(g2).connect(this.engFilter);
+    this.engSub.connect(gSub).connect(this.engFilter);
+    // Lumpy 3-cylinder idle: amplitude wobble.
+    const lfo = ctx.createOscillator();
+    lfo.frequency.value = 11;
+    const lfoGain = ctx.createGain();
+    lfoGain.gain.value = 0.08;
+    lfo.connect(lfoGain).connect(this.engGain.gain);
+    this.engFilter.connect(this.engGain).connect(this.master);
+    [this.engOsc1, this.engOsc2, this.engSub, lfo].forEach((o) => o.start());
+  }
+
+  private buildHorn(ctx: AudioContext): void {
+    // Classic two-tone electric horn, slightly nasal.
+    this.hornGain = ctx.createGain();
+    this.hornGain.gain.value = 0;
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.value = 1300;
+    bp.Q.value = 0.8;
+    const shaper = ctx.createWaveShaper();
+    const curve = new Float32Array(256);
+    for (let i = 0; i < 256; i++) {
+      const x = (i / 255) * 2 - 1;
+      curve[i] = Math.tanh(x * 3);
+    }
+    shaper.curve = curve;
+    for (const f of [415, 498]) {
+      const o = ctx.createOscillator();
+      o.type = 'square';
+      o.frequency.value = f;
+      o.connect(shaper);
+      o.start();
+    }
+    shaper.connect(bp).connect(this.hornGain).connect(this.master);
+  }
+
+  private buildScreech(ctx: AudioContext): void {
+    this.screechGain = ctx.createGain();
+    this.screechGain.gain.value = 0;
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.value = 2600;
+    bp.Q.value = 8;
+    const bp2 = ctx.createBiquadFilter();
+    bp2.type = 'bandpass';
+    bp2.frequency.value = 3400;
+    bp2.Q.value = 10;
+    const src = this.loopNoise(ctx);
+    src.connect(bp).connect(this.screechGain);
+    src.connect(bp2).connect(this.screechGain);
+    this.screechGain.connect(this.master);
+  }
+
+  private buildRoad(ctx: AudioContext): void {
+    this.roadGain = ctx.createGain();
+    this.roadGain.gain.value = 0;
+    this.roadFilter = ctx.createBiquadFilter();
+    this.roadFilter.type = 'lowpass';
+    this.roadFilter.frequency.value = 400;
+    this.loopNoise(ctx).connect(this.roadFilter).connect(this.roadGain).connect(this.master);
+  }
+
+  /** Per-frame continuous voices. */
+  update(p: EngineParams, dt: number): void {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    const t = ctx.currentTime;
+    const v = Math.abs(p.speed);
+
+    // Fake 5-speed gearbox -> RPM.
+    const ratio = v / Math.max(p.topSpeed, 1);
+    let gear = 1;
+    while (gear < GEARS.length - 1 && ratio > GEARS[gear]) gear++;
+    const lo = GEARS[gear - 1], hi = GEARS[gear];
+    const inGear = Math.min(1, Math.max(0, (ratio - lo) / (hi - lo)));
+    let targetRpm = 1000 + inGear * 5200 + p.throttle * 600;
+    if (v < 0.5) targetRpm = 900 + p.throttle * 2600;
+    if (!p.running) targetRpm = 850;
+    this.rpm += (targetRpm - this.rpm) * Math.min(1, dt * 8);
+
+    // 3 cylinders, 4-stroke: firing freq = rpm/60 * 1.5
+    const fire = (this.rpm / 60) * 1.5;
+    this.engOsc1.frequency.setTargetAtTime(fire, t, 0.03);
+    this.engOsc2.frequency.setTargetAtTime(fire * 2.01, t, 0.03);
+    this.engSub.frequency.setTargetAtTime(fire / 2, t, 0.03);
+    this.engFilter.frequency.setTargetAtTime(500 + this.rpm * 0.35 + p.throttle * 900, t, 0.05);
+    this.engGain.gain.setTargetAtTime(0.16 + p.throttle * 0.14, t, 0.05);
+
+    this.hornGain.gain.setTargetAtTime(p.horn ? 0.32 : 0, t, 0.012);
+    this.screechGain.gain.setTargetAtTime(Math.min(1, p.screech) * 0.22, t, 0.04);
+    this.roadGain.gain.setTargetAtTime(Math.min(0.25, v * 0.008), t, 0.1);
+    this.roadFilter.frequency.setTargetAtTime(250 + v * 25, t, 0.1);
+  }
+
+  // ---- One-shots ------------------------------------------------------------
+
+  private burst(duration: number, freq: number, q: number, gain: number, type: BiquadFilterType = 'lowpass'): void {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    const t = ctx.currentTime;
+    const src = ctx.createBufferSource();
+    src.buffer = this.noise;
+    const f = ctx.createBiquadFilter();
+    f.type = type;
+    f.frequency.value = freq;
+    f.Q.value = q;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(gain, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + duration);
+    src.connect(f).connect(g).connect(this.master);
+    src.start(t, Math.random() * 1.5);
+    src.stop(t + duration + 0.05);
+  }
+
+  private thump(freq: number, duration: number, gain: number): void {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    const t = ctx.currentTime;
+    const o = ctx.createOscillator();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(freq, t);
+    o.frequency.exponentialRampToValueAtTime(freq * 0.4, t + duration);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(gain, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + duration);
+    o.connect(g).connect(this.master);
+    o.start(t);
+    o.stop(t + duration + 0.05);
+  }
+
+  pothole(severity: number): void {
+    this.thump(70, 0.25, 0.5 + severity * 0.5);
+    this.burst(0.15, 600, 1, 0.3 * severity);
+  }
+
+  manhole(): void {
+    this.thump(55, 0.45, 1);
+    this.burst(0.3, 900, 1, 0.5);
+    // Metallic clank.
+    this.burst(0.25, 2400, 12, 0.4, 'bandpass');
+  }
+
+  crash(intensity: number): void {
+    const i = Math.min(1, intensity);
+    this.thump(90, 0.3, 0.6 + i * 0.4);
+    this.burst(0.35 + i * 0.4, 1800, 0.7, 0.5 + i * 0.5);
+    this.burst(0.5, 3200, 14, 0.25 + i * 0.3, 'bandpass'); // metal ring
+    this.burst(0.2, 5200, 3, 0.2 * i, 'highpass'); // glass tinkle
+  }
+
+  scrape(intensity: number): void {
+    this.burst(0.12, 2200, 3, 0.12 + intensity * 0.15, 'bandpass');
+  }
+
+  splash(): void {
+    this.burst(0.6, 1400, 0.6, 0.55);
+    this.burst(0.35, 400, 1, 0.3);
+  }
+
+  chime(): void {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    const t = ctx.currentTime;
+    [880, 1318.5].forEach((f, i) => {
+      const o = ctx.createOscillator();
+      o.type = 'triangle';
+      o.frequency.value = f;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0, t + i * 0.12);
+      g.gain.linearRampToValueAtTime(0.25, t + i * 0.12 + 0.01);
+      g.gain.exponentialRampToValueAtTime(0.001, t + i * 0.12 + 0.5);
+      o.connect(g).connect(this.master);
+      o.start(t + i * 0.12);
+      o.stop(t + i * 0.12 + 0.6);
+    });
+  }
+}
