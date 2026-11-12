@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import type { NpcKind } from '../sim/types';
 import { routeBoardTexture, truckArtTexture } from './textures';
 
@@ -238,6 +239,8 @@ function bind(kind: VisualKind, root: THREE.Group, wheelRadius: number): Vehicle
 
 export class VehicleFactory {
   private beamMaterial: THREE.MeshBasicMaterial | null = null;
+  /** Blender-built models (tools/blender/*.py); procedural fallback if missing. */
+  private models = new Map<string, THREE.Group>();
 
   /** Load / build any assets up front. Swap in GLTFLoader here later. */
   async preload(): Promise<void> {
@@ -249,6 +252,17 @@ export class VehicleFactory {
       blending: THREE.AdditiveBlending,
       side: THREE.DoubleSide,
     });
+    const loader = new GLTFLoader();
+    await Promise.all(
+      ['alto'].map(async (name) => {
+        try {
+          const gltf = await loader.loadAsync(`${import.meta.env.BASE_URL}models/${name}.glb`);
+          this.models.set(name, gltf.scene);
+        } catch (err) {
+          console.warn(`model ${name}.glb unavailable, using procedural mesh`, err);
+        }
+      }),
+    );
     // Warm the texture caches so first spawns don't hitch.
     for (let i = 0; i < 4; i++) truckArtTexture(i);
     routeBoardTexture('W-11');
@@ -271,7 +285,7 @@ export class VehicleFactory {
 
   private build(kind: VisualKind, variant: number): Proto {
     switch (kind) {
-      case 'alto': return this.alto();
+      case 'alto': return this.models.has('alto') ? this.fromModel('alto', 0.29) : this.alto();
       case 'car': return this.car(variant);
       case 'bike': return this.bike(variant);
       case 'minibus': return this.minibus(variant);
@@ -291,7 +305,61 @@ export class VehicleFactory {
     return { root, body };
   }
 
-  // ---- Suzuki Alto (player) -------------------------------------------------
+  /**
+   * Wrap a loaded .glb in the same Proto shape the procedural builders use.
+   * Node names carry meaning: head_, brake_ and hazard_ nodes are lights; wheel_ nodes spin.
+   * glTF PBR materials become smooth Lambert to match the scene's lighting.
+   */
+  private fromModel(name: string, wheelRadius: number): Proto {
+    const { root, body } = this.shell();
+    const src = this.models.get(name);
+    const wheels: THREE.Object3D[] = [];
+    const lights: Lights = { brake: [], hazard: [], head: [] };
+    if (!src) return { root, body, wheels, wheelRadius, lights };
+    const scene = src.clone(true);
+    for (const c of [...scene.children]) body.add(c);
+    const mats = new Map<string, THREE.Material>();
+    body.traverse((o) => {
+      if (!(o instanceof THREE.Mesh)) return;
+      const m = o.material as THREE.MeshStandardMaterial;
+      let lm = mats.get(m.name);
+      if (!lm) {
+        lm = new THREE.MeshLambertMaterial({ color: m.color, name: m.name });
+        mats.set(m.name, lm);
+      }
+      o.material = lm;
+      o.castShadow = true;
+    });
+    for (const c of body.children) {
+      const n = c.name.toLowerCase();
+      const mesh = c instanceof THREE.Mesh ? c : null;
+      if (n.startsWith('wheel')) wheels.push(c);
+      else if (mesh && n.startsWith('head')) {
+        mesh.material = M.headOff();
+        lights.head.push(mesh);
+      } else if (mesh && n.startsWith('brake')) {
+        mesh.material = M.brakeOff();
+        lights.brake.push(mesh);
+      } else if (mesh && n.startsWith('hazard')) {
+        mesh.material = M.hazardOff();
+        lights.hazard.push(mesh);
+      }
+    }
+    if (this.beamMaterial && lights.head.length) {
+      const beamGeo = new THREE.ConeGeometry(2.2, 14, 12, 1, true);
+      beamGeo.translate(0, -7, 0);
+      beamGeo.rotateX(-Math.PI / 2);
+      const beam = new THREE.Mesh(beamGeo, this.beamMaterial);
+      beam.position.copy(lights.head[0].position).setX(0);
+      beam.visible = false;
+      beam.castShadow = false;
+      body.add(beam);
+      lights.beam = beam;
+    }
+    return { root, body, wheels, wheelRadius, lights };
+  }
+
+  // ---- Suzuki Alto (procedural fallback) --------------------------------------
   // 8th-gen Alto as seen on Karachi roads: tall, rounded one-box hatch,
   // upright tailgate with a big rear window, small horizontal tail lamps.
   private alto(): Proto {
