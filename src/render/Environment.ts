@@ -9,6 +9,7 @@ import {
   asphaltTexture,
   billboardTexture,
   dirtTexture,
+  barrierStripeTexture,
   kerbStripeTexture,
   saddarFacadeAtlas,
   settlementFacadeAtlas,
@@ -36,7 +37,8 @@ const END_Z = ROUTE_END + 150;
 /** Sample spacing for painted kerbs (finer so stripes stay crisp at bends). */
 const STRIPE_STEP = 2;
 
-const ZONE_TINT = [new THREE.Color('#b3aca2'), new THREE.Color('#77797d'), new THREE.Color('#94918c')];
+// Measured from reference photos: pale, dusty asphalt (warmer in Saddar).
+const ZONE_TINT = [new THREE.Color('#c2b6a4'), new THREE.Color('#aeb0b0'), new THREE.Color('#b8b6b0')];
 
 export class Environment {
   readonly group = new THREE.Group();
@@ -114,21 +116,27 @@ export class Environment {
     // Outer parapet on the far side of the opposite carriageway.
     const farEdge: XFn = (z) => right(z) + 1.4 + (right(z) - left(z));
 
-    // Kerbs, jersey barriers and parapets: painted black-and-yellow throughout.
-    const painted = new StripBuilder();
+    // Kerbs, jersey barriers and parapets: black-and-yellow kerbs in the city,
+    // long faded yellow/grey panels on the expressway's concrete barriers.
     const w = new THREE.Color('#ffffff');
-    const S0 = START_Z, S1 = END_Z;
-    painted.wall(shoulderEdge, base, kerbTop, S0, S1, w, 1, STRIPE_STEP, 0.5);
-    painted.wall((z) => shoulderEdge(z) - 0.3, base, kerbTop, S0, S1, w, -1, STRIPE_STEP, 0.5);
-    painted.flat((z) => shoulderEdge(z) - 0.3, shoulderEdge, kerbTop, S0, S1, () => w, 1, 0.5, STRIPE_STEP, true);
-    painted.wall((z) => right(z) + 0.05, base, mTop, S0, S1, w, -1, STRIPE_STEP, 0.5);
-    painted.wall((z) => right(z) + 1.35, base, mTop, S0, S1, w, 1, STRIPE_STEP, 0.5);
-    painted.flat((z) => right(z) + 0.05, (z) => right(z) + 1.35, mTop, S0, S1, () => w, 1, 0.5, STRIPE_STEP, true);
-    painted.wall(farEdge, base, kerbTop, S0, S1, w, -1, STRIPE_STEP, 0.5);
-    const paintedMesh = new THREE.Mesh(painted.build(), new THREE.MeshLambertMaterial({ map: kerbStripeTexture(), side: THREE.DoubleSide }));
-    paintedMesh.receiveShadow = true;
-    paintedMesh.castShadow = !this.lowSpec;
-    this.group.add(paintedMesh);
+    const paintRange = (S0: number, S1: number, tex: THREE.Texture, u: number) => {
+      const painted = new StripBuilder();
+      painted.wall(shoulderEdge, base, kerbTop, S0, S1, w, 1, STRIPE_STEP, u);
+      painted.wall((z) => shoulderEdge(z) - 0.3, base, kerbTop, S0, S1, w, -1, STRIPE_STEP, u);
+      painted.flat((z) => shoulderEdge(z) - 0.3, shoulderEdge, kerbTop, S0, S1, () => w, 1, u, STRIPE_STEP, true);
+      painted.wall((z) => right(z) + 0.05, base, mTop, S0, S1, w, -1, STRIPE_STEP, u);
+      painted.wall((z) => right(z) + 1.35, base, mTop, S0, S1, w, 1, STRIPE_STEP, u);
+      painted.flat((z) => right(z) + 0.05, (z) => right(z) + 1.35, mTop, S0, S1, () => w, 1, u, STRIPE_STEP, true);
+      painted.wall(farEdge, base, kerbTop, S0, S1, w, -1, STRIPE_STEP, u);
+      const mesh = new THREE.Mesh(painted.build(), new THREE.MeshLambertMaterial({ map: tex, side: THREE.DoubleSide }));
+      mesh.receiveShadow = true;
+      mesh.castShadow = !this.lowSpec;
+      this.group.add(mesh);
+    };
+    const X0 = ZONES[1].start - 20, X1 = ZONES[1].end + 180;
+    paintRange(START_Z, X0, kerbStripeTexture(), 0.5);
+    paintRange(X0, X1, barrierStripeTexture(), 0.2);
+    paintRange(X1, END_Z, kerbStripeTexture(), 0.5);
 
     // Lane markings (dashes) + edge lines.
     const marks = new StripBuilder();
@@ -230,7 +238,8 @@ export class Environment {
     const towers: Block[] = [];
     const saddar: (SaddarBuilding & { c: THREE.Color })[] = [];
     // Old Saddar: sun-bleached cream, yellow stone, faded pastels.
-    const saddarPal = ['#efe4c8', '#e6d3a3', '#d9c49c', '#f2ead8', '#cfd8c4', '#e3c9bd', '#c9d5dc', '#e8d9b0', '#d6c2a0'];
+    // Old Saddar from the photos: ochre/yellow Gizri stone, weathered cream.
+    const saddarPal = ['#e6c47c', '#dab06a', '#d2b07e', '#ebd6a2', '#c9a77a', '#e0d4bb', '#e2b96c', '#c7b394', '#d8c9a8'];
     // Atlases carry the base colours; tints just vary them.
     const towerPal = ['#ffffff', '#eef3f6', '#e2ebf0', '#f4efe6', '#dfe4e8'];
     const settlePal = ['#ffffff', '#f1ece4', '#e6e2da', '#f6efe6', '#d9d5cc'];
@@ -244,7 +253,7 @@ export class Environment {
         if (zi === 0 && z < SADDAR_END) {
           const w = rng.range(8, 18);
           const d = rng.range(12, 18);
-          const storeys = rng.weighted({ 2: 1, 3: 3, 4: 4, 5: 3, 6: 1 } as Record<string, number>);
+          const storeys = rng.weighted({ 3: 1, 4: 3, 5: 4, 6: 3, 7: 2 } as Record<string, number>);
           const n = Number(storeys);
           const x = edge + side * (FOOTPATH_W + rng.range(0.4, 1.0) + d / 2);
           if (!excluded(side, z, z + w)) {
@@ -346,9 +355,9 @@ export class Environment {
       if (FLYOVERS.some((f) => Math.abs(f.z - z) < 10)) continue;
       if (zi === 2) {
         // Shahrah-e-Faisal: palms down the median and both verges.
-        put(road.right + 0.7, elevationAt(z) + 0.2);
-        if (rng.chance(0.7)) put(road.left - road.shoulder - 2.5);
-        if (rng.chance(0.5)) put(road.right + 1.4 + (road.right - road.left) + 2.5);
+        if (rng.chance(0.35)) put(road.right + 0.7, elevationAt(z) + 0.2);
+        if (rng.chance(0.25)) put(road.left - road.shoulder - 2.5);
+        if (rng.chance(0.2)) put(road.right + 1.4 + (road.right - road.left) + 2.5);
       } else if (zi === 1) {
         const px = road.left - road.shoulder - rng.range(6, 30);
         if (rng.chance(0.4) && !inRiver(px, 1, z, z)) put(px);

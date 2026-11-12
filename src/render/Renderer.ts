@@ -10,7 +10,7 @@ import { VehicleFactory } from './VehicleFactory';
 import type { VehicleVisual, VisualKind } from './VehicleFactory';
 
 /** Dusty, bleached Karachi horizon. */
-const HORIZON = new THREE.Color('#d9d3c4');
+const HORIZON = new THREE.Color('#d3d5cc');
 
 /**
  * Reads World state (never writes it) and draws it with Three.js.
@@ -49,10 +49,11 @@ export class Renderer {
 
     // Pale, dusty Karachi afternoon: hazy white-blue sky, harsh high sun.
     this.scene.background = HORIZON.clone();
-    this.scene.fog = new THREE.Fog(HORIZON, 55, 400);
+    // Heavy coastal dust haze: distance washes out to pale grey-blue.
+    this.scene.fog = new THREE.Fog(HORIZON, 25, 330);
     this.scene.add(makeSky());
-    this.scene.add(new THREE.HemisphereLight('#e3e9ee', '#9c8a6c', 1.25));
-    this.sun = new THREE.DirectionalLight('#fff3dc', 3.1);
+    this.scene.add(new THREE.HemisphereLight('#e6edf1', '#a8977a', 1.5));
+    this.sun = new THREE.DirectionalLight('#fff1d6', 2.6);
     this.sun.position.set(-40, 60, 40);
     this.sun.castShadow = !lowSpec;
     this.sun.shadow.mapSize.set(2048, 2048);
@@ -231,8 +232,8 @@ function makeSky(): THREE.Mesh {
     depthWrite: false,
     fog: false,
     uniforms: {
-      top: { value: new THREE.Color('#86aac6') },
-      mid: { value: new THREE.Color('#e4e2d8') },
+      top: { value: new THREE.Color('#9ec0d8') },
+      mid: { value: new THREE.Color('#dde1db') },
       bottom: { value: HORIZON.clone() },
       // Matches the directional light (sun behind-left of the camera).
       sunDir: { value: new THREE.Vector3(-0.49, 0.73, 0.49).normalize() },

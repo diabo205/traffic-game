@@ -226,7 +226,7 @@ export function buildSaddar(group: THREE.Group, buildings: SaddarBuilding[], low
     paint(slab, '#d8d2c4');
     const wall = new THREE.BoxGeometry(0.06, 0.95, 1);
     wall.translate(0.97, 0.5, 0);
-    paint(wall, '#5c615f');
+    paint(wall, '#b7a47c');
     const rail = new THREE.BoxGeometry(0.1, 0.08, 1);
     rail.translate(0.97, 1.0, 0);
     paint(rail, '#3f4341');
@@ -237,12 +237,13 @@ export function buildSaddar(group: THREE.Group, buildings: SaddarBuilding[], low
   const clothCols: THREE.Color[] = [];
   const CLOTH = ['#e53935', '#1e88e5', '#fdd835', '#43a047', '#ffffff', '#8e24aa', '#fb8c00', '#00acc1', '#f06292'];
   for (const b of buildings) {
-    if (b.storeys < 2 || !rng.chance(0.55)) continue;
+    // Nearly every Saddar block has a balcony on each upper floor.
+    if (b.storeys < 2 || !rng.chance(0.85)) continue;
     const faceX = b.x - b.side * (b.d / 2);
     const ry = b.side < 0 ? 0 : Math.PI;
-    const len = b.w * rng.range(0.35, 0.8);
+    const len = b.w * rng.range(0.55, 0.95);
     const zc = b.z + rng.range(-(b.w - len) / 2, (b.w - len) / 2);
-    for (let s = 0; s < b.storeys - 1; s++) {
+    for (let s = 0; s < b.storeys; s++) {
       const y = GROUND_FLOOR_H + s * STOREY_H;
       balconyMats.push(place(faceX, y, -zc, ry, 1, 1, len));
       if (rng.chance(0.6)) {

@@ -63,6 +63,7 @@ export function buildCorridors(group: THREE.Group, lowSpec: boolean): void {
   buildRiver(group);
   buildTollPlaza(group, shadow);
   buildCrescentLights(group);
+  buildTrees(group, lowSpec);
   buildPlanter(group, lowSpec);
   for (const z of FOOTBRIDGES) buildFootbridge(group, z, shadow);
 }
@@ -193,39 +194,99 @@ function buildTollPlaza(group: THREE.Group, shadow: boolean): void {
   group.add(post);
 }
 
-// ---- Crescent-moon street lights on the expressway median ---------------------------
+// ---- Lyari median lights: black poles with a small hooked top ------------------------
 
 function buildCrescentLights(group: THREE.Group): void {
-  const pole = new THREE.CylinderGeometry(0.09, 0.14, 10, 6).translate(0, 5, 0);
-  const parts: THREE.BufferGeometry[] = [pole];
-  // A 3/4 arc curling out over each carriageway like a crescent moon,
-  // with the lamp hanging from its tip.
-  const arc = new THREE.TorusGeometry(1.25, 0.07, 4, 14, Math.PI * 1.15);
-  arc.rotateZ(Math.PI * -0.15);
-  arc.translate(1.25, 10, 0);
-  const lamp = new THREE.BoxGeometry(0.28, 0.14, 0.55).translate(2.36, 9.36, 0);
-  for (const s of [1, -1]) {
-    const a = arc.clone();
-    const l = lamp.clone();
-    if (s < 0) {
-      a.rotateY(Math.PI);
-      l.rotateY(Math.PI);
-    }
-    parts.push(a, l);
-  }
-  parts.forEach((g, i) => paint(g, i === 2 || i === 4 ? '#f1eedc' : '#a7acb2'));
-  const geo = mergeGeometries(parts.map((g) => g.toNonIndexed()));
+  const pole = new THREE.CylinderGeometry(0.11, 0.17, 7.2, 6).translate(0, 3.6, 0);
+  // A small open hook bending over the carriageway, lamp at its tip.
+  const hook = new THREE.TorusGeometry(0.32, 0.07, 4, 10, Math.PI * 1.25);
+  hook.rotateZ(-Math.PI * 0.25);
+  hook.translate(-0.32, 7.2, 0);
+  const lamp = new THREE.BoxGeometry(0.22, 0.12, 0.3).translate(-0.55, 6.95, 0);
+  paint(pole, '#1d1e1f');
+  paint(hook, '#1d1e1f');
+  paint(lamp, '#e9e6d6');
+  const geo = mergeGeometries([pole, hook, lamp].map((g) => (g.index ? g.toNonIndexed() : g)));
   if (!geo) return;
   const mats: THREE.Matrix4[] = [];
   const d = new THREE.Object3D();
-  for (let z = LYARI.start + 20; z < LYARI.end + 120; z += 45) {
+  let k = 0;
+  for (let z = LYARI.start + 20; z < LYARI.end + 120; z += 26, k++) {
     const r = sampleRoad(z);
     d.position.set(r.right + 0.7, elevationAt(z) + 0.85, -z);
+    // Hooks alternate over each carriageway.
+    d.rotation.set(0, k % 2 ? Math.PI : 0, 0);
     d.updateMatrix();
     mats.push(d.matrix.clone());
   }
   const m = new THREE.InstancedMesh(geo, new THREE.MeshLambertMaterial({ vertexColors: true }), mats.length);
   mats.forEach((mm, i) => m.setMatrixAt(i, mm));
+  m.castShadow = true;
+  group.add(m);
+}
+
+// ---- Leafy neem / ficus trees crowding the verges ----------------------------------------
+
+function treeGeometry(): THREE.BufferGeometry | null {
+  const parts: THREE.BufferGeometry[] = [];
+  const trunk = new THREE.CylinderGeometry(0.22, 0.34, 4.2, 6).translate(0, 2.1, 0);
+  paint(trunk, '#6b5a45');
+  parts.push(trunk);
+  const blobs: Array<[number, number, number, number, string]> = [
+    [0, 5.4, 0, 2.6, '#46592f'],
+    [1.5, 4.8, 0.6, 1.9, '#526537'],
+    [-1.4, 4.9, -0.5, 2.0, '#3d5029'],
+    [0.3, 6.6, -0.8, 1.8, '#4f6234'],
+    [-0.4, 4.6, 1.5, 1.7, '#42552c'],
+  ];
+  for (const [x, y, z, r, c] of blobs) {
+    const g = new THREE.IcosahedronGeometry(r, 1);
+    g.scale(1, 0.8, 1);
+    g.translate(x, y, z);
+    paint(g, c);
+    parts.push(g);
+  }
+  return mergeGeometries(parts.map((g) => (g.index ? g.toNonIndexed() : g)));
+}
+
+function buildTrees(group: THREE.Group, lowSpec: boolean): void {
+  const geo = treeGeometry();
+  if (!geo) return;
+  const rng = new Rng(2626);
+  const mats: THREE.Matrix4[] = [];
+  const cols: THREE.Color[] = [];
+  const d = new THREE.Object3D();
+  const put = (x: number, z: number, s: number) => {
+    d.position.set(x, 0, -z);
+    d.scale.set(s * rng.range(0.85, 1.15), s, s * rng.range(0.85, 1.15));
+    d.rotation.set(0, rng.range(0, 6.28), 0);
+    d.updateMatrix();
+    mats.push(d.matrix.clone());
+    const t = rng.range(0.85, 1.1);
+    cols.push(new THREE.Color(t, t, t * rng.range(0.9, 1.0)));
+  };
+  const spacing = lowSpec ? 1.8 : 1;
+  // Lyari: canopies rise above the deck parapets on both sides.
+  for (let z = LYARI.start - 20; z < LYARI.end + 160; z += rng.range(5, 11) * spacing) {
+    const elevated = elevationAt(z) > 4;
+    const s = elevated ? rng.range(1.35, 1.75) : rng.range(0.9, 1.25);
+    if (rng.chance(0.8)) put(outerLeft(z) - rng.range(1.5, 4.5), z, s);
+    if (rng.chance(0.65)) put(farEdge(z) + rng.range(1.5, 3.5), z + rng.range(-2, 2), s);
+  }
+  // Shahrah-e-Faisal: dense shady verges with gaps at the junctions.
+  for (let z = FAISAL.start + 150; z < FAISAL.end + 150; z += rng.range(6, 12) * spacing) {
+    if (FOOTBRIDGES.some((f) => Math.abs(f - z) < 8) || Math.sin(z / 61) > 0.85) continue;
+    const r = sampleRoad(z);
+    if (rng.chance(0.85)) put(r.left - r.shoulder - rng.range(3, 9), z, rng.range(1.0, 1.4));
+    if (rng.chance(0.75)) put(farEdge(z) + rng.range(3, 9), z, rng.range(1.0, 1.4));
+  }
+  const m = new THREE.InstancedMesh(geo, new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true }), mats.length);
+  mats.forEach((mm, i) => {
+    m.setMatrixAt(i, mm);
+    m.setColorAt(i, cols[i]);
+  });
+  m.castShadow = !lowSpec;
+  m.receiveShadow = true;
   group.add(m);
 }
 
@@ -249,11 +310,11 @@ function buildPlanter(group: THREE.Group, lowSpec: boolean): void {
   const bush = new THREE.IcosahedronGeometry(0.55, 0);
   const mats: THREE.Matrix4[] = [];
   const cols: THREE.Color[] = [];
-  const PAL = ['#c2185b', '#d81b60', '#e05a9a', '#4f8a3a', '#b0306a'];
+  const PAL = ['#a8426e', '#5b7a3c', '#4f6e34', '#5b7a3c', '#b5577f', '#4f6e34'];
   const d = new THREE.Object3D();
   for (let z = PLANTER_Z + 2; z < end; z += rng.range(1.6, lowSpec ? 5 : 3)) {
     const r = sampleRoad(z);
-    const s = rng.range(0.6, 1.05);
+    const s = rng.range(0.45, 0.8);
     d.position.set(r.right + 0.7 + rng.range(-0.15, 0.15), elevationAt(z) + 0.36 + s * 0.3, -z);
     d.scale.set(s, s * 0.8, s * 1.2);
     d.rotation.set(0, rng.range(0, 3), 0);

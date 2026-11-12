@@ -35,21 +35,22 @@ export function asphaltTexture(): THREE.Texture {
   return cached('asphalt', () => {
     const [c, ctx] = canvas(256, 256);
     const rng = new Rng(11);
-    ctx.fillStyle = '#9a9a9a';
+    // Sun-bleached, dusty grey: Karachi roads read pale, not black.
+    ctx.fillStyle = '#b9b8b4';
     ctx.fillRect(0, 0, 256, 256);
     for (let i = 0; i < 9000; i++) {
-      const v = 138 + rng.int(0, 56);
+      const v = 165 + rng.int(0, 38);
       ctx.fillStyle = `rgb(${v},${v},${v})`;
       ctx.fillRect(rng.int(0, 255), rng.int(0, 255), rng.int(1, 2), rng.int(1, 2));
     }
     // Patches and cracks.
     for (let i = 0; i < 14; i++) {
-      ctx.fillStyle = `rgba(60,60,60,${rng.range(0.06, 0.16)})`;
+      ctx.fillStyle = `rgba(70,70,68,${rng.range(0.05, 0.12)})`;
       ctx.beginPath();
       ctx.ellipse(rng.int(0, 255), rng.int(0, 255), rng.int(10, 50), rng.int(6, 30), rng.range(0, 3), 0, Math.PI * 2);
       ctx.fill();
     }
-    ctx.strokeStyle = 'rgba(40,40,40,0.35)';
+    ctx.strokeStyle = 'rgba(50,50,50,0.25)';
     for (let i = 0; i < 10; i++) {
       ctx.beginPath();
       let x = rng.int(0, 255), y = rng.int(0, 255);
@@ -414,6 +415,22 @@ export const BANNER_COUNT = BANNERS.length;
 export function streetBannerTexture(i: number): THREE.Texture {
   const b = BANNERS[i % BANNERS.length];
   return signTexture(b.lines, b.bg, b.fg, 768, 96);
+}
+
+/** Faded yellow and grey stripes on the expressway's concrete barriers. */
+export function barrierStripeTexture(): THREE.Texture {
+  return cached('barrierStripe', () => {
+    const [c, ctx] = canvas(64, 16);
+    ctx.fillStyle = '#d9b84a';
+    ctx.fillRect(0, 0, 32, 16);
+    ctx.fillStyle = '#b9b7b0';
+    ctx.fillRect(32, 0, 32, 16);
+    ctx.fillStyle = 'rgba(80,75,65,0.18)';
+    ctx.fillRect(0, 11, 64, 5);
+    const t = finish(c, true);
+    t.magFilter = THREE.NearestFilter;
+    return t;
+  });
 }
 
 /** Black-and-yellow kerb paint (repeats along the kerb). */

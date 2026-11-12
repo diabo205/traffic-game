@@ -147,11 +147,13 @@ const LIGHT_NAMES = ['brake', 'hazard', 'head'] as const;
 function mergeMeshes(body: THREE.Object3D, meshes: THREE.Mesh[], material: THREE.Material, name: string): THREE.Mesh | null {
   if (meshes.length === 0) return null;
   const inv = body.matrixWorld.clone().invert();
-  const geos = meshes.map((m) => {
+  let geos = meshes.map((m) => {
     const g = m.geometry.clone();
     g.applyMatrix4(new THREE.Matrix4().multiplyMatrices(inv, m.matrixWorld));
     return g;
   });
+  // Extruded / shape parts are non-indexed; boxes are indexed. Unify.
+  if (geos.some((g) => !g.index) && geos.some((g) => g.index)) geos = geos.map((g) => (g.index ? g.toNonIndexed() : g));
   const merged = mergeGeometries(geos, false);
   geos.forEach((g) => g.dispose());
   if (!merged) return null;
@@ -290,46 +292,108 @@ export class VehicleFactory {
   }
 
   // ---- Suzuki Alto (player) -------------------------------------------------
+  // 8th-gen Alto as seen on Karachi roads: tall, rounded one-box hatch,
+  // upright tailgate with a big rear window, small horizontal tail lamps.
   private alto(): Proto {
     const { root, body } = this.shell();
     const wheels: THREE.Object3D[] = [];
-    const paint = lambert('#e8eaec');
+    const paint = lambert('#dfe2e3');
     const lights: Lights = { brake: [], hazard: [], head: [] };
-    // Lower body + bumpers.
-    box(body, 1.48, 0.56, 3.38, paint, 0, 0.6, 0);
-    box(body, 1.5, 0.2, 0.18, M.darkGrey(), 0, 0.42, -1.69);
-    box(body, 1.5, 0.22, 0.18, M.darkGrey(), 0, 0.42, 1.69);
-    // Short sloping bonnet.
-    add(body, boxGeo(1.4, 0.16, 0.8), paint, 0, 0.92, -1.22, -0.18);
-    // Cabin: tall hatchback glasshouse.
-    box(body, 1.34, 0.58, 2.05, M.glass(), 0, 1.16, 0.28);
-    box(body, 1.38, 0.08, 1.85, paint, 0, 1.48, 0.35);
-    // Pillars.
-    for (const sx of [-0.66, 0.66]) {
-      box(body, 0.06, 0.58, 0.1, paint, sx, 1.16, -0.7);
-      box(body, 0.06, 0.58, 0.12, paint, sx, 1.16, 0.25);
-      box(body, 0.06, 0.58, 0.14, paint, sx, 1.16, 1.24);
+    const BEVEL = 0.11;
+    const HALF_W = 0.74;
+
+    // Side profile in (z, y), z forward-negative; bevel grows it by BEVEL.
+    const prof: Array<[number, number]> = [
+      [-1.6, 0.44], [-1.64, 0.62], [-1.58, 0.76], [-0.92, 0.9], [-0.36, 1.34],
+      [1.32, 1.36], [1.58, 0.9], [1.6, 0.6], [1.57, 0.44],
+    ];
+    const shape = new THREE.Shape();
+    prof.forEach(([z, y], i) => (i ? shape.lineTo(-z, y) : shape.moveTo(-z, y)));
+    shape.closePath();
+    const depth = 2 * (HALF_W - BEVEL);
+    const shell = new THREE.ExtrudeGeometry(shape, { depth, bevelEnabled: true, bevelThickness: BEVEL, bevelSize: BEVEL, bevelSegments: 3 });
+    shell.rotateY(Math.PI / 2);
+    shell.translate(-depth / 2, 0, 0);
+    // Tumblehome: the glasshouse leans inward above the waistline.
+    const taper = (x: number, y: number) => x * (1 - Math.max(0, y - 0.88) * 0.32);
+    {
+      const pos = shell.getAttribute('position');
+      for (let i = 0; i < pos.count; i++) pos.setX(i, taper(pos.getX(i), pos.getY(i)));
+      shell.computeVertexNormals();
     }
-    // Grille + headlights.
-    box(body, 0.7, 0.12, 0.04, M.black(), 0, 0.72, -1.7);
-    for (const sx of [-0.52, 0.52]) {
-      lights.head.push(box(body, 0.34, 0.16, 0.05, M.headOff(), sx, 0.76, -1.7));
-      lights.brake.push(box(body, 0.2, 0.3, 0.05, M.brakeOff(), sx * 1.25, 0.84, 1.7));
-      lights.hazard.push(box(body, 0.12, 0.08, 0.05, M.hazardOff(), sx * 1.05, 0.62, -1.71));
-      // Mirrors.
-      box(body, 0.14, 0.1, 0.06, paint, sx * 1.48, 1.0, -0.62);
+    add(body, shell, paint, 0, 0, 0);
+
+    // Glass as thin panels just proud of the shell. A quad between two
+    // profile points (z0,y0)-(z1,y1), offset along the surface normal.
+    const glass = lambert('#4a5862'); // hazy, reflective grey
+    const quad = (z0: number, y0: number, z1: number, y1: number, hw: number) => {
+      const dz = z1 - z0, dy = y1 - y0;
+      const len = Math.hypot(dz, dy);
+      // Outward normal of the profile edge (shape is wound front -> back over the top).
+      const nz = -dy / len, ny = dz / len;
+      const o = BEVEL + 0.012;
+      const a = [z0 + nz * o, y0 + ny * o], b = [z1 + nz * o, y1 + ny * o];
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute([-hw, a[1], a[0], hw, a[1], a[0], hw, b[1], b[0], -hw, b[1], b[0]], 3));
+      g.setAttribute('uv', new THREE.Float32BufferAttribute([0, 0, 1, 0, 1, 1, 0, 1], 2));
+      g.setIndex([0, 1, 2, 0, 2, 3, 0, 2, 1, 0, 3, 2]);
+      g.computeVertexNormals();
+      add(body, g, glass, 0, 0, 0);
+    };
+    quad(-0.86, 0.95, -0.4, 1.32, 0.56); // windscreen
+    quad(1.37, 1.33, 1.57, 0.96, 0.56); // big rear window
+    // Side windows (one shape per side) with a black B-pillar.
+    const side = new THREE.Shape();
+    const win: Array<[number, number]> = [[-0.82, 1.0], [-0.4, 1.31], [1.28, 1.32], [1.5, 1.04]];
+    win.forEach(([z, y], i) => (i ? side.lineTo(-z, y) : side.moveTo(-z, y)));
+    side.closePath();
+    for (const sx of [-1, 1]) {
+      const g = new THREE.ShapeGeometry(side);
+      g.rotateY(Math.PI / 2);
+      if (sx < 0) g.scale(-1, 1, 1);
+      // Lean in with the tumblehome (pivot at the waistline).
+      g.translate(0, -0.88, 0);
+      g.rotateZ(sx * 0.233); // atan(HALF_W * 0.32)
+      g.translate(0, 0.88, 0);
+      add(body, g, glass, sx * (HALF_W + 0.014), 0, 0, 0, 0, 0);
+      box(body, 0.03, 0.4, 0.09, M.black(), sx * (HALF_W + 0.018 - 0.29 * 0.237), 1.17, 0.28).rotation.z = sx * 0.233;
+      // Wheel arches: dark discs behind the tyres.
+      for (const z of [-1.1, 1.14]) {
+        const arch = new THREE.CircleGeometry(0.4, 10, 0, Math.PI);
+        arch.rotateY(Math.PI / 2 * sx);
+        add(body, arch, M.black(), sx * (HALF_W + 0.008), 0.3, z);
+      }
+      // Door seam + handle.
+      box(body, 0.012, 0.5, 0.02, lambert('#b9bdc0'), sx * (HALF_W + 0.006), 0.66, 0.3);
+      box(body, 0.03, 0.04, 0.16, lambert('#c9cdd0'), sx * (HALF_W + 0.012), 0.86, 0.12);
+      box(body, 0.03, 0.04, 0.16, lambert('#c9cdd0'), sx * (HALF_W + 0.012), 0.86, 1.0);
+      // Mirror.
+      box(body, 0.16, 0.12, 0.08, paint, sx * 0.86, 1.02, -0.64);
     }
-    box(body, 0.42, 0.13, 0.03, M.plate(), 0, 0.5, 1.79);
-    box(body, 0.42, 0.13, 0.03, M.plate(), 0, 0.5, -1.79);
-    // Wheels.
-    for (const [x, z] of [[-0.66, -1.1], [0.66, -1.1], [-0.66, 1.1], [0.66, 1.1]] as const) wheel(body, 0.29, 0.2, x, z, wheels);
+    // Front: swept headlamps, slim black grille, lower intake.
+    const front = -1.64 - BEVEL - 0.01;
+    for (const sx of [-0.5, 0.5]) {
+      lights.head.push(box(body, 0.36, 0.14, 0.05, M.headOff(), sx, 0.74, front + 0.04));
+      lights.hazard.push(box(body, 0.1, 0.06, 0.05, M.hazardOff(), sx * 1.32, 0.72, front + 0.07));
+    }
+    box(body, 0.56, 0.08, 0.04, M.black(), 0, 0.74, front + 0.01);
+    box(body, 0.9, 0.1, 0.04, M.darkGrey(), 0, 0.46, front + 0.03);
+    // Rear: tall tailgate, small horizontal lamps either side of the plate.
+    const rear = 1.6 + BEVEL + 0.005;
+    for (const sx of [-0.5, 0.5]) lights.brake.push(box(body, 0.26, 0.08, 0.05, M.brakeOff(), sx, 0.58, rear - 0.02));
+    box(body, 0.38, 0.12, 0.03, M.plate(), 0, 0.58, rear);
+    box(body, 0.38, 0.12, 0.03, M.plate(), 0, 0.52, front);
+    box(body, 1.1, 0.05, 0.04, M.darkGrey(), 0, 0.4, rear - 0.03);
+    box(body, 0.5, 0.03, 0.03, lambert('#c9cdd0'), 0, 0.9, rear - 0.035);
+    // Wheels: narrow track, small 13" wheels.
+    for (const [x, z] of [[-0.69, -1.1], [0.69, -1.1], [-0.69, 1.14], [0.69, 1.14]] as const) wheel(body, 0.29, 0.21, x, z, wheels);
     // Dipper flash beam (visible only when flashing).
     if (this.beamMaterial) {
       const beamGeo = new THREE.ConeGeometry(2.2, 14, 12, 1, true);
       beamGeo.translate(0, -7, 0);
       beamGeo.rotateX(-Math.PI / 2);
       const beam = new THREE.Mesh(beamGeo, this.beamMaterial);
-      beam.position.set(0, 0.76, -1.75);
+      beam.position.set(0, 0.74, front);
       beam.visible = false;
       beam.castShadow = false;
       body.add(beam);
