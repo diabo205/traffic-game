@@ -2,13 +2,15 @@ import * as THREE from 'three';
 import { elevationAt, sampleRoad, ZONES } from '../sim/road';
 import type { SimEvent } from '../sim/types';
 import type { World } from '../sim/World';
+import { Birds } from './Birds';
 import { ChaseCamera } from './ChaseCamera';
 import { Effects } from './Effects';
 import { Environment } from './Environment';
 import { VehicleFactory } from './VehicleFactory';
 import type { VehicleVisual, VisualKind } from './VehicleFactory';
 
-const HORIZON = new THREE.Color('#f0cf98');
+/** Dusty, bleached Karachi horizon. */
+const HORIZON = new THREE.Color('#d9d3c4');
 
 /**
  * Reads World state (never writes it) and draws it with Three.js.
@@ -22,6 +24,7 @@ export class Renderer {
   private env: Environment | null = null;
   private envSeed = -1;
   private effects = new Effects();
+  private birds = new Birds();
   private player: VehicleVisual | null = null;
   private npcVisuals = new Map<number, VehicleVisual>();
   private pool = new Map<string, VehicleVisual[]>();
@@ -37,20 +40,20 @@ export class Renderer {
     this.gl.setPixelRatio(Math.min(window.devicePixelRatio, lowSpec ? 1.5 : 2));
     this.gl.outputColorSpace = THREE.SRGBColorSpace;
     this.gl.toneMapping = THREE.ACESFilmicToneMapping;
-    this.gl.toneMappingExposure = 1.15;
+    this.gl.toneMappingExposure = 1.0;
     this.gl.shadowMap.enabled = !lowSpec;
     this.gl.shadowMap.type = THREE.PCFShadowMap;
     container.appendChild(this.gl.domElement);
 
     this.chase = new ChaseCamera(1);
 
-    // Warm, hazy Karachi afternoon.
+    // Pale, dusty Karachi afternoon: hazy white-blue sky, harsh high sun.
     this.scene.background = HORIZON.clone();
-    this.scene.fog = new THREE.Fog(HORIZON, 70, 430);
+    this.scene.fog = new THREE.Fog(HORIZON, 55, 400);
     this.scene.add(makeSky());
-    this.scene.add(new THREE.HemisphereLight('#ffe2b0', '#8a6d4c', 1.5));
-    this.sun = new THREE.DirectionalLight('#ffd08a', 2.6);
-    this.sun.position.set(-40, 60, -30);
+    this.scene.add(new THREE.HemisphereLight('#e3e9ee', '#9c8a6c', 1.25));
+    this.sun = new THREE.DirectionalLight('#fff3dc', 3.1);
+    this.sun.position.set(-40, 60, 40);
     this.sun.castShadow = !lowSpec;
     this.sun.shadow.mapSize.set(2048, 2048);
     const sc = this.sun.shadow.camera;
@@ -63,6 +66,7 @@ export class Renderer {
     this.sun.shadow.bias = -0.0008;
     this.scene.add(this.sun, this.sun.target);
     this.scene.add(this.effects.points);
+    this.scene.add(this.birds.mesh);
 
     this.resize();
   }
@@ -211,6 +215,7 @@ export class Renderer {
     this.chase.update(dt, this.tmp, heading, p.speed, kick, lerp(p.prevBump, p.bump));
 
     this.sun.position.set(px - 40, elev + 60, -pz + 25);
+    this.birds.update(dt, pz, elev, this.time);
     this.sun.target.position.set(px, elev, -pz - 15);
     this.env?.update(this.time, pz);
     this.effects.update(dt);
@@ -226,10 +231,11 @@ function makeSky(): THREE.Mesh {
     depthWrite: false,
     fog: false,
     uniforms: {
-      top: { value: new THREE.Color('#9cb7c9') },
-      mid: { value: new THREE.Color('#f3d29b') },
+      top: { value: new THREE.Color('#86aac6') },
+      mid: { value: new THREE.Color('#e4e2d8') },
       bottom: { value: HORIZON.clone() },
-      sunDir: { value: new THREE.Vector3(-0.5, 0.35, -0.8).normalize() },
+      // Matches the directional light (sun behind-left of the camera).
+      sunDir: { value: new THREE.Vector3(-0.49, 0.73, 0.49).normalize() },
     },
     vertexShader: /* glsl */ `
       varying vec3 vDir;

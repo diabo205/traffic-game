@@ -247,3 +247,301 @@ export function stripesTexture(a = '#d62828', b = '#ffffff'): THREE.Texture {
     return finish(c, true);
   });
 }
+
+// ---------------------------------------------------------------------------
+// Saddar street dressing
+// ---------------------------------------------------------------------------
+
+/**
+ * Facade atlas for old Saddar buildings, sampled in world space by
+ * facadeMaterial.ts. 4 bay variants across; top half = one upper storey
+ * (3.1 m), bottom half = the ground-floor shop (4 m). Mostly light so the
+ * per-building tint shows through.
+ */
+export function saddarFacadeAtlas(): THREE.Texture {
+  return cached('saddarAtlas', () => {
+    const [c, ctx] = canvas(512, 256);
+    const rng = new Rng(77);
+    ctx.fillStyle = '#f4f1ea';
+    ctx.fillRect(0, 0, 512, 256);
+    // Weathering noise everywhere.
+    for (let i = 0; i < 3000; i++) {
+      ctx.fillStyle = `rgba(70,55,40,${rng.range(0.02, 0.07)})`;
+      ctx.fillRect(rng.int(0, 511), rng.int(0, 255), rng.int(1, 4), rng.int(1, 4));
+    }
+    const SH = ['#3d6b4a', '#2f5d7c', '#6b4a2f', '#4a6b6b'];
+    for (let b = 0; b < 4; b++) {
+      const x0 = b * 128;
+      // ---- Upper storey (rows 0..127): slab ledge at the bottom.
+      ctx.fillStyle = 'rgba(0,0,0,0.16)';
+      ctx.fillRect(x0, 116, 128, 12);
+      ctx.fillStyle = 'rgba(255,255,255,0.35)';
+      ctx.fillRect(x0, 114, 128, 3);
+      const wx = x0 + 34, wy = 26, ww = 60, wh = 72;
+      // Rain / AC streaks below the window.
+      for (let k = 0; k < 5; k++) {
+        ctx.fillStyle = `rgba(60,50,40,${rng.range(0.06, 0.14)})`;
+        ctx.fillRect(wx + rng.int(0, ww), wy + wh, rng.int(2, 6), rng.int(10, 30));
+      }
+      if (b === 0) {
+        // Window with open wooden shutters.
+        ctx.fillStyle = '#2b2a28';
+        ctx.fillRect(wx, wy, ww, wh);
+        ctx.fillStyle = SH[rng.int(0, 3)];
+        ctx.fillRect(wx - 16, wy, 15, wh);
+        ctx.fillRect(wx + ww + 1, wy, 15, wh);
+        ctx.fillStyle = 'rgba(0,0,0,0.25)';
+        for (let y = wy + 4; y < wy + wh; y += 7) {
+          ctx.fillRect(wx - 16, y, 15, 2);
+          ctx.fillRect(wx + ww + 1, y, 15, 2);
+        }
+      } else if (b === 1) {
+        // Barred window + AC unit.
+        ctx.fillStyle = '#34393d';
+        ctx.fillRect(wx, wy, ww, wh - 10);
+        ctx.fillStyle = '#8c8f91';
+        for (let x = wx + 6; x < wx + ww; x += 9) ctx.fillRect(x, wy, 2, wh - 10);
+        ctx.fillStyle = '#d9d6cc';
+        ctx.fillRect(wx + 8, wy + wh - 6, 44, 24);
+        ctx.fillStyle = '#9a978e';
+        for (let y = wy + wh - 2; y < wy + wh + 16; y += 4) ctx.fillRect(wx + 12, y, 36, 1);
+      } else if (b === 2) {
+        // Balcony door with railing.
+        ctx.fillStyle = '#26282a';
+        ctx.fillRect(wx + 4, wy - 6, ww - 8, wh + 22);
+        ctx.fillStyle = '#5a5f63';
+        ctx.fillRect(x0 + 10, 78, 108, 4);
+        for (let x = x0 + 12; x < x0 + 118; x += 8) ctx.fillRect(x, 78, 2, 36);
+      } else {
+        // Small vent window + big water stain.
+        ctx.fillStyle = '#3a3a38';
+        ctx.fillRect(wx + 14, wy + 14, 32, 26);
+        const g = ctx.createLinearGradient(0, 30, 0, 116);
+        g.addColorStop(0, 'rgba(80,70,55,0)');
+        g.addColorStop(1, 'rgba(80,70,55,0.25)');
+        ctx.fillStyle = g;
+        ctx.fillRect(x0 + 20, 30, 70, 86);
+      }
+
+      // ---- Ground-floor shop (rows 128..255): sign band at the top.
+      ctx.fillStyle = 'rgba(0,0,0,0.22)';
+      ctx.fillRect(x0, 128, 128, 26);
+      const sx = x0 + 8, sy = 160, sw = 112, sh = 96;
+      if (b === 0 || b === 2) {
+        // Rolling shutter, half up on b0, closed + painted on b2.
+        const open = b === 0 ? 46 : 0;
+        ctx.fillStyle = '#1d1b19';
+        ctx.fillRect(sx, sy, sw, sh);
+        if (open) {
+          for (let i = 0; i < 10; i++) {
+            ctx.fillStyle = `hsl(${rng.int(0, 360)},55%,${rng.int(35, 60)}%)`;
+            ctx.fillRect(sx + rng.int(0, sw - 16), sy + open + rng.int(0, sh - open - 14), rng.int(8, 20), rng.int(8, 14));
+          }
+        }
+        ctx.fillStyle = b === 2 ? '#5a7d9a' : '#a7a9a8';
+        ctx.fillRect(sx, sy, sw, open || sh);
+        ctx.fillStyle = 'rgba(0,0,0,0.25)';
+        for (let y = sy + 3; y < sy + (open || sh); y += 5) ctx.fillRect(sx, y, sw, 1);
+      } else if (b === 1) {
+        // Open shop: lit interior with goods and a tube light.
+        ctx.fillStyle = '#2a2622';
+        ctx.fillRect(sx, sy, sw, sh);
+        ctx.fillStyle = '#fffbe6';
+        ctx.fillRect(sx + 20, sy + 6, 70, 4);
+        for (let i = 0; i < 18; i++) {
+          ctx.fillStyle = `hsl(${rng.int(0, 360)},60%,${rng.int(40, 65)}%)`;
+          ctx.fillRect(sx + rng.int(2, sw - 14), sy + rng.int(16, sh - 14), rng.int(6, 14), rng.int(6, 12));
+        }
+      } else {
+        // Stairwell entrance between pillars.
+        ctx.fillStyle = '#c9c2b4';
+        ctx.fillRect(sx, sy, 16, sh);
+        ctx.fillRect(sx + sw - 16, sy, 16, sh);
+        ctx.fillStyle = '#151413';
+        ctx.fillRect(sx + 34, sy + 8, 44, sh - 8);
+      }
+    }
+    // Mipmapped; facadeMaterial samples with textureGrad to avoid bay seams.
+    return finish(c);
+  });
+}
+
+const SHOPS: ReadonlyArray<{ en: string; ur: string; bg: string; fg: string }> = [
+  { en: 'AL-MADINA CLOTH HOUSE', ur: 'کپڑا', bg: '#1b5e20', fg: '#ffffff' },
+  { en: 'BISMILLAH MOBILE CENTRE', ur: 'موبائل', bg: '#0d47a1', fg: '#ffeb3b' },
+  { en: 'NEW KARACHI ELECTRONICS', ur: 'کراچی', bg: '#b71c1c', fg: '#ffffff' },
+  { en: 'SADDAR SWEETS & BAKERS', ur: 'مٹھائی', bg: '#ffeb3b', fg: '#b71c1c' },
+  { en: 'PAK MEDICAL STORE', ur: 'میڈیکل اسٹور', bg: '#ffffff', fg: '#1b5e20' },
+  { en: 'ROYAL TAILORS', ur: 'ٹیلرز', bg: '#4a148c', fg: '#ffffff' },
+  { en: 'STAR PHOTOSTAT', ur: 'فوٹو اسٹیٹ', bg: '#e65100', fg: '#ffffff' },
+  { en: 'SHOE PALACE', ur: 'جوتے', bg: '#263238', fg: '#ffc107' },
+  { en: 'ZAM ZAM TRAVELS', ur: 'ٹریولز', bg: '#006064', fg: '#ffffff' },
+  { en: 'AL-FAISAL HARDWARE', ur: 'ہارڈویئر', bg: '#f5f5f5', fg: '#0d47a1' },
+];
+export const SHOP_SIGN_COUNT = SHOPS.length;
+
+/** Bilingual shop signboard (English + Urdu). */
+export function shopSignTexture(i: number): THREE.Texture {
+  const s = SHOPS[i % SHOPS.length];
+  return cached(`shop${i % SHOPS.length}`, () => {
+    const [c, ctx] = canvas(512, 128);
+    ctx.fillStyle = s.bg;
+    ctx.fillRect(0, 0, 512, 128);
+    ctx.strokeStyle = s.fg;
+    ctx.lineWidth = 4;
+    ctx.strokeRect(6, 6, 500, 116);
+    ctx.fillStyle = s.fg;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = '900 44px system-ui, sans-serif';
+    ctx.fillText(s.en, 256, 44, 480);
+    ctx.font = '700 34px "Noto Nastaliq Urdu", "Noto Naskh Arabic", "Segoe UI", Tahoma, sans-serif';
+    ctx.direction = 'rtl';
+    ctx.fillText(s.ur, 256, 94, 480);
+    return finish(c);
+  });
+}
+
+const BANNERS: ReadonlyArray<{ lines: string[]; bg: string; fg: string }> = [
+  { lines: ['JASHN-E-AZADI MUBARAK'], bg: '#01411c', fg: '#ffffff' },
+  { lines: ['GRAND SALE · 50% OFF'], bg: '#d50000', fg: '#ffeb3b' },
+  { lines: ['WELCOME TO SADDAR'], bg: '#ffffff', fg: '#01411c' },
+  { lines: ['ROAD SAFETY WEEK · DHYAN SE'], bg: '#ffd600', fg: '#212121' },
+  { lines: ['CRICKET TOURNAMENT · FINAL'], bg: '#1565c0', fg: '#ffffff' },
+];
+export const BANNER_COUNT = BANNERS.length;
+
+export function streetBannerTexture(i: number): THREE.Texture {
+  const b = BANNERS[i % BANNERS.length];
+  return signTexture(b.lines, b.bg, b.fg, 768, 96);
+}
+
+/** Black-and-yellow kerb paint (repeats along the kerb). */
+export function kerbStripeTexture(): THREE.Texture {
+  return cached('kerbStripe', () => {
+    const [c, ctx] = canvas(64, 16);
+    ctx.fillStyle = '#f2c200';
+    ctx.fillRect(0, 0, 32, 16);
+    ctx.fillStyle = '#1c1c1c';
+    ctx.fillRect(32, 0, 32, 16);
+    const t = finish(c, true);
+    t.magFilter = THREE.NearestFilter;
+    return t;
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Landmarks
+// ---------------------------------------------------------------------------
+
+/** Victorian-gothic stone wall with pointed-arch windows (Empress Market). */
+export function gothicWallTexture(): THREE.Texture {
+  return cached('gothic', () => {
+    const [c, ctx] = canvas(256, 256);
+    const rng = new Rng(9);
+    ctx.fillStyle = '#d9b46e';
+    ctx.fillRect(0, 0, 256, 256);
+    // Ashlar courses.
+    ctx.strokeStyle = 'rgba(120,85,40,0.35)';
+    ctx.lineWidth = 1;
+    for (let y = 0; y < 256; y += 12) {
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(256, y);
+      ctx.stroke();
+      for (let x = (y / 12) % 2 ? 0 : 16; x < 256; x += 32) {
+        ctx.beginPath();
+        ctx.moveTo(x, y);
+        ctx.lineTo(x, y + 12);
+        ctx.stroke();
+      }
+    }
+    for (let i = 0; i < 800; i++) {
+      ctx.fillStyle = `rgba(90,60,30,${rng.range(0.03, 0.1)})`;
+      ctx.fillRect(rng.int(0, 255), rng.int(0, 255), rng.int(1, 4), rng.int(1, 4));
+    }
+    // Two pointed-arch windows per tile.
+    for (const cx of [64, 192]) {
+      ctx.fillStyle = '#c99f58';
+      archPath(ctx, cx, 200, 46, 150);
+      ctx.fill();
+      ctx.fillStyle = '#2a2420';
+      archPath(ctx, cx, 196, 36, 136);
+      ctx.fill();
+      ctx.fillStyle = '#c99f58';
+      ctx.fillRect(cx - 2, 70, 4, 126);
+    }
+    const t = finish(c, true);
+    return t;
+  });
+}
+
+function archPath(ctx: CanvasRenderingContext2D, cx: number, baseY: number, halfW: number, height: number): void {
+  const springY = baseY - height + halfW * 1.2;
+  ctx.beginPath();
+  ctx.moveTo(cx - halfW, baseY);
+  ctx.lineTo(cx - halfW, springY);
+  ctx.quadraticCurveTo(cx - halfW, baseY - height + 10, cx, baseY - height);
+  ctx.quadraticCurveTo(cx + halfW, baseY - height + 10, cx + halfW, springY);
+  ctx.lineTo(cx + halfW, baseY);
+  ctx.closePath();
+}
+
+export function clockFaceTexture(): THREE.Texture {
+  return cached('clock', () => {
+    const [c, ctx] = canvas(128, 128);
+    ctx.fillStyle = '#d9b46e';
+    ctx.fillRect(0, 0, 128, 128);
+    ctx.fillStyle = '#f7f2e4';
+    ctx.beginPath();
+    ctx.arc(64, 64, 54, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = '#2b2b2b';
+    ctx.lineWidth = 4;
+    ctx.stroke();
+    for (let i = 0; i < 12; i++) {
+      const a = (i / 12) * Math.PI * 2;
+      ctx.fillStyle = '#2b2b2b';
+      ctx.fillRect(64 + Math.sin(a) * 44 - 2, 64 - Math.cos(a) * 44 - 2, 4, 4);
+    }
+    ctx.lineWidth = 5;
+    ctx.beginPath();
+    ctx.moveTo(64, 64);
+    ctx.lineTo(64 + 26, 64 - 18);
+    ctx.moveTo(64, 64);
+    ctx.lineTo(64 - 6, 64 - 40);
+    ctx.stroke();
+    return finish(c);
+  });
+}
+
+/** White marble face with one tall Moorish pointed arch (Mazar-e-Quaid). */
+export function mazarFaceTexture(): THREE.Texture {
+  return cached('mazar', () => {
+    const [c, ctx] = canvas(256, 256);
+    ctx.fillStyle = '#f4f3ee';
+    ctx.fillRect(0, 0, 256, 256);
+    ctx.fillStyle = '#e4e2da';
+    archPath(ctx, 128, 256, 74, 230);
+    ctx.fill();
+    ctx.fillStyle = '#7f8a86';
+    archPath(ctx, 128, 256, 58, 206);
+    ctx.fill();
+    // Copper grille lattice inside the arch.
+    ctx.strokeStyle = 'rgba(40,60,55,0.6)';
+    ctx.lineWidth = 2;
+    for (let x = 70; x < 190; x += 12) {
+      ctx.beginPath();
+      ctx.moveTo(x, 90);
+      ctx.lineTo(x, 256);
+      ctx.stroke();
+    }
+    for (let y = 100; y < 256; y += 12) {
+      ctx.beginPath();
+      ctx.moveTo(70, y);
+      ctx.lineTo(186, y);
+      ctx.stroke();
+    }
+    return finish(c);
+  });
+}

@@ -69,7 +69,7 @@ export class Game {
     const seed = Number(params.get('seed') ?? '1337') >>> 0 || 1337;
     const lowSpec = params.has('low') || (window.matchMedia('(pointer: coarse)').matches && !params.has('high'));
     // Debug: ?z=1500 starts further along the route.
-    const startZ = Math.max(0, Math.min(4000, Number(params.get('z') ?? '0') || 0));
+    const startZ = Math.max(0, Math.min(4200, Number(params.get('z') ?? '0') || 0));
     const renderer = await Renderer.create(container, lowSpec);
     return new Game(renderer, seed, startZ, uiRoot);
   }
