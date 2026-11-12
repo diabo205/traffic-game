@@ -15,8 +15,8 @@ export class ChaseCamera {
   private initialised = false;
 
   /** Distance behind and height above the car. */
-  distance = 6.4;
-  height = 2.5;
+  distance = 5.0;
+  height = 2.2;
   baseFov = 62;
 
   constructor(aspect: number) {
@@ -45,10 +45,10 @@ export class ChaseCamera {
     this.yaw += (heading - this.yaw) * yawRate;
 
     const back = speed < -0.5 ? -0.6 : 1; // look forward even when reversing slowly
-    const dist = this.distance + Math.min(1.6, Math.max(0, speed) * 0.035);
+    const dist = this.distance + Math.min(0.9, Math.max(0, speed) * 0.025);
     const desired = new THREE.Vector3(
       target.x - Math.sin(this.yaw) * dist * back,
-      target.y + this.height + Math.max(0, speed) * 0.012,
+      target.y + this.height + Math.max(0, speed) * 0.008,
       target.z + Math.cos(this.yaw) * dist * back,
     );
 
@@ -71,7 +71,7 @@ export class ChaseCamera {
     this.pos.copy(desired).add(change.add(temp).multiplyScalar(decay));
     // Camera can't lag more than a few metres (prevents clipping into the car).
     const lag = this.pos.clone().sub(desired);
-    if (lag.length() > 3) this.pos.copy(desired).add(lag.setLength(3));
+    if (lag.length() > 1.8) this.pos.copy(desired).add(lag.setLength(1.8));
 
     const lookAhead = new THREE.Vector3(
       target.x + Math.sin(this.yaw) * 6,
@@ -104,8 +104,8 @@ export class ChaseCamera {
     this.camera.aspect = aspect;
     // Portrait phones: pull back and widen so the road is readable.
     this.baseFov = aspect < 0.8 ? 74 : 62;
-    this.distance = aspect < 0.8 ? 7.4 : 6.4;
-    this.height = aspect < 0.8 ? 3.0 : 2.5;
+    this.distance = aspect < 0.8 ? 5.6 : 5.0;
+    this.height = aspect < 0.8 ? 2.5 : 2.2;
     this.camera.updateProjectionMatrix();
   }
 }

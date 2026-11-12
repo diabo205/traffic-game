@@ -38,7 +38,7 @@ export function asphaltTexture(): THREE.Texture {
     ctx.fillStyle = '#9a9a9a';
     ctx.fillRect(0, 0, 256, 256);
     for (let i = 0; i < 9000; i++) {
-      const v = 120 + rng.int(0, 90);
+      const v = 138 + rng.int(0, 56);
       ctx.fillStyle = `rgb(${v},${v},${v})`;
       ctx.fillRect(rng.int(0, 255), rng.int(0, 255), rng.int(1, 2), rng.int(1, 2));
     }

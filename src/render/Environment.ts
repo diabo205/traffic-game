@@ -437,6 +437,9 @@ export class Environment {
 
   private buildHazards(hm: HazardManager, factory: VehicleFactory): void {
     const potholes: THREE.BufferGeometry[] = [];
+    const potholeRims: THREE.BufferGeometry[] = [];
+    const potholeLips: THREE.BufferGeometry[] = [];
+    const rubble: THREE.BufferGeometry[] = [];
     const rims: THREE.BufferGeometry[] = [];
     const manholes: THREE.BufferGeometry[] = [];
     const sticks: THREE.BufferGeometry[] = [];
@@ -456,14 +459,28 @@ export class Environment {
     for (const h of hm.hazards) {
       switch (h.kind) {
         case 'pothole': {
-          const g = new THREE.CircleGeometry(1, 7);
+          // Readable at speed: pale crumbled rim -> dark lip -> near-black hole,
+          // plus loose rubble. Drawn a bit larger than the hit area.
+          const ring = (r0: number, r1: number, list: THREE.BufferGeometry[], lift: number) => {
+            const r = new THREE.RingGeometry(r0, r1, 9);
+            r.rotateX(-Math.PI / 2);
+            r.scale(h.hw, 1, h.hl);
+            list.push(at(r, h, lift));
+          };
+          ring(1.0, 1.4, potholeRims, 0.04);
+          ring(0.72, 1.0, potholeLips, 0.045);
+          const g = new THREE.CircleGeometry(0.74, 9);
           g.rotateX(-Math.PI / 2);
           g.scale(h.hw, 1, h.hl);
-          potholes.push(at(g, h, 0.045));
-          const r = new THREE.RingGeometry(1, 1.25, 7);
-          r.rotateX(-Math.PI / 2);
-          r.scale(h.hw, 1, h.hl);
-          rims.push(at(r, h, 0.04));
+          potholes.push(at(g, h, 0.05));
+          for (let k = 0; k < 4; k++) {
+            const a = h.id * 2.39 + k * 1.7;
+            const d = 1.35 + ((h.id * 7 + k * 3) % 5) * 0.08;
+            const c = new THREE.BoxGeometry(0.14, 0.06, 0.11);
+            c.rotateY(a);
+            c.translate(Math.cos(a) * h.hw * d, 0.03, Math.sin(a) * h.hl * d);
+            rubble.push(at(c, h, 0.02));
+          }
           break;
         }
         case 'manhole': {
@@ -525,7 +542,10 @@ export class Environment {
     };
     const decal = (color: string, factor: number) =>
       new THREE.MeshLambertMaterial({ color, polygonOffset: true, polygonOffsetFactor: factor });
-    addMerged(potholes, decal('#2b2724', -4));
+    addMerged(potholeRims, decal('#d2c4aa', -3));
+    addMerged(potholeLips, decal('#4a4036', -4));
+    addMerged(potholes, new THREE.MeshBasicMaterial({ color: '#0d0b0a', polygonOffset: true, polygonOffsetFactor: -5 }));
+    addMerged(rubble, new THREE.MeshLambertMaterial({ color: '#a39887' }));
     addMerged(rims, decal('#6e665c', -3));
     addMerged(manholes, new THREE.MeshBasicMaterial({ color: '#050505', polygonOffset: true, polygonOffsetFactor: -4 }));
     addMerged(sticks, new THREE.MeshLambertMaterial({ color: '#6b4a2b' }));
