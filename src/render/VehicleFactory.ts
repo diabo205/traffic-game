@@ -254,7 +254,7 @@ export class VehicleFactory {
     });
     const loader = new GLTFLoader();
     await Promise.all(
-      ['alto'].map(async (name) => {
+      ['alto', 'rickshaw'].map(async (name) => {
         try {
           const gltf = await loader.loadAsync(`${import.meta.env.BASE_URL}models/${name}.glb`);
           this.models.set(name, gltf.scene);
@@ -289,7 +289,7 @@ export class VehicleFactory {
       case 'car': return this.car(variant);
       case 'bike': return this.bike(variant);
       case 'minibus': return this.minibus(variant);
-      case 'rickshaw': return this.rickshaw(variant);
+      case 'rickshaw': return this.models.has('rickshaw') ? this.rickshawModel(variant) : this.rickshaw(variant);
       case 'cart': return this.cart(variant);
       case 'truck': return this.truck(variant);
       case 'police': return this.police();
@@ -310,7 +310,7 @@ export class VehicleFactory {
    * Node names carry meaning: head_, brake_ and hazard_ nodes are lights; wheel_ nodes spin.
    * glTF PBR materials become smooth Lambert to match the scene's lighting.
    */
-  private fromModel(name: string, wheelRadius: number): Proto {
+  private fromModel(name: string, wheelRadius: number, paint?: string): Proto {
     const { root, body } = this.shell();
     const src = this.models.get(name);
     const wheels: THREE.Object3D[] = [];
@@ -324,7 +324,8 @@ export class VehicleFactory {
       const m = o.material as THREE.MeshStandardMaterial;
       let lm = mats.get(m.name);
       if (!lm) {
-        lm = new THREE.MeshLambertMaterial({ color: m.color, name: m.name });
+        const color = paint && m.name === 'paint' ? new THREE.Color(paint) : m.color;
+        lm = new THREE.MeshLambertMaterial({ color, name: m.name });
         mats.set(m.name, lm);
       }
       o.material = lm;
@@ -357,6 +358,14 @@ export class VehicleFactory {
       lights.beam = beam;
     }
     return { root, body, wheels, wheelRadius, lights };
+  }
+
+  /** Sazgar auto-rickshaw from Blender, in Karachi's common liveries, with a driver. */
+  private rickshawModel(variant: number): Proto {
+    const LIVERY = ['#e8731c', '#e8731c', '#2e7d32', '#f2b51c', '#e8731c', '#c9461c'];
+    const p = this.fromModel('rickshaw', 0.24, LIVERY[variant % LIVERY.length]);
+    rider(p.body, SHIRT_COLORS[variant % SHIRT_COLORS.length], 0, 0.91, -0.32, false);
+    return p;
   }
 
   // ---- Suzuki Alto (procedural fallback) --------------------------------------
