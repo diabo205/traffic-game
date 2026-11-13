@@ -155,6 +155,10 @@ function mergeMeshes(body: THREE.Object3D, meshes: THREE.Mesh[], material: THREE
   });
   // Extruded / shape parts are non-indexed; boxes are indexed. Unify.
   if (geos.some((g) => !g.index) && geos.some((g) => g.index)) geos = geos.map((g) => (g.index ? g.toNonIndexed() : g));
+  // Model parts may differ in attributes (e.g. projected panels have no uv):
+  // keep only those every part has.
+  const common = Object.keys(geos[0].attributes).filter((k) => geos.every((g) => k in g.attributes));
+  for (const g of geos) for (const k of Object.keys(g.attributes)) if (!common.includes(k)) g.deleteAttribute(k);
   const merged = mergeGeometries(geos, false);
   geos.forEach((g) => g.dispose());
   if (!merged) return null;
@@ -285,7 +289,7 @@ export class VehicleFactory {
 
   private build(kind: VisualKind, variant: number): Proto {
     switch (kind) {
-      case 'alto': return this.models.has('alto') ? this.fromModel('alto', 0.29) : this.alto();
+      case 'alto': return this.models.has('alto') ? this.fromModel('alto', 0.28) : this.alto();
       case 'car': return this.car(variant);
       case 'bike': return this.bike(variant);
       case 'minibus': return this.minibus(variant);

@@ -39,21 +39,31 @@ ROOF_Z = 1.8
 
 # ---- Chassis + rear passenger tub --------------------------------------------------------
 cube("floor", (0, -0.1, 0.31), (1.16, 2.3, 0.06), BLACK)
-# Rear deck / luggage tub behind the bench (flat top at z 0.62).
-cube("tub", (0, -1.0, 0.47), (2 * HW, 0.66, 0.32), PAINT, 0.035)
+# Open rear: a low deck is the footwell for the rear-facing bench (boarded
+# from the footstep at the back).
+cube("deck", (0, -1.23, 0.41), (2 * HW, 0.2, 0.28), PAINT, 0.03)
 # Side panels of the passenger compartment with three black stripes.
 for sx in (-1, 1):
-    cube("side", (sx * (HW - 0.02), -0.62, 0.62), (0.04, 0.78, 0.64), PAINT, 0.015)
-    cube("side_rail", (sx * (HW - 0.01), -0.62, 0.96), (0.06, 0.8, 0.04), PAINT, 0.015)
+    cube("side", (sx * (HW - 0.02), -0.74, 0.62), (0.04, 1.1, 0.64), PAINT, 0.015)
+    cube("side_rail", (sx * (HW - 0.01), -0.74, 0.96), (0.06, 1.12, 0.04), PAINT, 0.015)
     for k, z in enumerate((0.84, 0.74, 0.64)):
         cube("stripe", (sx * HW, -0.6 + k * 0.03, z), (0.012, 0.5 - k * 0.06, 0.035), BLACK)
     # Rear fender flare over each rear wheel.
     kit.arch_lip(sx * (HW - 0.01), -0.82, R, 0.3, PAINT, 0.045)
-# Bench: dark cushion, beige split backrest, orange seat box with vent slots.
-cube("cushion", (0, -0.5, 0.84), (2 * HW - 0.08, 0.46, 0.13), SEAT, 0.04)
+# Two benches back to back sharing one beige split backrest: one faces
+# forward, the other faces the open rear.
+cube("cushion", (0, -0.48, 0.84), (2 * HW - 0.08, 0.44, 0.13), SEAT, 0.04)
+cube("cushion_rear", (0, -0.95, 0.84), (2 * HW - 0.08, 0.4, 0.13), SEAT, 0.04)
 for sx in (-1, 1):
-    cube("backrest", (sx * 0.29, -0.76, 1.17), (0.5, 0.1, 0.54), SEAT_BACK, 0.04)
-cube("backrest_mid", (0, -0.76, 1.17), (0.1, 0.09, 0.54), SEAT, 0.02)
+    cube("backrest", (sx * 0.29, -0.72, 1.17), (0.5, 0.14, 0.54), SEAT_BACK, 0.04)
+cube("backrest_mid", (0, -0.72, 1.17), (0.1, 0.15, 0.54), SEAT, 0.02)
+# Rear seat box: orange face with a lockable hatch, above the footwell.
+cube("seat_box_r", (0, -1.14, 0.62), (2 * HW - 0.1, 0.04, 0.34), PAINT, 0.012)
+for z in (0.52, 0.72):
+    cube("hatch_h", (0, -1.162, z), (0.5, 0.008, 0.012), BLACK)
+for x in (-0.25, 0.25):
+    cube("hatch_v", (x, -1.162, 0.62), (0.012, 0.008, 0.2), BLACK)
+cube("lock", (0, -1.165, 0.66), (0.03, 0.01, 0.04), CHROME)
 cube("seat_box", (0, -0.25, 0.56), (2 * HW - 0.12, 0.04, 0.48), PAINT, 0.012)
 for k in range(-2, 3):
     cube("vent", (k * 0.16, -0.225, 0.55), (0.03, 0.01, 0.22), BLACK)
@@ -122,7 +132,6 @@ for sx in (-1, 1):
     bar("post_cab", (sx * 0.58, 0.28, 1.07), (sx * 0.6, 0.28, ROOF_Z - 0.04), 0.017, CHROME)
     bar("rail_side", (x, REAR_Y + 0.02, 1.25), (x, -0.18, 1.25), 0.012, CHROME)
     bar("rail_low", (x, REAR_Y + 0.02, 0.98), (x, -1.0, 0.98), 0.012, CHROME)
-bar("rail_back", (-HW, REAR_Y + 0.02, 1.25), (HW, REAR_Y + 0.02, 1.25), 0.012, CHROME)
 
 # ---- Rear: combination lamps and the black footstep frame -----------------------------------------
 for sx in (-1, 1):
