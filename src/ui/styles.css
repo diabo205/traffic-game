@@ -348,3 +348,54 @@ html, body {
   .map-slot { top: calc(64px + var(--safe-t)); }
 }
 .tbtn.small.drift { font-size: 11px; font-weight: 900; letter-spacing: 0.04em; background: rgba(255, 140, 0, 0.55); }
+
+/* Stunt score, combo meter and pop-ups. */
+.score { font-weight: 900; color: var(--accent); font-size: 13px; margin-top: 2px; text-align: right; }
+.hud:not(.city) .score, .hud:not(.city) .combo-wrap { display: none; }
+.combo-wrap {
+  position: absolute;
+  right: calc(12px + var(--safe-r));
+  top: 56%;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  pointer-events: none;
+}
+.combo {
+  background: var(--bg);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 12px;
+  padding: 6px 12px 8px;
+  text-align: right;
+  min-width: 110px;
+}
+.combo.pop { animation: combo-pop 0.25s ease-out; }
+@keyframes combo-pop { 0% { transform: scale(1.18); } 100% { transform: scale(1); } }
+.combo-mult { font-size: 34px; font-weight: 900; line-height: 1; color: var(--accent); text-shadow: 0 2px 0 #7a4b00; }
+.combo-pts { font-size: 15px; font-weight: 800; color: var(--ink); margin-top: 2px; }
+.combo-bar { height: 4px; margin-top: 5px; border-radius: 2px; background: rgba(0, 0, 0, 0.45); overflow: hidden; }
+.combo-fill { height: 100%; background: var(--accent); }
+.stunts { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; }
+.stunt {
+  font-weight: 900;
+  font-size: 15px;
+  letter-spacing: 0.04em;
+  color: #fff;
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.7), 0 0 2px #000;
+  animation: stunt-float 1.8s ease-out forwards;
+}
+.stunt b { color: var(--good); }
+@keyframes stunt-float {
+  0% { opacity: 0; transform: translateX(20px) scale(1.2); }
+  12% { opacity: 1; transform: translateX(0) scale(1); }
+  75% { opacity: 1; }
+  100% { opacity: 0; transform: translateY(-14px); }
+}
+.stunt-line { color: var(--accent) !important; font-weight: 700; }
+@media (max-width: 700px), (max-height: 500px) {
+  .combo-wrap { top: 50%; }
+  .combo-mult { font-size: 26px; }
+  .stunt { font-size: 12px; }
+}

@@ -77,6 +77,9 @@ export interface CityNpc {
   lastHitTick: number;
   waitTime: number;
   blockedTime: number;
+  /** seconds left pulling over for the player's horn / dipper */
+  yieldTime: number;
+  honkCooldown: number;
   /** id of what this NPC stopped for last tick (-1 none, 0 player) */
   blocker: number;
 
@@ -169,6 +172,8 @@ export class CityTraffic {
       waitTime: 0,
       blockedTime: 0,
       blocker: -1,
+      yieldTime: 0,
+      honkCooldown: 0,
       prevX: p.x,
       prevZ: p.z,
       prevHeading: link.heading,
@@ -219,9 +224,48 @@ export class CityTraffic {
     return (lo + (hi - lo) * n.temperament) * link.pace;
   }
 
+  /** Vehicles that pulled over for the horn this tick. */
+  honked = 0;
+
+  /**
+   * Horn or dipper: traffic in front of the player, within earshot, pulls
+   * toward the kerb (or into the kerb lane) and slows to let the car past.
+   */
+  private honk(player: PlayerCar): void {
+    this.honked = 0;
+    if (!player.horn && !player.dipper) return;
+    const fx = Math.sin(player.heading), fz = Math.cos(player.heading);
+    const m = this.map;
+    for (const n of this.npcs) {
+      if (n.honkCooldown > 0 || n.kind === 'cart') continue;
+      const dx = n.x - player.x, dz = n.z - player.z;
+      const along = dx * fx + dz * fz;
+      const lat = Math.abs(dx * fz - dz * fx);
+      if (along < 2 || along > 38 || lat > 4.5) continue;
+      // Only traffic going our way can sensibly pull over for us.
+      if (Math.cos(n.heading - player.heading) < 0.5) continue;
+      n.yieldTime = 2.8;
+      n.honkCooldown = 5;
+      this.honked++;
+      if (!n.path) {
+        const link = m.links[n.link];
+        const kerb = link.lanes - 1;
+        if (n.lane !== kerb && kerb !== link.rampLane) {
+          const p = m.linkPoint(link, n.s, m.laneOffset(link, kerb));
+          if (!this.npcs.some((o) => o !== n && Math.hypot(o.x - p.x, o.z - p.z) < 7)) {
+            n.lane = kerb;
+            n.nextLane = Math.min(n.lane, m.links[n.nextLink].lanes - 1);
+            if (n.nextLane === m.links[n.nextLink].rampLane) n.nextLane = 0;
+          }
+        }
+      }
+    }
+  }
+
   update(dt: number, player: PlayerCar): void {
     const m = this.map;
     const px = player.x, pz = player.z;
+    this.honk(player);
 
     // ---- Spawning / despawning (stable array order) --------------------------
     for (let i = this.npcs.length - 1; i >= 0; i--) {
@@ -312,6 +356,11 @@ export class CityTraffic {
       n.blocker = blocker;
       if (creep) target = Math.min(target, 3);
 
+      if (n.yieldTime > 0) {
+        n.yieldTime -= dt;
+        target = Math.min(target, this.cruise(n, link) * 0.4);
+      }
+      n.honkCooldown = Math.max(0, n.honkCooldown - dt);
       if (stopGap < Infinity) {
         const margin = 2.2;
         const allowed = stopGap <= margin ? 0 : Math.sqrt(2 * spec.decel * 0.75 * (stopGap - margin));
@@ -380,7 +429,12 @@ export class CityTraffic {
         n.latVel = 0;
       } else {
         const l = m.links[n.link];
-        const offT = m.laneOffset(l, n.lane);
+        let offT = m.laneOffset(l, n.lane);
+        if (n.yieldTime > 0 && n.lane === l.lanes - 1 && l.rampLane !== n.lane) {
+          // Squeeze up against the kerb.
+          const room = l.median / 2 + l.lanes * l.laneW - offT - spec.hw - 0.2;
+          offT += Math.max(0, Math.min(1.3, room));
+        }
         const before = n.lat;
         n.lat = approach(n.lat, offT, spec.latSpeed * dt);
         const latRate = (n.lat - before) / dt;

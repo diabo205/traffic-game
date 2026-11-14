@@ -88,5 +88,9 @@ export type SimEvent =
   | { type: 'jump' }
   | { type: 'land'; impact: number; air: number }
   | { type: 'smash'; kind: string; x: number; z: number; impact: number }
+  | { type: 'stunt'; kind: string; label: string; points: number; mult: number }
+  | { type: 'comboEnd'; total: number; mult: number; tip: number }
+  | { type: 'comboBroken'; lost: number }
+  | { type: 'honk'; cleared: number }
   | { type: 'gameover'; reason: Exclude<GameOverReason, null> }
   | { type: 'complete' };

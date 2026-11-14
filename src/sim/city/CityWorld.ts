@@ -9,6 +9,7 @@ import type { CityMap, Rect } from './cityMap';
 import { CityTraffic } from './CityTraffic';
 import { Fares } from './Fares';
 import { Props } from './Props';
+import { Stunts } from './Stunts';
 
 const RESTITUTION = 0.25;
 const HIT_COOLDOWN = 36;
@@ -50,6 +51,8 @@ export class CityWorld {
   readonly traffic: CityTraffic;
   readonly fares: Fares;
   readonly props: Props;
+  readonly stunts = new Stunts();
+  private lastHonkTick = -1e9;
   readonly level: CityLevel;
   private startX = 0;
   private startZ = 0;
@@ -108,11 +111,15 @@ export class CityWorld {
     this.level.phase = 'running';
     this.events.push({ type: 'zone', zoneIndex: -1, name: 'Saddar', banner: 'SADDAR · ON DUTY' });
     this.fares.startShift(this.events);
+    this.stunts.resetShift();
   }
 
   /** Start a new shift after the last one ended (keeps driving meanwhile). */
   startShift(): void {
-    if (this.level.phase === 'running' && !this.fares.onShift) this.fares.startShift(this.events);
+    if (this.level.phase === 'running' && !this.fares.onShift) {
+      this.fares.startShift(this.events);
+      this.stunts.resetShift();
+    }
   }
 
   drainEvents(): SimEvent[] {
@@ -140,6 +147,7 @@ export class CityWorld {
       return;
     }
     const running = this.level.phase === 'running';
+    const firstEvent = this.events.length;
     p.update(input, CITY_TOP_SPEED, 1 / 60, running);
     if (p.boostFired) this.events.push({ type: 'boost', kind: p.boostFired });
     if (p.driftEnded > 1) this.events.push({ type: 'drift', seconds: p.driftEnded });
@@ -152,6 +160,21 @@ export class CityWorld {
     this.trafficCollisions();
     this.streetName();
     this.fares.update(1 / 60, p, this.tick, this.events);
+
+    // Horn / dipper cleared the way.
+    if (this.traffic.honked > 0 && this.tick - this.lastHonkTick > 90) {
+      this.lastHonkTick = this.tick;
+      this.events.push({ type: 'honk', cleared: this.traffic.honked });
+    }
+    // Stunts: score what happened this tick, then tick the combo clock.
+    const f = this.fares;
+    const pay = (rs: number) => {
+      f.money += rs;
+      f.shiftEarnings += rs;
+    };
+    const end = this.events.length;
+    for (let i = firstEvent; i < end; i++) this.stunts.handle(this.events[i], this.events);
+    this.stunts.update(1 / 60, this.tick, p, this.traffic.npcs, !!f.fare, this.events, pay);
 
     if (running) {
       const st = this.level.stats;

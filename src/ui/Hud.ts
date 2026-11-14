@@ -19,6 +19,14 @@ export class Hud {
   private shiftText: HTMLDivElement;
   readonly shiftBtn: HTMLButtonElement;
   readonly mapSlot: HTMLDivElement;
+  private comboBox: HTMLDivElement;
+  private comboMult: HTMLDivElement;
+  private comboPts: HTMLDivElement;
+  private comboFill: HTMLDivElement;
+  private stuntStack: HTMLDivElement;
+  private score: HTMLDivElement;
+  private lastCombo = '';
+  private lastScore = -1;
   private lastFareKey = '';
   private lastMoney = -1;
   private progressFill: HTMLDivElement;
@@ -78,7 +86,8 @@ export class Hud {
     const progLabel = div('progress-label');
     progLabel.innerHTML = '<span>SADDAR</span><span>CLIFTON</span>';
     this.money = div('money');
-    spd.append(this.speed, unit, prog, progLabel, this.money);
+    this.score = div('score');
+    spd.append(this.speed, unit, prog, progLabel, this.money, this.score);
 
     const top = div('top');
     top.append(integ, timerWrap, spd);
@@ -102,6 +111,18 @@ export class Hud {
     const shiftHint = div('hint');
     shiftHint.textContent = 'Enter / A / tap · or keep driving off duty';
     this.shiftCard.append(this.shiftText, this.shiftBtn, shiftHint);
+
+    // Stunt combo meter and pop-ups (right side).
+    this.comboBox = div('combo hidden');
+    this.comboMult = div('combo-mult');
+    this.comboPts = div('combo-pts');
+    const cbar = div('combo-bar');
+    this.comboFill = div('combo-fill');
+    cbar.appendChild(this.comboFill);
+    this.stuntStack = div('stunts');
+    this.comboBox.append(this.comboMult, this.comboPts, cbar);
+    const comboWrap = div('combo-wrap');
+    comboWrap.append(this.comboBox, this.stuntStack);
 
     this.banner = div('banner');
     this.toast = div('toast');
@@ -150,7 +171,7 @@ export class Hud {
     endCard.append(this.endTitle, this.endSub, this.endStats, this.restartBtn, hint2);
     this.endScreen.appendChild(endCard);
 
-    this.root.append(top, centre, this.mapSlot, this.shiftCard, this.banner, this.toast, this.flash, settings, this.startScreen, this.endScreen);
+    this.root.append(top, centre, comboWrap, this.mapSlot, this.shiftCard, this.banner, this.toast, this.flash, settings, this.startScreen, this.endScreen);
     this.showStart(true);
   }
 
@@ -222,11 +243,44 @@ export class Hud {
     if (angle !== null) this.arrow.style.transform = `perspective(300px) rotateX(38deg) rotate(${angle.toFixed(3)}rad)`;
   }
 
-  showShiftOver(info: { earned: number; fares: number; total: number } | null): void {
+  showShiftOver(info: { earned: number; fares: number; total: number; score: number; best: number } | null): void {
     this.shiftCard.classList.toggle('hidden', !info);
     if (info) {
-      this.shiftText.innerHTML = `<div class="kicker">SHIFT OVER</div><h2>Rs ${info.earned.toLocaleString('en-PK')}</h2><p>${info.fares} fare${info.fares === 1 ? '' : 's'} this shift · Rs ${info.total.toLocaleString('en-PK')} in your pocket</p>`;
+      const n = (x: number) => x.toLocaleString('en-PK');
+      this.shiftText.innerHTML = `<div class="kicker">SHIFT OVER</div><h2>Rs ${n(info.earned)}</h2><p>${info.fares} fare${info.fares === 1 ? '' : 's'} this shift · Rs ${n(info.total)} in your pocket</p><p class="stunt-line">★ ${n(info.score)} stunt points · best combo ${n(info.best)}</p>`;
     }
+  }
+
+  setScore(points: number): void {
+    if (points === this.lastScore) return;
+    this.lastScore = points;
+    this.score.textContent = `★ ${points.toLocaleString('en-PK')}`;
+  }
+
+  /** Live combo: multiplier, unbanked points, and how much of the window is left (0..1). */
+  setCombo(mult: number, pending: number, left: number): void {
+    const key = mult > 0 ? `${mult}|${pending}` : '';
+    if (key !== this.lastCombo) {
+      this.lastCombo = key;
+      this.comboBox.classList.toggle('hidden', mult === 0);
+      if (mult > 0) {
+        this.comboMult.textContent = `×${mult}`;
+        this.comboPts.textContent = `${pending.toLocaleString('en-PK')}`;
+        this.comboBox.classList.remove('pop');
+        void this.comboBox.offsetWidth;
+        this.comboBox.classList.add('pop');
+      }
+    }
+    if (mult > 0) this.comboFill.style.width = `${(Math.max(0, Math.min(1, left)) * 100).toFixed(1)}%`;
+  }
+
+  /** A stunt label that floats up and fades. */
+  showStunt(label: string, points: number): void {
+    const el = div('stunt');
+    el.innerHTML = `${label} <b>+${points}</b>`;
+    this.stuntStack.prepend(el);
+    while (this.stuntStack.children.length > 4) this.stuntStack.lastElementChild?.remove();
+    window.setTimeout(() => el.remove(), 1800);
   }
 
   showStart(v: boolean): void {

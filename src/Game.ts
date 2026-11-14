@@ -3,6 +3,7 @@ import { InputManager } from './input/InputManager';
 import { Renderer } from './render/Renderer';
 import type { AnyWorld } from './render/Renderer';
 import { CityWorld } from './sim/city/CityWorld';
+import { COMBO_WINDOW } from './sim/city/Stunts';
 import type { SimEvent } from './sim/types';
 import { DT, World } from './sim/World';
 import { Hud } from './ui/Hud';
@@ -251,6 +252,9 @@ export class Game {
     const px = p.prevX + (p.x - p.prevX) * (this.accumulator / DT);
     const pz = p.prevZ + (p.z - p.prevZ) * (this.accumulator / DT);
     this.hud.setMoney(f.money);
+    const st = w.stunts;
+    this.hud.setScore(st.score);
+    this.hud.setCombo(st.mult, st.pending * st.mult, st.window / COMBO_WINDOW);
     const running = w.phase === 'running';
     if (running && f.fare) {
       const pl = f.places[f.fare.dest];
@@ -287,7 +291,10 @@ export class Game {
         this.hud.showToast(`ON DUTY · ${e.time}s shift`);
         break;
       case 'shiftOver':
-        if (this.world.mode === 'city') this.hud.showShiftOver({ earned: e.earned, fares: e.fares, total: this.world.fares.money });
+        if (this.world.mode === 'city') {
+          const st = this.world.stunts;
+          this.hud.showShiftOver({ earned: e.earned, fares: e.fares, total: this.world.fares.money, score: st.shiftScore, best: st.bestCombo });
+        }
         this.audio.chime();
         break;
       case 'pickup':
@@ -321,6 +328,22 @@ export class Game {
         break;
       case 'smash':
         this.audio.smash(e.kind, e.impact / 15);
+        break;
+      case 'stunt':
+        this.hud.showStunt(e.label, e.points);
+        this.audio.stunt(e.mult);
+        break;
+      case 'comboEnd':
+        if (e.mult > 1 || e.total >= 200) {
+          this.hud.showToast(`COMBO ×${e.mult} · +${e.total.toLocaleString('en-PK')}${e.tip ? ` · passenger tip Rs ${e.tip}` : ''}`);
+          this.audio.chime();
+        }
+        break;
+      case 'comboBroken':
+        this.hud.showToast(`COMBO LOST · −${e.lost.toLocaleString('en-PK')}`, false);
+        break;
+      case 'honk':
+        this.hud.showToast('RAASTA DO! 📯');
         break;
       case 'street':
         this.hud.showBanner(e.name.toUpperCase());

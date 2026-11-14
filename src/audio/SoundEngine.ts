@@ -326,4 +326,23 @@ export class SoundEngine {
       this.burst(0.18, 2600, 6, 0.2, 'bandpass');
     }
   }
+
+  /** Short rising blip; pitch climbs with the combo multiplier. */
+  stunt(mult: number): void {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    const t = ctx.currentTime;
+    const f0 = 520 * Math.pow(1.12, Math.min(8, mult) - 1);
+    const o = ctx.createOscillator();
+    o.type = 'square';
+    o.frequency.setValueAtTime(f0, t);
+    o.frequency.exponentialRampToValueAtTime(f0 * 1.5, t + 0.09);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.09, t + 0.01);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.16);
+    o.connect(g).connect(this.master);
+    o.start(t);
+    o.stop(t + 0.2);
+  }
 }
