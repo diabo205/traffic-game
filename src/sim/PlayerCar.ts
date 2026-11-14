@@ -162,7 +162,6 @@ export class PlayerCar {
     this.handbrake = false;
     this.boostFired = null;
     this.driftEnded = 0;
-    if (this.wallContact > 0) this.wallContact--;
     this.launchCharge = 0;
     this.dashCooldown = 0;
     this.pinnedTime = 0;
@@ -257,6 +256,7 @@ export class PlayerCar {
     this.dipper = controllable && input.dipper;
     this.boostFired = null;
     this.driftEnded = 0;
+    if (this.wallContact > 0) this.wallContact--;
 
     const v = this.speed;
     const absV = Math.abs(v);
