@@ -302,6 +302,26 @@ export class SoundEngine {
     });
   }
 
+  /** Celebratory ascending triad for VIP fares, Fever chains, and A/S ranks. */
+  fanfare(tier = 1): void {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    const t = ctx.currentTime;
+    const notes = tier >= 2 ? [523.25, 659.25, 783.99, 1046.5] : [659.25, 880, 1174.66];
+    notes.forEach((f, i) => {
+      const o = ctx.createOscillator();
+      o.type = 'triangle';
+      o.frequency.value = f;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0, t + i * 0.08);
+      g.gain.linearRampToValueAtTime(0.22, t + i * 0.08 + 0.01);
+      g.gain.exponentialRampToValueAtTime(0.001, t + i * 0.08 + 0.42);
+      o.connect(g).connect(this.master);
+      o.start(t + i * 0.08);
+      o.stop(t + i * 0.08 + 0.48);
+    });
+  }
+
   /** Boost: a rising whoosh plus a low turbo thump. */
   whoosh(): void {
     const ctx = this.ctx;

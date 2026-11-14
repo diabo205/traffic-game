@@ -66,6 +66,7 @@ export class CityWorld {
   private onRoad = true;
   private lastKerbTick = -1e9;
   private lastWallHitTick = -1e9;
+  private postLandGrace = 0;
   private street = '';
   private streetCandidate = '';
   private streetTicks = 0;
@@ -117,7 +118,7 @@ export class CityWorld {
 
   speedRush(): number {
     const p = this.player;
-    return Math.max(clamp((p.speed - 18) / 12, 0, 1) * 0.6, p.boostTime > 0 ? 1 : 0);
+    return Math.max(clamp((p.speed - 17) / 11, 0, 1) * 0.85, p.boostTime > 0 ? 1 : 0);
   }
 
   start(): void {
@@ -144,13 +145,15 @@ export class CityWorld {
 
   private damage(amount: number): void {
     if (amount <= 0 || this.level.phase !== 'running') return;
-    const scaled = amount * this.player.spec.damageRes;
+    const grace = this.postLandGrace > 0 ? 0.35 : 1;
+    const scaled = amount * this.player.spec.damageRes * grace;
     this.player.integrity = Math.max(0, this.player.integrity - scaled);
     this.level.stats.damageTaken += scaled;
   }
 
   step(input: InputFrame): void {
     this.tick++;
+    if (this.postLandGrace > 0) this.postLandGrace = Math.max(0, this.postLandGrace - 1 / 60);
     const p = this.player;
     p.savePrev();
     if (this.level.phase === 'ready') {
@@ -165,7 +168,7 @@ export class CityWorld {
     const firstEvent = this.events.length;
     p.update(input, this.topSpeed(), 1 / 60, running);
     if (p.boostFired) this.events.push({ type: 'boost', kind: p.boostFired });
-    if (p.driftEnded > 1) this.events.push({ type: 'drift', seconds: p.driftEnded });
+    if (p.driftEnded > 0.85) this.events.push({ type: 'drift', seconds: p.driftEnded });
     this.staticCollisions();
     this.vertical();
     if (!p.airborne) this.kerbs();
@@ -193,7 +196,7 @@ export class CityWorld {
     };
     const end = this.events.length;
     for (let i = firstEvent; i < end; i++) this.stunts.handle(this.events[i], this.events);
-    this.stunts.update(1 / 60, this.tick, p, this.traffic.npcs, !!f.fare, this.events, pay);
+    this.stunts.update(1 / 60, this.tick, p, this.traffic.npcs, !!f.fare, this.events, pay, f.fare?.partyCount ?? 1);
 
     if (running) {
       const st = this.level.stats;
@@ -210,7 +213,7 @@ export class CityWorld {
     f.cancelFare();
     const cost = Math.min(f.money, TOW_COST);
     f.money -= cost;
-    if (f.onShift) f.shiftTime = Math.max(1, f.shiftTime - TOW_TIME);
+    if (f.onShift) f.shiftTime = Math.max(0, f.shiftTime - TOW_TIME);
 
     // Nearest clear road kerb instead of teleporting back to spawn.
     const p = this.player;
@@ -307,24 +310,50 @@ export class CityWorld {
     const p = this.player;
     let g = this.map.groundY(p.x, p.z);
     if (g > p.y + MAX_STEP) {
-      // Drove into the tall side of a ramp: treat it as a wall. Undo only the
-      // axis that climbed the step so the car slides along the side instead of
-      // being frozen in place (which pinned it at 0 km/h).
+      // Drove into the tall side or back of a ramp: resolve against the ramp's
+      // actual OBB normal so angled hits deflect along the side instead of wedging.
       const lim = p.y + MAX_STEP;
-      const dx = p.x - p.prevX, dz = p.z - p.prevZ;
       let nx = 0, nz = 0;
-      if (this.map.groundY(p.x, p.prevZ) <= lim) {
-        p.z = p.prevZ;
-        nz = dz > 0 ? -1 : 1;
-      } else if (this.map.groundY(p.prevX, p.z) <= lim) {
-        p.x = p.prevX;
-        nx = dx > 0 ? -1 : 1;
-      } else {
-        p.x = p.prevX;
-        p.z = p.prevZ;
-        // Pick the axis we moved most along as the face we hit.
-        if (Math.abs(dx) > Math.abs(dz)) nx = dx > 0 ? -1 : 1;
-        else nz = dz > 0 ? -1 : 1;
+      for (const r of this.map.ramps) {
+        const dx = p.x - r.x, dz = p.z - r.z;
+        const s = Math.sin(r.heading), c = Math.cos(r.heading);
+        const along = dx * s + dz * c;
+        const lat = dx * c - dz * s;
+        if (Math.abs(along) > r.hl || Math.abs(lat) > r.hw) continue;
+        const backPen = r.hl - along;
+        const sidePen = r.hw - Math.abs(lat);
+        if (backPen < sidePen) {
+          nx = s;
+          nz = c;
+          const push = backPen + 0.05;
+          p.x += nx * push;
+          p.z += nz * push;
+        } else {
+          const sg = lat >= 0 ? 1 : -1;
+          nx = sg * c;
+          nz = -sg * s;
+          const push = sidePen + 0.05;
+          p.x += nx * push;
+          p.z += nz * push;
+        }
+        break;
+      }
+      if ((nx === 0 && nz === 0) || this.map.groundY(p.x, p.z) > lim) {
+        const dx = p.x - p.prevX, dz = p.z - p.prevZ;
+        if (this.map.groundY(p.x, p.prevZ) <= lim) {
+          p.z = p.prevZ;
+          if (nz === 0) nz = dz > 0 ? -1 : 1;
+        } else if (this.map.groundY(p.prevX, p.z) <= lim) {
+          p.x = p.prevX;
+          if (nx === 0) nx = dx > 0 ? -1 : 1;
+        } else {
+          p.x = p.prevX;
+          p.z = p.prevZ;
+          if (nx === 0 && nz === 0) {
+            if (Math.abs(dx) > Math.abs(dz)) nx = dx > 0 ? -1 : 1;
+            else nz = dz > 0 ? -1 : 1;
+          }
+        }
       }
       this.bounce(nx, nz, p.x - nx * p.spec.halfLength, p.z - nz * p.spec.halfLength);
       g = this.map.groundY(p.x, p.z);
@@ -333,6 +362,7 @@ export class CityWorld {
     const impact = p.settle(g, 1 / 60);
     if (!wasAir && p.airborne && p.vy > 1) this.events.push({ type: 'jump' });
     if (impact > 0 && p.airTime > 0.15) {
+      this.postLandGrace = 0.45;
       this.events.push({ type: 'land', impact, air: p.airTime });
       // Only a really big drop hurts the vehicle.
       if (impact > 11) this.damage((impact - 11) * 2);

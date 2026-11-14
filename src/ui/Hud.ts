@@ -1,4 +1,5 @@
 import type { TimeOfDay } from '../render/Renderer';
+import type { FareKind, ShiftRank } from '../sim/city/Fares';
 import type { RunStats } from '../sim/LevelManager';
 import { VEHICLE_COST, VEHICLE_SPECS } from '../sim/PlayerCar';
 import { FINISH_Z } from '../sim/road';
@@ -7,6 +8,11 @@ import type { GameOverReason, PlayerVehicle } from '../sim/types';
 type Mode = 'route' | 'city';
 
 const VEHICLES: readonly PlayerVehicle[] = ['alto', 'rickshaw', 'minibus'];
+const VEHICLE_PERK: Readonly<Record<PlayerVehicle, string>> = {
+  alto: 'BALANCED',
+  rickshaw: 'AGILE',
+  minibus: 'TANK',
+};
 
 /**
  * Arcade HUD + menus. DOM only; the Game pushes values in and wires the
@@ -34,6 +40,7 @@ export class Hud {
   private boostFill: HTMLDivElement;
   private boostLabel: HTMLSpanElement;
   private farePanel: HTMLDivElement;
+  private fareMeta: HTMLDivElement;
   private fareName: HTMLDivElement;
   private fareInfo: HTMLDivElement;
   private fareFill: HTMLDivElement;
@@ -59,11 +66,13 @@ export class Hud {
   private heroTitle: HTMLHeadingElement;
   private heroText: HTMLParagraphElement;
   private bankBadge: HTMLDivElement;
+  private bestHint: HTMLDivElement;
   readonly rideBtns: Record<PlayerVehicle, HTMLButtonElement>;
   readonly cityBtn: HTMLButtonElement;
   /** route-run mode tile (kept under its old name) */
   readonly startBtn: HTMLButtonElement;
   readonly playBtn: HTMLButtonElement;
+  readonly dailyBtn: HTMLButtonElement;
   private settingsScreen: HTMLDivElement;
   private tabSound: HTMLButtonElement;
   private tabControls: HTMLButtonElement;
@@ -151,12 +160,13 @@ export class Hud {
     this.boostLabel = span('boost-label');
     this.boost.append(this.boostFill, this.boostLabel);
     this.farePanel = div('fare hidden');
+    this.fareMeta = div('fare-meta hidden');
     this.fareName = div('fare-name');
     this.fareInfo = div('fare-info');
     const fbar = div('fare-bar');
     this.fareFill = div('fare-fill');
     fbar.appendChild(this.fareFill);
-    this.farePanel.append(this.fareName, this.fareInfo, fbar);
+    this.farePanel.append(this.fareMeta, this.fareName, this.fareInfo, fbar);
     this.arrow = div('guide-arrow hidden');
     this.arrow.innerHTML = '<svg viewBox="0 0 40 40" width="100%" height="100%"><path d="M20 3 L36 34 L20 26 L4 34 Z" fill="#c6f432" stroke="#0b1530" stroke-width="2.5" stroke-linejoin="round"/></svg>';
     this.arrowPath = this.arrow.querySelector('path')!;
@@ -224,7 +234,7 @@ export class Hud {
       const sp = VEHICLE_SPECS[v];
       const cost = VEHICLE_COST[v];
       const b = button('', 'garage-btn', `${sp.label} — ${sp.tag}`);
-      b.innerHTML = `<span class="g-name">${sp.label}</span><span class="g-sub">${cost === 0 ? 'FREE' : `RS ${cost}`}</span>`;
+      b.innerHTML = `<span class="g-name">${sp.label}</span><span class="g-perk">${VEHICLE_PERK[v]}</span><span class="g-sub">${cost === 0 ? 'FREE' : `RS ${cost}`}</span>`;
       garage.appendChild(b);
       return b;
     };
@@ -235,10 +245,14 @@ export class Hud {
     };
 
     this.playBtn = button('PLAY', 'go-btn play', 'Play');
+    this.dailyBtn = button('', 'daily-btn', 'Daily Saddar challenge');
+    this.dailyBtn.innerHTML = `<span class="d-top">DAILY</span><span class="d-sub">SADDAR</span>`;
+    const playActions = div('play-actions');
+    playActions.append(this.playBtn, this.dailyBtn);
     const playWrap = div('play-wrap');
-    const playHint = div('hint');
-    playHint.textContent = 'ENTER / A';
-    playWrap.append(garage, this.playBtn, playHint);
+    this.bestHint = div('hint best-hint');
+    this.bestHint.textContent = 'ENTER / A';
+    playWrap.append(garage, playActions, this.bestHint);
 
     const tiles = div('tiles');
     this.cityBtn = tile('FREE ROAM', 'SADDAR', 'Free roam in Saddar');
@@ -350,7 +364,7 @@ export class Hud {
     this.startBtn.classList.toggle('chosen', mode === 'route');
     if (mode === 'city') {
       this.heroTitle.innerHTML = 'PICK UP FARES.<br><em>OWN</em> SADDAR.';
-      this.heroText.textContent = 'Drive anywhere in Saddar. Stop beside passengers, race them across town before their meter runs out, and chain drifts, jumps and near misses for tips.';
+      this.heroText.innerHTML = 'Stop beside passengers across Saddar, beat the meter, and chain drifts, jumps &amp; near misses for bonus&nbsp;tips.';
       this.statAKey.textContent = 'RS';
       this.statBKey.textContent = '★';
     } else {
@@ -359,7 +373,7 @@ export class Hud {
       this.statAKey.textContent = 'LEFT';
       this.statBKey.textContent = 'HP';
     }
-    this.lastDistLeft = this.lastScore = -1;
+    this.lastDistLeft = this.lastScore = this.lastIntegrity = -1;
     this.targetMoney = 0;
     this.shownMoney = this.lastMoneyShown = -1;
     if (mode !== 'city') {
@@ -368,6 +382,15 @@ export class Hud {
       this.showShiftOver(null);
       this.setCombo(0, 0, 0);
     }
+  }
+
+  setDailyInfo(label: string, bestEarned: number, bestRank?: ShiftRank): void {
+    const sub = bestEarned > 0 ? `BEST RS ${bestEarned.toLocaleString('en-PK')}${bestRank ? ` · ${bestRank}` : ''}` : 'SAME SEED WORLDWIDE';
+    this.dailyBtn.innerHTML = `<span class="d-top">DAILY · ${escapeHtml(label)}</span><span class="d-sub">${sub}</span>`;
+  }
+
+  setBestSummary(text: string | null): void {
+    this.bestHint.textContent = text ? `ENTER / A · ${text}` : 'ENTER / A';
   }
 
   setVehicle(v: PlayerVehicle, bank: number): void {
@@ -562,7 +585,7 @@ export class Hud {
   }
 
   setSpeedRush(rush: number): void {
-    this.speedLines.style.opacity = rush > 0.62 ? String(Math.min(0.65, (rush - 0.62) * 1.7)) : '0';
+    this.speedLines.style.opacity = rush > 0.42 ? String(Math.min(0.65, (rush - 0.42) * 1.15)) : '0';
   }
 
   /**
@@ -590,11 +613,11 @@ export class Hud {
         ? 'DRIFTING'
         : launchShown
           ? launchFrac >= 1
-            ? 'LAUNCH READY!'
+            ? 'RELEASE BRAKE!'
             : 'CHARGING LAUNCH'
           : c >= 1
             ? dashReady
-              ? 'BOOST READY · DASH'
+              ? 'DASH READY · 2× GAS'
               : 'BOOST READY'
             : 'BOOST';
     if (this.boost.dataset.state !== state || this.boostLabel.textContent !== label) {
@@ -604,9 +627,16 @@ export class Hud {
   }
 
   /** Current fare (or a hint when looking for one); null hides the plate. */
-  setFare(f: { name: string; distance: number; timeLeft: number; limit: number } | { hint: string } | null): void {
+  setFare(
+    f:
+      | { name: string; distance: number; timeLeft: number; limit: number; kind?: FareKind; stop?: number; stops?: number; chain?: number }
+      | { hint: string }
+      | null,
+  ): void {
     if (!f) {
       this.farePanel.classList.add('hidden');
+      this.farePanel.classList.remove('vip', 'party');
+      this.fareMeta.classList.add('hidden');
       this.lastFareKey = '';
       return;
     }
@@ -615,15 +645,32 @@ export class Hud {
       if (this.lastFareKey !== f.hint) {
         this.fareName.textContent = f.hint;
         this.fareInfo.textContent = '';
+        this.fareMeta.classList.add('hidden');
+        this.farePanel.classList.remove('vip', 'party');
         this.farePanel.classList.add('looking');
         this.lastFareKey = f.hint;
       }
       return;
     }
     this.farePanel.classList.remove('looking');
-    const key = `${f.name}|${Math.round(f.distance / 10)}|${Math.ceil(f.timeLeft)}`;
+    this.farePanel.classList.toggle('vip', f.kind === 'vip');
+    this.farePanel.classList.toggle('party', f.kind === 'party');
+    const key = `${f.name}|${Math.round(f.distance / 10)}|${Math.ceil(f.timeLeft)}|${f.kind ?? 'standard'}|${f.stop ?? 1}|${f.chain ?? 0}`;
     if (key !== this.lastFareKey) {
       this.lastFareKey = key;
+      const parts: string[] = [];
+      if (f.kind === 'vip') parts.push('VIP · 2× PAY');
+      else if (f.kind === 'party') parts.push(`PARTY · STOP ${f.stop ?? 1}/${f.stops ?? 2}`);
+      if ((f.chain ?? 0) >= 2) {
+        const mul = (1 + Math.min(4, (f.chain ?? 0) - 1) * 0.25).toFixed(2).replace(/\.?0+$/, '');
+        parts.push(`FEVER ×${mul}`);
+      }
+      if (parts.length > 0) {
+        this.fareMeta.textContent = parts.join(' · ');
+        this.fareMeta.classList.remove('hidden');
+      } else {
+        this.fareMeta.classList.add('hidden');
+      }
       this.fareName.textContent = f.name.toUpperCase();
       const d = f.distance < 1000 ? `${Math.round(f.distance / 10) * 10} M` : `${(f.distance / 1000).toFixed(1)} KM`;
       this.fareInfo.innerHTML = `${d} <span class="dot">·</span> <b>${Math.ceil(f.timeLeft)} S</b>`;
@@ -645,11 +692,24 @@ export class Hud {
     }
   }
 
-  showShiftOver(info: { earned: number; fares: number; total: number; score: number; best: number } | null): void {
+  showShiftOver(
+    info: {
+      earned: number;
+      fares: number;
+      total: number;
+      score: number;
+      best: number;
+      rank: ShiftRank;
+      bestEarned: number;
+      isNewBest: boolean;
+      bestChain: number;
+    } | null,
+  ): void {
     this.shiftCard.classList.toggle('hidden', !info);
     if (info) {
       const n = (x: number) => x.toLocaleString('en-PK');
-      this.shiftText.innerHTML = `<div class="shift-tag">SHIFT OVER</div><div class="shift-earned">RS ${n(info.earned)}</div><div class="shift-rows"><div><span>FARES</span><b>${info.fares}</b></div><div><span>IN YOUR POCKET</span><b>RS ${n(info.total)}</b></div><div><span>STUNT POINTS</span><b>${n(info.score)}</b></div><div><span>BEST COMBO</span><b>${n(info.best)}</b></div></div>`;
+      const badge = info.isNewBest ? `<span class="new-best">NEW BEST!</span>` : `<span class="shift-best">BEST RS ${n(info.bestEarned)}</span>`;
+      this.shiftText.innerHTML = `<div class="shift-head"><span class="shift-tag">SHIFT OVER</span><span class="shift-rank rank-${info.rank}">RANK ${info.rank}</span>${badge}</div><div class="shift-earned">RS ${n(info.earned)}</div><div class="shift-rows"><div><span>FARES</span><b>${info.fares}</b></div><div><span>FEVER CHAIN</span><b>${info.bestChain}</b></div><div><span>STUNT POINTS</span><b>${n(info.score)}</b></div><div><span>BEST COMBO</span><b>${n(info.best)}</b></div></div>`;
     }
   }
 

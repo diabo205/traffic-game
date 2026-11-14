@@ -56,6 +56,8 @@ export class TouchControls {
     this.gasBtn.classList.toggle('launch-ready', launchReady);
     this.gasBtn.classList.toggle('dash-ready', dashReady);
     this.gasBtn.classList.toggle('auto-on', autoGas);
+    const cue = launchReady ? 'launch' : dashReady ? 'dash' : autoGas ? 'auto' : '';
+    if (this.gasBtn.dataset.cue !== cue) this.gasBtn.dataset.cue = cue;
   }
 
   setVisible(v: boolean): void {

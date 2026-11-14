@@ -22,9 +22,20 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
-// Playwright is preinstalled globally in the cloud sandbox; locally `npm i -D playwright`.
+// Playwright is optional locally (`npm i -D playwright`).
 const require = createRequire(import.meta.url);
-const { chromium, devices } = (() => { try { return require('playwright'); } catch { return require(require('node:child_process').execSync('npm root -g').toString().trim() + '/playwright'); } })();
+const { chromium, devices } = (() => {
+  try {
+    return require('playwright');
+  } catch {
+    try {
+      return require(require('node:child_process').execSync('npm root -g', { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim() + '/playwright');
+    } catch {
+      console.error('Playwright is not installed. Run `npm i -D playwright` (or use system Chromium CDP) to run browser.mjs.');
+      process.exit(1);
+    }
+  }
+})();
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const args = process.argv.slice(2);
 const flag = (n, d) => { const i = args.indexOf(`--${n}`); return i >= 0 ? args[i + 1] : d; };
@@ -36,7 +47,7 @@ const SMOKE = {
   url: '?mode=city&seed=1337&low',
   steps: [
     { wait: 1500 }, { shot: '00-menu' },
-    { click: 'button:has-text("FREE ROAM")' }, { wait: 800 }, { shot: '01-start' },
+    { click: 'button.go-btn.play' }, { wait: 800 }, { shot: '01-start' },
     { hold: ['KeyW'], ms: 3000 }, { shot: '02-accel' },
     { hold: ['KeyW', 'KeyD'], ms: 1200 }, { shot: '03-turn' },
     { hold: ['KeyE', 'KeyA'], ms: 1200 }, { shot: '04-drift' },

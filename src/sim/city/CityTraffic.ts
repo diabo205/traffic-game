@@ -1,4 +1,4 @@
-import { approach } from '../math';
+import { approach, obbOverlap } from '../math';
 import { ALTO } from '../PlayerCar';
 import type { PlayerCar } from '../PlayerCar';
 import { Rng } from '../rng';
@@ -242,7 +242,7 @@ export class CityTraffic {
     const fx = Math.sin(player.heading), fz = Math.cos(player.heading);
     const m = this.map;
     for (const n of this.npcs) {
-      if (n.honkCooldown > 0 || n.kind === 'cart') continue;
+      if (n.honkCooldown > 0) continue;
       const dx = n.x - player.x, dz = n.z - player.z;
       const along = dx * fx + dz * fz;
       const lat = Math.abs(dx * fz - dz * fx);
@@ -252,7 +252,7 @@ export class CityTraffic {
       n.yieldTime = 2.8;
       n.honkCooldown = 5;
       this.honked++;
-      if (!n.path) {
+      if (!n.path && n.kind !== 'cart') {
         const link = m.links[n.link];
         const kerb = link.lanes - 1;
         if (n.lane !== kerb && kerb !== link.rampLane) {
@@ -476,6 +476,28 @@ export class CityTraffic {
       let dh = heading - n.prevHeading;
       dh = Math.atan2(Math.sin(dh), Math.cos(dh));
       n.heading = n.prevHeading + dh;
+    }
+
+    // ---- Pairwise NPC separation (prevents junction deadlock phasing) ------
+    for (let i = 0; i < this.npcs.length; i++) {
+      const a = this.npcs[i];
+      for (let j = i + 1; j < this.npcs.length; j++) {
+        const b = this.npcs[j];
+        if (Math.abs(a.x - b.x) > 7 || Math.abs(a.z - b.z) > 7) continue;
+        const mtv = obbOverlap(CityTraffic.obb(a), CityTraffic.obb(b));
+        if (!mtv || mtv.depth <= 0.02) continue;
+        const push = Math.min(mtv.depth, 1.2) * 0.5;
+        a.x += mtv.nx * push;
+        a.z += mtv.nz * push;
+        a.kx += mtv.nx * push;
+        a.kz += mtv.nz * push;
+        b.x -= mtv.nx * push;
+        b.z -= mtv.nz * push;
+        b.kx -= mtv.nx * push;
+        b.kz -= mtv.nz * push;
+        if (a.id > b.id) a.speed *= 0.88;
+        else b.speed *= 0.88;
+      }
     }
   }
 }

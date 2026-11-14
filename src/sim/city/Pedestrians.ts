@@ -30,6 +30,7 @@ export interface Pedestrian {
   diveVz: number;
   phase: number;
   cooldown: number;
+  dodged: boolean;
 }
 
 const TARGET_COUNT = 22;
@@ -93,6 +94,7 @@ export class Pedestrians {
       diveVz: 0,
       phase: this.rng.range(0, 6.28),
       cooldown: 0,
+      dodged: false,
     });
   }
 
@@ -115,6 +117,10 @@ export class Pedestrians {
       if (pd.cooldown > 0) pd.cooldown = Math.max(0, pd.cooldown - dt);
 
       if (pd.state === 'dive') {
+        if (!pd.dodged && v > 10 && Math.hypot(pd.x - px, pd.z - pz) < 6.8) {
+          pd.dodged = true;
+          dodged++;
+        }
         pd.diveTimer -= dt;
         const arc = Math.max(0, Math.sin((1 - Math.max(0, pd.diveTimer) / 0.8) * Math.PI));
         pd.y = arc * 0.65;
@@ -132,6 +138,7 @@ export class Pedestrians {
           pd.y = 0;
           pd.x = pd.homeX;
           pd.z = pd.homeZ;
+          pd.dodged = false;
         }
         continue;
       }
@@ -153,7 +160,8 @@ export class Pedestrians {
         pd.diveVz = (dirZ / len) * 4.4;
         pd.facing = Math.atan2(pd.diveVx, -pd.diveVz) + Math.PI;
         pd.cooldown = 3.0;
-        if (v > 10 && d < 6.5) dodged++;
+        pd.dodged = v > 10 && d < 6.8;
+        if (pd.dodged) dodged++;
       }
     }
 

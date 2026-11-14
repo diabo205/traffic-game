@@ -8,8 +8,8 @@ import { paint } from './strip';
 /** Shalwar kameez colours, waistcoats and caps for waiting passengers. */
 const KAMEEZ = ['#f2efe6', '#7fa7c9', '#c9b38a', '#4f6d5a', '#d9c7a8', '#8a4f3d', '#2f3b52', '#e7d27a'];
 const DUPATTA = ['#c2185b', '#00897b', '#f9a825', '#5e35b1'];
-/** Marker colour by ride length: short, medium, long. */
-const TIER = ['#3ddc84', '#ffc23d', '#ff4d4d'];
+/** Marker colour by ride length / type: short, medium, long, VIP. */
+const TIER = ['#3ddc84', '#ffc23d', '#ff4d4d', '#ff2d6f'];
 
 function personGeometry(variant: number): THREE.BufferGeometry {
   const parts: THREE.BufferGeometry[] = [];
@@ -87,15 +87,21 @@ export class FareVisuals {
     return g;
   }
 
-  private make(variant: number, tier: number): Person {
+  private make(variant: number, tier: number, party: boolean): Person {
     const root = new THREE.Group();
     const body = new THREE.Mesh(this.geometry(variant), this.personMat);
     body.castShadow = true;
     const arm = new THREE.Mesh(this.armGeo, this.armMats[variant % this.armMats.length]);
     arm.position.set(-0.27, 1.52, 0);
-    const marker = new THREE.Mesh(this.markerGeo, this.markerMats[tier]);
+    const marker = new THREE.Mesh(this.markerGeo, this.markerMats[tier] ?? this.markerMats[0]);
     marker.position.y = 2.6;
     root.add(body, arm, marker);
+    if (party) {
+      const friend = new THREE.Mesh(this.geometry((variant + 3) % KAMEEZ.length), this.personMat);
+      friend.position.set(0.58, 0, -0.14);
+      friend.castShadow = true;
+      root.add(friend);
+    }
     this.group.add(root);
     return { root, body, arm, marker, variant };
   }
@@ -117,7 +123,7 @@ export class FareVisuals {
       seen.add(w.id);
       let person = this.people.get(w.id);
       if (!person) {
-        person = this.make(w.variant, w.tier);
+        person = this.make(w.variant, w.tier, w.kind === 'party');
         this.people.set(w.id, person);
       }
       const r = person.root;

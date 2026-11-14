@@ -31,7 +31,11 @@ export class Stunts {
   private overTick = new Map<number, number>();
   private donutTime = 0;
   private donutCooldown = 0;
+  private donutAnchorX = 1e6;
+  private donutAnchorZ = 1e6;
+  private sameSpotDonuts = 0;
   private shaveCooldown = 0;
+  private fareTipLeft = 320;
 
   get active(): boolean {
     return this.mult > 0;
@@ -42,7 +46,11 @@ export class Stunts {
     this.bestCombo = 0;
     this.donutTime = 0;
     this.donutCooldown = 0;
+    this.donutAnchorX = 1e6;
+    this.donutAnchorZ = 1e6;
+    this.sameSpotDonuts = 0;
     this.shaveCooldown = 0;
+    this.fareTipLeft = 320;
   }
 
   private add(kind: string, label: string, points: number, events: SimEvent[]): void {
@@ -57,6 +65,9 @@ export class Stunts {
   /** React to this tick's world events (landings, drifts, smashes, crashes, dodges). */
   handle(e: SimEvent, events: SimEvent[]): void {
     switch (e.type) {
+      case 'pickup':
+        this.fareTipLeft = e.kind === 'vip' ? 520 : e.kind === 'party' ? 540 : 320;
+        break;
       case 'smash':
         if (e.impact > 4) this.add('smash', e.kind === 'fruitcart' ? 'THELA SMASH' : 'SMASH', SMASH_POINTS[e.kind] ?? 15, events);
         break;
@@ -91,7 +102,16 @@ export class Stunts {
     this.donutTime = 0;
   }
 
-  update(dt: number, tick: number, p: PlayerCar, npcs: readonly CityNpc[], carrying: boolean, events: SimEvent[], pay: (rs: number) => void): void {
+  update(
+    dt: number,
+    tick: number,
+    p: PlayerCar,
+    npcs: readonly CityNpc[],
+    carrying: boolean,
+    events: SimEvent[],
+    pay: (rs: number) => void,
+    partyCount = 1,
+  ): void {
     if (this.donutCooldown > 0) this.donutCooldown = Math.max(0, this.donutCooldown - dt);
     if (this.shaveCooldown > 0) this.shaveCooldown = Math.max(0, this.shaveCooldown - dt);
 
@@ -99,11 +119,19 @@ export class Stunts {
     const fx = Math.sin(p.heading), fz = Math.cos(p.heading);
     const sp = p.spec;
 
-    // Sustained tight spin (gas + steer / handbrake circle) -> DONUT stunt.
+    // Sustained tight spin (gas + steer / handbrake circle) -> DONUT stunt (diminishes if farmed in one spot).
     if (!p.airborne && Math.abs(p.yawRate) > 1.45 && v > 2 && v < 13.5 && (p.handbrake || Math.abs(p.steerAngle) > 0.35)) {
       this.donutTime += dt;
       if (this.donutTime >= 0.85 && this.donutCooldown <= 0) {
-        this.add('donut', 'DONUT', 95, events);
+        if (Math.hypot(p.x - this.donutAnchorX, p.z - this.donutAnchorZ) < 24) {
+          this.sameSpotDonuts++;
+        } else {
+          this.donutAnchorX = p.x;
+          this.donutAnchorZ = p.z;
+          this.sameSpotDonuts = 0;
+        }
+        const pts = this.sameSpotDonuts === 0 ? 95 : this.sameSpotDonuts === 1 ? 45 : 0;
+        if (pts > 0) this.add('donut', 'DONUT', pts, events);
         this.donutTime = 0;
         this.donutCooldown = 1.8;
       }
@@ -144,16 +172,20 @@ export class Stunts {
       for (const [id, t] of this.overTick) if (tick - t > 600) this.overTick.delete(id);
     }
 
-    // The window freezes while a stunt is still going (drifting, spinning a donut, in the air).
-    if (this.mult > 0 && !p.handbrake && !p.airborne && this.donutTime < 0.25) {
+    // The window freezes while a stunt is still going (drifting, spinning a fresh donut, in the air).
+    const activeDonut = this.sameSpotDonuts < 2 && this.donutTime >= 0.25;
+    if (this.mult > 0 && !p.handbrake && !p.airborne && !activeDonut) {
       this.window -= dt;
       if (this.window <= 0) {
         const total = this.pending * this.mult;
         this.score += total;
         this.shiftScore += total;
         this.bestCombo = Math.max(this.bestCombo, total);
-        // Passengers tip for a good show.
-        const tip = carrying ? Math.round(total / 8 / 10) * 10 : 0;
+        // Passengers tip for a good show (multi-passenger party rides boost tips, capped per fare).
+        const mult = 1 + Math.max(0, partyCount - 1) * 0.35;
+        const rawTip = carrying ? Math.round((total * mult) / 8 / 10) * 10 : 0;
+        const tip = Math.min(rawTip, this.fareTipLeft);
+        this.fareTipLeft = Math.max(0, this.fareTipLeft - tip);
         if (tip > 0) pay(tip);
         events.push({ type: 'comboEnd', total, mult: this.mult, tip });
         this.pending = 0;

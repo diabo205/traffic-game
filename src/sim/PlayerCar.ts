@@ -43,12 +43,12 @@ export const ALTO: VehicleSpec = {
   reverseAccel: 3.2,
   maxReverse: 5.5,
   rollingDrag: 0.28,
-  aeroDrag: 0.0006,
+  aeroDrag: 0.00046,
   maxSteerLow: 0.6,
-  steerSpeedFalloff: 0.065,
-  steerRate: 3.2,
-  steerReturnRate: 4.5,
-  maxLateralAccel: 9.5,
+  steerSpeedFalloff: 0.05,
+  steerRate: 3.4,
+  steerReturnRate: 4.8,
+  maxLateralAccel: 9.8,
   topSpeedMul: 1,
   damageRes: 1,
 } as const;
@@ -67,12 +67,12 @@ export const VEHICLE_SPECS: Readonly<Record<PlayerVehicle, VehicleSpec>> = {
     reverseAccel: 3.4,
     maxReverse: 5.0,
     rollingDrag: 0.3,
-    aeroDrag: 0.00075,
+    aeroDrag: 0.0006,
     maxSteerLow: 0.72,
-    steerSpeedFalloff: 0.045,
-    steerRate: 3.8,
-    steerReturnRate: 5.2,
-    maxLateralAccel: 10.6,
+    steerSpeedFalloff: 0.038,
+    steerRate: 3.9,
+    steerReturnRate: 5.4,
+    maxLateralAccel: 10.8,
     topSpeedMul: 0.9,
     damageRes: 1.15,
   },
@@ -88,12 +88,12 @@ export const VEHICLE_SPECS: Readonly<Record<PlayerVehicle, VehicleSpec>> = {
     reverseAccel: 2.8,
     maxReverse: 5.0,
     rollingDrag: 0.25,
-    aeroDrag: 0.0007,
+    aeroDrag: 0.00055,
     maxSteerLow: 0.54,
-    steerSpeedFalloff: 0.075,
-    steerRate: 2.6,
-    steerReturnRate: 3.8,
-    maxLateralAccel: 7.6,
+    steerSpeedFalloff: 0.062,
+    steerRate: 2.7,
+    steerReturnRate: 3.9,
+    maxLateralAccel: 7.8,
     topSpeedMul: 1.04,
     damageRes: 0.62,
   },
@@ -111,7 +111,7 @@ export const MOVES = {
   /** drift: hold gas + brake together above this speed (m/s) */
   driftMinSpeed: 7,
   /** extra push while boosting (m/s^2) and how far past top speed it can go */
-  boostAccel: 9,
+  boostAccel: 9.5,
   boostTopSpeed: 1.28,
   boostCooldown: 1.4,
   /** dash has its own, longer cooldown so tapping the gas never beats holding it */
@@ -132,14 +132,14 @@ export const MOVES = {
 export const WALL = {
   /** contact remembered for this many ticks (lets steering pivot you free) */
   memoryTicks: 6,
-  /** hits with |cos(angle to normal)| below this count as glancing (~64° off the wall) */
-  glanceMax: 0.9,
+  /** hits with |cos(angle to normal)| below this count as glancing (~74° off the wall) */
+  glanceMax: 0.96,
   /** fraction of the heading error to the wall tangent removed per contact tick */
-  align: 0.35,
+  align: 0.38,
   /** speed kept per contact tick while scraping */
   scrapeKeep: 0.997,
   /** minimum speed used for steering yaw while touching a wall (m/s) */
-  pivotSpeed: 3.2,
+  pivotSpeed: 3.6,
 } as const;
 
 export type BoostKind = 'launch' | 'dash' | 'drift';
@@ -335,7 +335,26 @@ export class PlayerCar {
     if (this.airborne) return;
     const fx = Math.sin(this.heading), fz = Math.cos(this.heading);
     const into = -(fx * nx + fz * nz); // 1 = nose straight into the wall
-    if (into <= 0 || into > WALL.glanceMax) return;
+    if (into <= 0) return;
+    if (into > WALL.glanceMax) {
+      // Nearly head-on: if the player is steering, deflect gently toward the wall tangent on the
+      // steered side so shallow impacts slide out instead of rotating deeper into the wall.
+      if (Math.abs(this.steerAngle) > 0.04) {
+        let tx = -nz, tz = nx;
+        // Dot of tangent with +heading turn direction (fz, -fx) > 0 means right turn moves toward t.
+        if (this.steerAngle * (fz * tx - fx * tz) < 0) {
+          tx = -tx;
+          tz = -tz;
+        }
+        const target = Math.atan2(tx, tz);
+        let d = target - this.heading;
+        d = Math.atan2(Math.sin(d), Math.cos(d));
+        this.heading += d * 0.18;
+        const { vx, vz } = this.velocity();
+        this.setVelocity(vx, vz);
+      }
+      return;
+    }
     // Tangent along the wall closest to where the nose already points.
     let tx = -nz, tz = nx;
     if (tx * fx + tz * fz < 0) {
@@ -387,16 +406,19 @@ export class PlayerCar {
     this.drift = this.handbrake ? approach(this.drift, 1, dt * 6) : approach(this.drift, 0, dt * 1.8);
     if (this.handbrake) this.driftTime += dt;
     else if (wasHandbrake) {
-      // Powering out of a decent drift gives a little shove.
-      if (this.driftTime > 0.7 && throttle > 0.5) this.boost('drift', Math.min(0.75, 0.3 + this.driftTime * 0.15));
+      // Powering out of a drift gives a boost (mini-boost for >=0.45s micro-drifts, full >=0.7s).
+      if (this.driftTime >= 0.445 && throttle > 0.5) {
+        const dur = this.driftTime >= 0.7 ? Math.min(0.75, 0.34 + this.driftTime * 0.15) : 0.24 + Math.max(0, this.driftTime - 0.45) * 0.32;
+        this.boost('drift', dur);
+      }
       this.driftEnded = this.driftTime;
       this.driftTime = 0;
     }
-    // Launch: rev against the brake at a standstill, then let the brake go.
-    if (!air && absV < 0.8 && throttle > 0.5 && brake > 0.5) this.launchCharge = Math.min(1, this.launchCharge + dt);
+    // Launch: rev against the brake at a standstill, then let the brake go (monotonic reward up to 0.75s).
+    if (!air && absV < 0.8 && throttle > 0.5 && brake > 0.5) this.launchCharge = Math.min(0.75, this.launchCharge + dt);
     else {
       if (this.launchCharge >= MOVES.launchCharge && throttle > 0.5 && brake < 0.2 && this.prevBrake >= 0.2) {
-        this.boost('launch', 0.45 + this.launchCharge * 0.45);
+        this.boost('launch', 0.45 + Math.max(0, this.launchCharge - MOVES.launchCharge) * 1.45);
       }
       if (brake < 0.2 || throttle < 0.5) this.launchCharge = 0;
     }

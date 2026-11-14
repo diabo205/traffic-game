@@ -12,9 +12,12 @@ import { Hud } from './ui/Hud';
 import { Minimap } from './ui/Minimap';
 import { TouchControls } from './ui/TouchControls';
 
+import type { ShiftRank } from './sim/city/Fares';
+
 const MAX_STEPS_PER_FRAME = 5;
 const VEHICLES: readonly PlayerVehicle[] = ['alto', 'rickshaw', 'minibus'];
 const TIMES_OF_DAY: readonly TimeOfDay[] = ['noon', 'sunset', 'night'];
+const MONTHS = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
 
 type Mode = 'route' | 'city';
 
@@ -31,6 +34,28 @@ function storageSet(key: string, value: string): void {
   } catch {
     /* private mode etc. — preferences just won't persist */
   }
+}
+
+function dailyUtcInfo(): { key: string; label: string; seed: number } {
+  const d = new Date();
+  const y = d.getUTCFullYear();
+  const m = d.getUTCMonth();
+  const day = d.getUTCDate();
+  const key = `${y}${String(m + 1).padStart(2, '0')}${String(day).padStart(2, '0')}`;
+  const label = `${MONTHS[m]} ${String(day).padStart(2, '0')}`;
+  let h = Number(key) ^ 0x9e3779b9;
+  h = Math.imul(h ^ (h >>> 16), 0x85ebca6b);
+  h = Math.imul(h ^ (h >>> 13), 0xc2b2ae35);
+  const seed = (h ^ (h >>> 16)) >>> 0 || 1337;
+  return { key, label, seed };
+}
+
+function parseCityBest(raw: string | null): { earned: number; rank?: ShiftRank } {
+  if (!raw) return { earned: 0 };
+  const [eStr, r] = raw.split('|');
+  const earned = Math.max(0, Math.floor(Number(eStr) || 0));
+  const rank = r === 'S' || r === 'A' || r === 'B' || r === 'C' || r === 'D' ? r : undefined;
+  return { earned, rank };
 }
 
 /**
@@ -59,15 +84,21 @@ export class Game {
   private paused = false;
   private farCamera = false;
   private mapTimer = 0;
+  private dailyMode = false;
+  private readonly daily = dailyUtcInfo();
+  private hadFirstShift = false;
+  private pendingToast: { delay: number; text: string; good: boolean } | null = null;
 
   private constructor(
     private readonly renderer: Renderer,
     private readonly seed: number,
     private readonly startZ: number,
     mode: Mode,
+    dailyMode: boolean,
     uiRoot: HTMLElement,
   ) {
     this.mode = mode;
+    this.dailyMode = dailyMode;
     this.bank = Math.max(0, Math.floor(Number(storageGet('kt3d.bank') ?? '0') || 0));
     const savedVeh = storageGet('kt3d.veh');
     if (savedVeh === 'alto' || savedVeh === 'rickshaw' || savedVeh === 'minibus') {
@@ -84,6 +115,7 @@ export class Game {
     this.hud.setMode(mode);
     this.hud.setVehicle(this.vehicle, this.bank);
     this.hud.setTimeOfDay(this.tod);
+    this.syncBestHud();
     this.syncMinimap();
     this.touch = new TouchControls(this.hud.root, this.input.touch);
 
@@ -103,22 +135,44 @@ export class Game {
 
   static async create(container: HTMLElement, uiRoot: HTMLElement): Promise<Game> {
     const params = new URLSearchParams(window.location.search);
-    const seed = Number(params.get('seed') ?? '1337') >>> 0 || 1337;
+    const isDaily = params.has('daily');
+    const daily = dailyUtcInfo();
+    const seed = isDaily ? daily.seed : Number(params.get('seed') ?? '1337') >>> 0 || 1337;
     const lowSpec = params.has('low') || (window.matchMedia('(pointer: coarse)').matches && !params.has('high'));
     // Debug: ?z=1500 starts further along the route.
     const startZ = Math.max(0, Math.min(4200, Number(params.get('z') ?? '0') || 0));
     // ?mode=route|city, else ?z implies the route, else the last mode played.
     const asked = params.get('mode');
     const saved = storageGet('kt3d.mode');
-    const mode: Mode = asked === 'route' || asked === 'city' ? asked : params.has('z') ? 'route' : saved === 'route' ? 'route' : 'city';
+    const mode: Mode = isDaily ? 'city' : asked === 'route' || asked === 'city' ? asked : params.has('z') ? 'route' : saved === 'route' ? 'route' : 'city';
     const renderer = await Renderer.create(container, lowSpec);
-    return new Game(renderer, seed, startZ, mode, uiRoot);
+    return new Game(renderer, seed, startZ, mode, isDaily, uiRoot);
+  }
+
+  private activeSeed(): number {
+    return this.dailyMode ? this.daily.seed : this.seed;
   }
 
   private makeWorld(): AnyWorld {
     this.lastTrackedMoney = 0;
     this.lastCountdownSec = -1;
-    return this.mode === 'city' ? new CityWorld(this.seed, this.vehicle) : new World(this.seed, this.startZ, this.vehicle);
+    this.hadFirstShift = false;
+    this.pendingToast = null;
+    return this.mode === 'city' ? new CityWorld(this.activeSeed(), this.vehicle) : new World(this.seed, this.startZ, this.vehicle);
+  }
+
+  private syncBestHud(): void {
+    const dBest = parseCityBest(storageGet(`kt3d.daily.${this.daily.key}`));
+    this.hud.setDailyInfo(this.daily.label, dBest.earned, dBest.rank);
+    if (this.mode === 'city') {
+      const cBest = parseCityBest(storageGet(`kt3d.best.city.${this.vehicle}`));
+      this.hud.setBestSummary(cBest.earned > 0 ? `BEST RS ${cBest.earned.toLocaleString('en-PK')}${cBest.rank ? ` (${cBest.rank})` : ''}` : null);
+    } else {
+      const rRaw = storageGet(`kt3d.best.route.${this.vehicle}`);
+      if (rRaw?.startsWith('win:')) this.hud.setBestSummary(`BEST WIN ${rRaw.slice(4)}S LEFT`);
+      else if (rRaw?.startsWith('prog:')) this.hud.setBestSummary(`BEST ${rRaw.slice(5)}%`);
+      else this.hud.setBestSummary(null);
+    }
   }
 
   private addBank(delta: number): void {
@@ -140,19 +194,20 @@ export class Game {
   private selectVehicle(v: PlayerVehicle, save = true): void {
     const cost = VEHICLE_COST[v];
     if (this.bank < cost) {
-      this.hud.showToast(`NEED RS ${cost.toLocaleString('en-PK')} TOTAL IN BANK`, false);
+      this.toastNow(`NEED RS ${cost.toLocaleString('en-PK')} TOTAL IN BANK`, false);
       return;
     }
     if (v === this.vehicle) return;
     this.vehicle = v;
     if (save) storageSet('kt3d.veh', v);
     this.hud.setVehicle(v, this.bank);
+    this.syncBestHud();
     if (this.world.phase === 'ready') {
       this.world = this.makeWorld();
       this.renderer.attach(this.world);
       this.syncMinimap();
     } else {
-      this.hud.showToast(`${VEHICLE_SPECS[v].label} READY NEXT RUN`);
+      this.toastNow(`${VEHICLE_SPECS[v].label} READY NEXT RUN`);
     }
   }
 
@@ -160,7 +215,7 @@ export class Game {
     const unlocked = VEHICLES.filter((v) => this.bank >= VEHICLE_COST[v]);
     if (unlocked.length <= 1) {
       const next = VEHICLES.find((v) => this.bank < VEHICLE_COST[v]);
-      if (next) this.hud.showToast(`EARN RS ${VEHICLE_COST[next].toLocaleString('en-PK')} TO UNLOCK ${VEHICLE_SPECS[next].label}`, false);
+      if (next) this.toastNow(`EARN RS ${VEHICLE_COST[next].toLocaleString('en-PK')} TO UNLOCK ${VEHICLE_SPECS[next].label}`, false);
       return;
     }
     const idx = unlocked.indexOf(this.vehicle);
@@ -189,14 +244,38 @@ export class Game {
   /** Mode tile on the start screen: rebuild the world if the mode changed (PLAY starts it). */
   private chooseMode(mode: Mode): void {
     if (this.world.phase !== 'ready') return;
-    if (mode !== this.mode) {
+    const wasDaily = this.dailyMode;
+    this.dailyMode = false;
+    if (mode !== this.mode || wasDaily) {
       this.mode = mode;
       this.world = this.makeWorld();
       this.renderer.attach(this.world);
       this.hud.setMode(mode);
       this.syncMinimap();
+      this.syncBestHud();
       storageSet('kt3d.mode', mode);
     }
+  }
+
+  /** Quick-launch today's deterministic UTC Saddar challenge. */
+  private launchDaily(): void {
+    if (this.world.phase !== 'ready') return;
+    this.audio.unlock();
+    this.dailyMode = true;
+    this.mode = 'city';
+    this.world = this.makeWorld();
+    this.renderer.attach(this.world);
+    this.hud.setMode('city');
+    this.syncMinimap();
+    this.hud.showStart(false);
+    this.world.start();
+    this.drainAndHandle();
+    this.hud.showBanner(`DAILY · ${this.daily.label}`);
+  }
+
+  private toastNow(text: string, good = true): void {
+    this.pendingToast = null;
+    this.hud.showToast(text, good);
   }
 
   // ---- Pause ----------------------------------------------------------------------------
@@ -210,7 +289,7 @@ export class Game {
     let zone = 'Karachi';
     if (w.mode === 'city') {
       const f = w.fares;
-      zone = 'Saddar';
+      zone = this.dailyMode ? `Daily · ${this.daily.label}` : 'Saddar';
       if (f.fare) goals.push(`Deliver to ${f.places[f.fare.dest].name} · ${Math.round(f.navDist)} m · ${Math.ceil(f.fare.timeLeft)} s left`);
       else if (f.onShift) goals.push('Find a passenger and stop beside them');
       else goals.push('Shift over · start a new one when you are ready');
@@ -236,6 +315,7 @@ export class Game {
   /** Back to the mode select screen with a fresh world. */
   private quitToMenu(): void {
     this.paused = false;
+    this.dailyMode = false;
     this.audio.setPaused(false);
     this.hud.showPause(false);
     this.hud.showShiftOver(null);
@@ -244,6 +324,7 @@ export class Game {
     this.world = this.makeWorld();
     this.renderer.attach(this.world);
     this.accumulator = 0;
+    this.syncBestHud();
     this.hud.showStart(true);
     this.input.consumeConfirm();
   }
@@ -270,6 +351,7 @@ export class Game {
     this.hud.startBtn.addEventListener('click', () => this.chooseMode('route'));
     this.hud.cityBtn.addEventListener('click', () => this.chooseMode('city'));
     this.hud.playBtn.addEventListener('click', () => this.input.queueConfirm());
+    this.hud.dailyBtn.addEventListener('click', () => this.launchDaily());
     this.hud.pauseBtn.addEventListener('click', () => this.pause());
     this.hud.resumeBtn.addEventListener('click', () => this.resume());
     this.hud.quitBtn.addEventListener('click', () => this.quitToMenu());
@@ -327,8 +409,8 @@ export class Game {
     this.hud.hideEnd();
     this.hud.showShiftOver(null);
     this.world.start();
-    if (this.world.mode === 'route') this.hud.showToast('REACH CLIFTON · 4.2 KM');
     this.drainAndHandle();
+    if (this.world.mode === 'route') this.pendingToast = { delay: 1.8, text: 'REACH CLIFTON · 4.2 KM', good: true };
   }
 
   private frame(now: number): void {
@@ -352,6 +434,14 @@ export class Game {
       this.renderer.render(this.world, this.accumulator / DT, 0);
       return;
     }
+    if (this.pendingToast) {
+      this.pendingToast.delay -= frameDt;
+      if (this.pendingToast.delay <= 0) {
+        const pt = this.pendingToast;
+        this.pendingToast = null;
+        this.hud.showToast(pt.text, pt.good);
+      }
+    }
     const confirm = this.input.consumeConfirm() && !this.hud.settingsOpen;
     const phase = this.world.phase;
 
@@ -359,8 +449,9 @@ export class Game {
       this.audio.unlock();
       this.hud.showStart(false);
       this.world.start();
-      if (this.world.mode === 'route') this.hud.showToast('REACH CLIFTON · 4.2 KM');
       this.drainAndHandle();
+      if (this.dailyMode) this.hud.showBanner(`DAILY · ${this.daily.label}`);
+      if (this.world.mode === 'route') this.pendingToast = { delay: 1.8, text: 'REACH CLIFTON · 4.2 KM', good: true };
     } else if (phase === 'running' && confirm && this.world.mode === 'city' && !this.world.fares.onShift) {
       this.world.startShift();
     } else if ((phase === 'gameover' || phase === 'complete') && confirm && this.endShownAt >= 0 && this.clock - this.endShownAt > 0.6) {
@@ -458,7 +549,16 @@ export class Game {
     const running = w.phase === 'running';
     if (running && f.fare) {
       const pl = f.places[f.fare.dest];
-      this.hud.setFare({ name: pl.name, distance: f.navDist, timeLeft: f.fare.timeLeft, limit: f.fare.limit });
+      this.hud.setFare({
+        name: pl.name,
+        distance: f.navDist,
+        timeLeft: f.fare.timeLeft,
+        limit: f.fare.limit,
+        kind: f.fare.kind,
+        stop: f.fare.totalStops - f.fare.stopsLeft + 1,
+        stops: f.fare.totalStops,
+        chain: f.chain,
+      });
     } else if (running && f.onShift) this.hud.setFare({ hint: 'Find a passenger · stop beside them' });
     else this.hud.setFare(null);
     if (running && f.navDist > 0) {
@@ -484,50 +584,92 @@ export class Game {
         this.hud.showBanner(e.banner);
         break;
       case 'checkpoint':
-        this.hud.showToast(`+${e.bonus}s · ${e.label}`);
+        this.toastNow(`+${e.bonus}s · ${e.label}`);
         this.audio.chime();
         break;
       case 'shiftStart':
         this.hud.showShiftOver(null);
-        this.hud.showToast(`ON DUTY · ${e.time}s shift`);
+        if (!this.hadFirstShift) {
+          this.hadFirstShift = true;
+          this.pendingToast = { delay: 1.8, text: `FIND A PASSENGER · ${e.time}s SHIFT`, good: true };
+        } else {
+          this.toastNow(`ON DUTY · ${e.time}s SHIFT`);
+        }
         break;
       case 'shiftOver':
         if (this.world.mode === 'city') {
           const st = this.world.stunts;
-          this.hud.showShiftOver({ earned: e.earned, fares: e.fares, total: this.world.fares.money, score: st.shiftScore, best: st.bestCombo });
+          const rank = this.world.fares.shiftRank(st.shiftScore);
+          const cityKey = `kt3d.best.city.${this.vehicle}`;
+          const prev = parseCityBest(storageGet(cityKey));
+          const isNewBest = e.earned > 0 && e.earned > prev.earned;
+          const bestEarned = Math.max(prev.earned, e.earned);
+          if (isNewBest) storageSet(cityKey, `${e.earned}|${rank}`);
+          if (this.dailyMode) {
+            const dKey = `kt3d.daily.${this.daily.key}`;
+            const prevD = parseCityBest(storageGet(dKey));
+            if (e.earned > prevD.earned) storageSet(dKey, `${e.earned}|${rank}`);
+          }
+          this.syncBestHud();
+          this.hud.showShiftOver({
+            earned: e.earned,
+            fares: e.fares,
+            total: this.world.fares.money,
+            score: st.shiftScore,
+            best: st.bestCombo,
+            rank,
+            bestEarned,
+            isNewBest,
+            bestChain: this.world.fares.bestChain,
+          });
+          if (rank === 'S' || rank === 'A') this.audio.fanfare(2);
+          else this.audio.chime();
+        } else {
+          this.audio.chime();
         }
-        this.audio.chime();
         break;
-      case 'pickup':
-        this.hud.showBanner(`➜ ${e.name.toUpperCase()}`);
-        this.hud.showToast(`${e.time}s to get there`);
-        this.audio.chime();
+      case 'pickup': {
+        const prefix = e.kind === 'vip' ? '★ VIP · ' : e.kind === 'party' ? `★ PARTY (${e.stops ?? 2} STOPS) · ` : '➜ ';
+        this.hud.showBanner(`${prefix}${e.name.toUpperCase()}`);
+        const tag = e.kind === 'vip' ? '2× PAY · ' : e.kind === 'party' ? `${e.stops ?? 2} STOPS · ` : '';
+        this.toastNow(`${tag}${e.time}s to get there`);
+        if (e.kind === 'vip' || e.kind === 'party') this.audio.fanfare(1);
+        else this.audio.chime();
         break;
+      }
       case 'dropoff': {
+        if (e.nextStop) {
+          this.hud.showBanner(`STOP 1 DONE! ➜ ${e.nextStop.toUpperCase()}`);
+          this.toastNow(`+Rs ${e.pay} · +${e.bonus}s · NEXT STOP!`);
+          this.audio.chime();
+          break;
+        }
         const stars = e.rating === 2 ? '★★★ ' : e.rating === 1 ? '★★ ' : '★ ';
+        const fever = e.chain && e.chain >= 2 ? `FEVER ×${(1 + Math.min(4, e.chain - 1) * 0.25).toFixed(2).replace(/\.?0+$/, '')} · ` : '';
         this.hud.showBanner(e.rating === 2 ? 'BOHAT TEZ! SHABASH!' : e.rating === 1 ? 'SHUKRIYA!' : 'THODA LATE...');
-        this.hud.showToast(`${stars}+Rs ${e.pay}${e.tip ? ` + Rs ${e.tip} tip` : ''} · +${e.bonus}s`);
-        this.audio.chime();
+        this.toastNow(`${stars}${fever}+Rs ${e.pay}${e.tip ? ` + Rs ${e.tip} tip` : ''} · +${e.bonus}s`);
+        if (e.chain && e.chain >= 2) this.audio.fanfare(1);
+        else this.audio.chime();
         break;
       }
       case 'fareFailed':
-        if (e.reason !== 'shift') this.hud.showToast(e.reason === 'time' ? 'TOO SLOW! Passenger got out' : 'Fare lost', false);
+        if (e.reason !== 'shift') this.toastNow(e.reason === 'time' ? 'TOO SLOW! Passenger got out' : 'Fare lost', false);
         break;
       case 'towed':
         this.hud.showBanner('TOWED TO THE MECHANIC');
-        this.hud.showToast(`Repairs −Rs ${e.cost} · −10s`, false);
+        this.toastNow(`Repairs −Rs ${e.cost} · −10s`, false);
         this.renderer.chase.reset();
         break;
       case 'boost':
         this.audio.whoosh();
-        this.hud.showToast(e.kind === 'drift' ? 'DRIFT BOOST!' : e.kind === 'launch' ? 'LAUNCH!' : 'DASH!');
+        this.toastNow(e.kind === 'drift' ? 'DRIFT BOOST!' : e.kind === 'launch' ? 'LAUNCH!' : 'DASH!');
         break;
       case 'drift':
-        this.hud.showToast(`DRIFT ${e.seconds.toFixed(1)}s`);
+        this.toastNow(`DRIFT ${e.seconds.toFixed(1)}s`);
         break;
       case 'land':
         this.audio.pothole(Math.min(1, e.impact / 10));
-        if (e.air > 0.5) this.hud.showToast(`AIR ${e.air.toFixed(1)}s!`);
+        if (e.air > 0.5) this.toastNow(`AIR ${e.air.toFixed(1)}s!`);
         break;
       case 'smash':
         this.audio.smash(e.kind, e.impact / 15);
@@ -538,21 +680,21 @@ export class Game {
         break;
       case 'comboEnd':
         if (e.mult > 1 || e.total >= 200) {
-          this.hud.showToast(`COMBO ×${e.mult} · +${e.total.toLocaleString('en-PK')}${e.tip ? ` · passenger tip Rs ${e.tip}` : ''}`);
+          this.toastNow(`COMBO ×${e.mult} · +${e.total.toLocaleString('en-PK')}${e.tip ? ` · passenger tip Rs ${e.tip}` : ''}`);
           this.audio.chime();
         }
         break;
       case 'comboBroken':
-        this.hud.showToast(`COMBO LOST · −${e.lost.toLocaleString('en-PK')}`, false);
+        this.toastNow(`COMBO LOST · −${e.lost.toLocaleString('en-PK')}`, false);
         break;
       case 'honk':
-        this.hud.showToast('RAASTA DO! 📯');
+        this.toastNow('RAASTA DO! 📯');
         break;
       case 'street':
         this.hud.showBanner(e.name.toUpperCase());
         break;
       case 'pinned':
-        this.hud.showToast(this.input.lastSource === 'touch' ? 'STUCK? Hold BRAKE to back up' : this.input.lastSource === 'gamepad' ? 'STUCK? Hold LT to back up' : 'STUCK? Hold S / ↓ to back up', false);
+        this.toastNow(this.input.lastSource === 'touch' ? 'STUCK? Hold BRAKE to back up' : this.input.lastSource === 'gamepad' ? 'STUCK? Hold LT to back up' : 'STUCK? Hold S / ↓ to back up', false);
         break;
       case 'kerb':
         this.audio.pothole(e.severity * 0.4);
@@ -560,13 +702,13 @@ export class Game {
       case 'pothole':
         this.audio.pothole(e.severity);
         if (e.damage > 0) {
-          this.hud.showToast(`POTHOLE −${e.damage} HP`, false);
+          this.toastNow(`POTHOLE −${e.damage} HP`, false);
           this.hud.damageFlash(0.1);
         }
         break;
       case 'manhole':
         this.audio.manhole();
-        this.hud.showToast(`OPEN MANHOLE! −${e.damage} HP`, false);
+        this.toastNow(`OPEN MANHOLE! −${e.damage} HP`, false);
         this.hud.damageFlash(0.4);
         break;
       case 'crash':
@@ -578,17 +720,28 @@ export class Game {
         break;
       case 'splash':
         this.audio.splash();
-        this.hud.showToast('HYDROPLANING!', false);
+        this.toastNow('HYDROPLANING!', false);
         break;
       case 'gameover':
-      case 'complete':
+      case 'complete': {
         this.endPendingAt = this.clock + (e.type === 'complete' ? 1.5 : 1.2);
+        const rKey = `kt3d.best.route.${this.vehicle}`;
+        const prev = storageGet(rKey) ?? '';
         if (e.type === 'complete') {
+          const left = +this.world.level.timeLeft.toFixed(1);
+          const prevWin = prev.startsWith('win:') ? Number(prev.slice(4)) || 0 : 0;
+          if (left > prevWin) storageSet(rKey, `win:${left.toFixed(1)}`);
           this.addBank(300);
-          this.hud.showToast('CLIFTON REACHED! +RS 300 BANKED');
-          this.audio.chime();
+          this.toastNow('CLIFTON REACHED! +RS 300 BANKED');
+          this.audio.fanfare(2);
+        } else if (!prev.startsWith('win:')) {
+          const pct = Math.round(this.world.level.progress * 100);
+          const prevPct = prev.startsWith('prog:') ? Number(prev.slice(5)) || 0 : 0;
+          if (pct > prevPct) storageSet(rKey, `prog:${pct}`);
         }
+        this.syncBestHud();
         break;
+      }
     }
   }
 }

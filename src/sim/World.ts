@@ -86,7 +86,7 @@ export class World {
 
   /** 0..1 camera speed-rush on the expressway. */
   speedRush(): number {
-    const rush = ZONES[sampleRoad(this.player.z).zoneIndex].elevated ? clamp((this.player.speed - 20) / 14, 0, 1) : 0;
+    const rush = ZONES[sampleRoad(this.player.z).zoneIndex].elevated ? clamp((this.player.speed - 18) / 14, 0, 1) : 0;
     return Math.max(rush, this.player.boostTime > 0 ? 1 : 0);
   }
 
@@ -287,7 +287,18 @@ export class World {
     if (rel >= 0) return;
     const j = -(1 + RESTITUTION) * rel;
     p.setVelocity(vx + mtv.nx * j, vz + mtv.nz * j);
-    p.scrapeWall(mtv.nx, mtv.nz);
+    // Nudge nose slightly toward the open side of the road so edge barrier clips don't glue you.
+    if (Math.abs(mtv.nz) > 0.5 && Math.abs(vx) < 2) {
+      const road = sampleRoad(p.z);
+      const nearLeft = h.x - h.hw < road.left - road.shoulder + 2.8;
+      const nearRight = h.x + h.hw > road.right - 2.8;
+      const awayX = nearLeft ? 1 : nearRight ? -1 : p.x >= h.x ? 1 : -1;
+      p.x += awayX * 0.08;
+      p.heading += awayX * 0.14;
+      p.setVelocity(vx + awayX * 2.2, vz * 0.85);
+    } else {
+      p.scrapeWall(mtv.nx, mtv.nz);
+    }
     const impact = -rel;
     if (impact > 2 && this.tick - h.lastHitTick > HIT_COOLDOWN && this.tick - this.lastWallHitTick > HIT_COOLDOWN) {
       h.lastHitTick = this.tick;

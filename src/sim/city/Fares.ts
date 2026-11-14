@@ -22,6 +22,9 @@ export interface Place extends Spot {
   name: string;
 }
 
+export type FareKind = 'standard' | 'vip' | 'party';
+export type ShiftRank = 'S' | 'A' | 'B' | 'C' | 'D';
+
 export interface Passenger {
   id: number;
   x: number;
@@ -32,8 +35,10 @@ export interface Passenger {
   dest: number;
   /** clothing / look variant for the renderer */
   variant: number;
-  /** 0 short hop, 1 medium, 2 long ride (marker colour) */
-  tier: 0 | 1 | 2;
+  /** 0 short hop, 1 medium, 2 long ride, 3 VIP magenta (marker colour) */
+  tier: 0 | 1 | 2 | 3;
+  kind: FareKind;
+  partyCount: number;
   /** boarding progress, seconds stopped beside them */
   board: number;
 }
@@ -42,6 +47,10 @@ export interface Fare {
   dest: number;
   /** passenger look, so the renderer can show them in the car */
   variant: number;
+  kind: FareKind;
+  partyCount: number;
+  stopsLeft: number;
+  totalStops: number;
   limit: number;
   timeLeft: number;
   /** route length when picked up (m) */
@@ -72,6 +81,8 @@ export class Fares {
   shiftEarnings = 0;
   shiftFares = 0;
   totalFares = 0;
+  chain = 0;
+  bestChain = 0;
 
   /** Guidance: point the arrow aims at, and route length to the target. */
   navX = 0;
@@ -129,12 +140,25 @@ export class Fares {
     this.shiftTime = SHIFT_START;
     this.shiftEarnings = 0;
     this.shiftFares = 0;
+    this.chain = 0;
+    this.bestChain = 0;
     events.push({ type: 'shiftStart', time: SHIFT_START });
+  }
+
+  /** Grade the shift into an arcade license rank. */
+  shiftRank(stuntScore: number): ShiftRank {
+    const pts = this.shiftEarnings + this.shiftFares * 120 + stuntScore * 0.04;
+    if (pts >= 2800) return 'S';
+    if (pts >= 1900) return 'A';
+    if (pts >= 1100) return 'B';
+    if (pts >= 500) return 'C';
+    return 'D';
   }
 
   /** Drop any current fare (towed, shift over). */
   cancelFare(): void {
     this.fare = null;
+    this.chain = 0;
   }
 
   update(dt: number, p: PlayerCar, tick: number, events: SimEvent[]): void {
@@ -146,6 +170,7 @@ export class Fares {
         this.onShift = false;
         if (this.fare) events.push({ type: 'fareFailed', name: this.places[this.fare.dest].name, reason: 'shift' });
         this.fare = null;
+        this.chain = 0;
         events.push({ type: 'shiftOver', earned: this.shiftEarnings, fares: this.shiftFares });
       }
     }
@@ -157,11 +182,12 @@ export class Fares {
       const place = this.places[f.dest];
       if (Math.hypot(p.x - place.x, p.z - place.z) < DROP_RADIUS && stopped) {
         f.alight += dt;
-        if (f.alight >= ALIGHT_TIME) this.deliver(events);
+        if (f.alight >= ALIGHT_TIME) this.deliver(p, events);
       } else f.alight = 0;
       if (this.fare && f.timeLeft <= 0) {
         events.push({ type: 'fareFailed', name: place.name, reason: 'time' });
         this.fare = null;
+        this.chain = 0;
       }
     } else if (this.onShift) {
       for (let i = 0; i < this.waiting.length; i++) {
@@ -177,35 +203,107 @@ export class Fares {
       }
     }
 
-    if (tick % 15 === 0) this.navigate(p);
+    if (tick % 6 === 0) this.navigate(p);
   }
 
   private board(w: Passenger, p: PlayerCar, events: SimEvent[]): void {
     const place = this.places[w.dest];
     const dist = this.routeLength(p.x, p.z, p.heading, place);
-    const limit = Math.round(dist / 8.5 + 10);
-    this.fare = { dest: w.dest, variant: w.variant, limit, timeLeft: limit, distance: dist, alight: 0 };
-    events.push({ type: 'pickup', name: place.name, time: limit, distance: Math.round(dist) });
+    const pace = w.kind === 'vip' ? 9.8 : 8.5;
+    const pad = w.kind === 'vip' ? 8 : 11;
+    const limit = Math.round(dist / pace + pad);
+    const stops = w.kind === 'party' ? 2 : 1;
+    const partyCount = w.kind === 'party' ? (p.vehicle === 'minibus' ? 3 : 2) : 1;
+    this.fare = {
+      dest: w.dest,
+      variant: w.variant,
+      kind: w.kind,
+      partyCount,
+      stopsLeft: stops,
+      totalStops: stops,
+      limit,
+      timeLeft: limit,
+      distance: dist,
+      alight: 0,
+    };
+    events.push({ type: 'pickup', name: place.name, time: limit, distance: Math.round(dist), kind: w.kind, stops });
     this.navigate(p);
   }
 
-  private deliver(events: SimEvent[]): void {
+  private pickDest(fromX: number, fromZ: number, exclude = -1): number {
+    if (this.places.length <= 1) return 0;
+    let dest = this.rng.int(0, this.places.length - 1);
+    for (let k = 0; k < 6; k++) {
+      if (dest !== exclude && Math.hypot(this.places[dest].x - fromX, this.places[dest].z - fromZ) >= 95) break;
+      dest = this.rng.int(0, this.places.length - 1);
+    }
+    return dest;
+  }
+
+  private deliver(p: PlayerCar, events: SimEvent[]): void {
     const f = this.fare;
     if (!f) return;
-    const frac = f.timeLeft / f.limit;
-    const base = Math.round((60 + f.distance * 0.5) / 10) * 10;
+    const frac = f.timeLeft / Math.max(1, f.limit);
+    if (f.stopsLeft > 1) {
+      // Mid-ride stop on a Party fare: pay leg 1 and chain seamlessly to stop 2!
+      const legPay = Math.round(((50 + f.distance * 0.4) * (1 + (f.partyCount - 1) * 0.25)) / 10) * 10;
+      const bonus = 4;
+      this.money += legPay;
+      this.shiftEarnings += legPay;
+      this.shiftTime += bonus;
+      const oldName = this.places[f.dest].name;
+      const nextDest = this.pickDest(p.x, p.z, f.dest);
+      const nextPlace = this.places[nextDest];
+      const nextDist = this.routeLength(p.x, p.z, p.heading, nextPlace);
+      const nextLimit = Math.max(12, Math.round(nextDist / 8.5 + 10));
+      f.dest = nextDest;
+      f.distance = nextDist;
+      f.timeLeft = Math.min(nextLimit, f.timeLeft + Math.round(nextDist / 9 + 8));
+      f.limit = Math.max(f.limit, f.timeLeft);
+      f.stopsLeft--;
+      f.alight = 0;
+      events.push({
+        type: 'dropoff',
+        name: oldName,
+        pay: legPay,
+        tip: 0,
+        bonus,
+        rating: frac > 0.5 ? 2 : frac > 0.25 ? 1 : 0,
+        chain: this.chain,
+        kind: f.kind,
+        nextStop: nextPlace.name,
+      });
+      this.navigate(p);
+      return;
+    }
+
+    if (frac > 0.25) this.chain++;
+    else this.chain = 0;
+    this.bestChain = Math.max(this.bestChain, this.chain);
+    const streakMul = 1 + Math.min(4, Math.max(0, this.chain - 1)) * 0.25;
+    const kindMul = f.kind === 'vip' ? 2.0 : f.kind === 'party' ? 1.45 : 1.0;
+    const base = Math.round(((60 + f.distance * 0.5) * kindMul * streakMul) / 10) * 10;
     const tip = frac > 0.5 ? Math.round((base * 0.5) / 10) * 10 : frac > 0.25 ? Math.round((base * 0.2) / 10) * 10 : 0;
-    const bonus = Math.round(5 + 12 * frac);
+    const bonus = Math.round((5 + 12 * frac + (f.kind === 'vip' ? 5 : 0)) * (1 + Math.min(3, Math.max(0, this.chain - 1)) * 0.1));
     this.money += base + tip;
     this.shiftEarnings += base + tip;
     this.shiftFares++;
     this.totalFares++;
     this.shiftTime += bonus;
-    events.push({ type: 'dropoff', name: this.places[f.dest].name, pay: base, tip, bonus, rating: frac > 0.5 ? 2 : frac > 0.25 ? 1 : 0 });
+    events.push({
+      type: 'dropoff',
+      name: this.places[f.dest].name,
+      pay: base,
+      tip,
+      bonus,
+      rating: frac > 0.5 ? 2 : frac > 0.25 ? 1 : 0,
+      chain: this.chain,
+      kind: f.kind,
+    });
     this.fare = null;
   }
 
-  /** Keep a handful of passengers waiting around the player. */
+  /** Keep a handful of passengers waiting around the player (first one spawns ahead). */
   private population(p: PlayerCar): void {
     for (let i = this.waiting.length - 1; i >= 0; i--) {
       const w = this.waiting[i];
@@ -213,18 +311,35 @@ export class Fares {
     }
     if (this.waiting.length >= WAITING || this.spots.length === 0 || this.places.length === 0) return;
     const rng = this.rng;
-    const si = rng.int(0, this.spots.length - 1);
+    let si = rng.int(0, this.spots.length - 1);
+    // On an empty street at start of play, place the first rider clearly ahead of the nose.
+    if (this.waiting.length === 0 && !this.fare && this.shiftFares === 0) {
+      const fx = Math.sin(p.heading), fz = Math.cos(p.heading);
+      let best = -1;
+      let bestScore = Infinity;
+      for (let i = 0; i < this.spots.length; i++) {
+        const sp = this.spots[i];
+        const dx = sp.x - p.x, dz = sp.z - p.z;
+        const along = dx * fx + dz * fz;
+        const d = Math.hypot(dx, dz);
+        if (along > 18 && d >= 38 && d <= 105 && d < bestScore) {
+          bestScore = d;
+          best = i;
+        }
+      }
+      if (best >= 0) si = best;
+    }
     const sp = this.spots[si];
     const d = Math.hypot(sp.x - p.x, sp.z - p.z);
     if (d < SPAWN_MIN || d > SPAWN_MAX) return;
     if (this.waiting.some((w) => Math.hypot(w.x - sp.x, w.z - sp.z) < 40)) return;
-    let dest = rng.int(0, this.places.length - 1);
-    for (let k = 0; k < 4 && Math.hypot(this.places[dest].x - sp.x, this.places[dest].z - sp.z) < 90; k++) {
-      dest = rng.int(0, this.places.length - 1);
-    }
+    const dest = this.pickDest(sp.x, sp.z);
     const pl = this.places[dest];
     const crow = Math.hypot(pl.x - sp.x, pl.z - sp.z);
     if (crow < 70) return;
+    const roll = rng.next();
+    const kind: FareKind = this.shiftFares === 0 && this.waiting.length === 0 ? 'standard' : roll < 0.16 ? 'vip' : roll < 0.36 ? 'party' : 'standard';
+    const tier: 0 | 1 | 2 | 3 = kind === 'vip' ? 3 : crow < 260 ? 0 : crow < 520 ? 1 : 2;
     this.waiting.push({
       id: this.nextId++,
       x: sp.x,
@@ -232,7 +347,9 @@ export class Fares {
       spot: si,
       dest,
       variant: rng.int(0, 7),
-      tier: crow < 260 ? 0 : crow < 520 ? 1 : 2,
+      tier,
+      kind,
+      partyCount: kind === 'party' ? 2 : 1,
       board: 0,
     });
   }

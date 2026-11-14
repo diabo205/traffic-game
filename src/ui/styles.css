@@ -183,6 +183,19 @@ button { font-family: var(--display); cursor: pointer; }
   clip-path: polygon(var(--slant) 0, 100% 0, calc(100% - var(--slant)) 100%, 0 100%);
 }
 .fare::before { content: ''; position: absolute; left: var(--slant); top: 0; bottom: 0; width: 5px; background: var(--magenta); transform: skewX(-20deg); }
+.fare.vip { background: linear-gradient(135deg, #fff 55%, #ffe0ec); box-shadow: inset 0 -3px 0 var(--magenta); }
+.fare.party::before { background: var(--lime-2); }
+.fare-meta {
+  display: inline-block;
+  margin-bottom: 1px;
+  padding: 0 8px;
+  background: var(--navy);
+  color: var(--lime);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+.fare.vip .fare-meta { background: var(--magenta); color: #fff; }
 .fare-name { font-size: 22px; font-weight: 800; line-height: 1.05; letter-spacing: 0.02em; }
 .fare-info { font-size: 15px; font-weight: 700; color: #3a4a70; }
 .fare-info b { color: var(--magenta-2); }
@@ -291,7 +304,7 @@ button { font-family: var(--display); cursor: pointer; }
 /* ---- Banner: white slanted plate sliding in from the left ---- */
 .banner {
   position: absolute;
-  top: 46%;
+  top: 37%;
   left: 0;
   transform: translateX(-110%);
   transition: transform 0.4s cubic-bezier(0.2, 0.9, 0.2, 1.1);
@@ -362,7 +375,14 @@ button { font-family: var(--display); cursor: pointer; }
   text-align: center;
   pointer-events: auto;
 }
-.shift-tag { display: inline-block; padding: 0 12px; background: #fff; color: var(--navy); font-weight: 800; letter-spacing: 0.08em; font-size: 16px; }
+.shift-head { display: flex; align-items: center; justify-content: center; gap: 6px; flex-wrap: wrap; margin-bottom: 2px; }
+.shift-tag { display: inline-block; padding: 0 10px; background: #fff; color: var(--navy); font-weight: 800; letter-spacing: 0.08em; font-size: 15px; }
+.shift-rank { display: inline-block; padding: 0 10px; font-weight: 900; font-style: italic; letter-spacing: 0.06em; font-size: 15px; background: var(--navy-2); color: #fff; border: 1px solid rgba(255, 255, 255, 0.35); }
+.shift-rank.rank-S { background: var(--lime); color: var(--navy); border-color: var(--lime); }
+.shift-rank.rank-A { background: var(--gold); color: var(--navy); border-color: var(--gold); }
+.shift-rank.rank-B { background: var(--magenta); color: #fff; border-color: var(--magenta); }
+.new-best { display: inline-block; padding: 0 8px; background: var(--magenta); color: #fff; font-weight: 900; font-size: 13px; letter-spacing: 0.06em; }
+.shift-best { font-size: 13px; font-weight: 700; letter-spacing: 0.05em; color: var(--muted); }
 .shift-earned { font-size: 46px; font-weight: 900; font-style: italic; color: var(--lime); line-height: 1.05; }
 .shift-rows { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 16px; text-align: left; font-size: 15px; }
 .shift-rows div { display: flex; justify-content: space-between; gap: 10px; border-bottom: 1px solid rgba(255, 255, 255, 0.1); }
@@ -417,8 +437,9 @@ button { font-family: var(--display); cursor: pointer; }
 /* ---- Mode select ---- */
 .screen.start {
   background:
-    linear-gradient(90deg, rgba(11, 21, 48, 0) 30%, rgba(11, 21, 48, 0.55) 70%),
-    linear-gradient(180deg, rgba(11, 21, 48, 0) 55%, rgba(11, 21, 48, 0.85));
+    radial-gradient(ellipse 64% 58% at 80% 34%, rgba(11, 21, 48, 0.72) 0%, rgba(11, 21, 48, 0.25) 65%, rgba(11, 21, 48, 0) 100%),
+    linear-gradient(90deg, rgba(11, 21, 48, 0.06) 24%, rgba(11, 21, 48, 0.72) 72%),
+    linear-gradient(180deg, rgba(11, 21, 48, 0) 52%, rgba(11, 21, 48, 0.88));
 }
 .topbar {
   position: absolute;
@@ -488,8 +509,8 @@ button { font-family: var(--display); cursor: pointer; }
   justify-content: flex-end;
 }
 .garage-btn {
-  min-width: 84px;
-  padding: 5px 10px;
+  min-width: 86px;
+  padding: 4px 10px;
   border: 2px solid #2b3f75;
   background: rgba(11, 21, 48, 0.88);
   color: #cbd5ee;
@@ -499,11 +520,31 @@ button { font-family: var(--display); cursor: pointer; }
   line-height: 1.05;
 }
 .garage-btn .g-name { font-size: 16px; font-weight: 800; letter-spacing: 0.04em; }
+.garage-btn .g-perk { font-size: 10px; font-weight: 700; letter-spacing: 0.08em; color: var(--muted); }
 .garage-btn .g-sub { font-size: 11px; font-weight: 700; letter-spacing: 0.05em; color: var(--gold); }
 .garage-btn.chosen { background: #fff; color: var(--navy); border-color: var(--lime); }
+.garage-btn.chosen .g-perk { color: #3a4a70; }
 .garage-btn.chosen .g-sub { color: var(--magenta-2); }
 .garage-btn.locked { opacity: 0.68; }
-.go-btn.play { padding: 12px 84px; font-size: 44px; }
+.play-actions { display: flex; gap: 8px; justify-content: flex-end; align-items: stretch; }
+.go-btn.play { padding: 12px 64px; font-size: 44px; }
+.daily-btn {
+  border: 2px solid var(--magenta);
+  padding: 6px 16px;
+  background: linear-gradient(160deg, #1b2f68, #0b1530);
+  color: #fff;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  line-height: 1.05;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  pointer-events: auto;
+}
+.daily-btn .d-top { font-size: 18px; font-weight: 900; font-style: italic; letter-spacing: 0.05em; color: var(--gold); }
+.daily-btn .d-sub { font-size: 11px; font-weight: 700; letter-spacing: 0.06em; color: #d9e1f5; }
+.daily-btn:hover { border-color: var(--lime); background: linear-gradient(160deg, #27438e, #12214a); }
+.daily-btn:active { transform: translateY(2px); }
 .tiles {
   position: absolute;
   left: 0;
@@ -730,13 +771,28 @@ button { font-family: var(--display); cursor: pointer; }
 .tbtn.small.drift { font-size: 14px; background: rgba(255, 45, 111, 0.55); }
 .pedals { display: flex; gap: 10px; align-items: flex-end; }
 .tbtn.pedal { width: clamp(64px, 14vw, 88px); font-size: 18px; }
-.tbtn.gas { height: clamp(110px, 24vw, 150px); background: rgba(198, 244, 50, 0.35); color: #fff; }
+.tbtn.gas { position: relative; height: clamp(110px, 24vw, 150px); background: rgba(198, 244, 50, 0.35); color: #fff; }
 .tbtn.brake { height: clamp(80px, 18vw, 110px); background: rgba(255, 45, 111, 0.35); }
 .tbtn.gas.active { background: var(--lime); color: var(--navy); }
 .tbtn.brake.active { background: var(--magenta); }
-.tbtn.gas.dash-ready { border-color: #fff; }
+.tbtn.gas.dash-ready { border-color: #fff; box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.6); }
 .tbtn.gas.auto-on { background: rgba(198, 244, 50, 0.58); color: var(--navy); box-shadow: inset 0 0 0 3px var(--lime); }
-.tbtn.gas.launch-ready { border-color: var(--gold); box-shadow: 0 0 16px var(--gold); }
+.tbtn.gas.launch-ready { border-color: var(--gold); box-shadow: 0 0 18px var(--gold); }
+.tbtn.gas[data-cue]:not([data-cue=''])::after {
+  position: absolute;
+  top: 5px;
+  left: 4px;
+  right: 4px;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.05em;
+  line-height: 1;
+  padding: 2px 3px;
+  background: rgba(11, 21, 48, 0.85);
+}
+.tbtn.gas[data-cue='launch']::after { content: 'LAUNCH!'; color: var(--gold); }
+.tbtn.gas[data-cue='dash']::after { content: '2× DASH'; color: var(--lime); }
+.tbtn.gas[data-cue='auto']::after { content: 'AUTO'; color: #fff; }
 .stick {
   position: relative;
   width: clamp(130px, 30vw, 170px);
@@ -775,9 +831,11 @@ button { font-family: var(--display); cursor: pointer; }
   .tile-top { font-size: 17px; }
   .tile-bottom { font-size: 28px; }
   .play-wrap { bottom: calc(110px + var(--safe-b)); }
-  .garage-btn { min-width: 72px; padding: 4px 8px; }
+  .garage-btn { min-width: 72px; padding: 3px 8px; }
   .garage-btn .g-name { font-size: 14px; }
-  .go-btn.play { font-size: 34px; padding: 8px 60px; }
+  .go-btn.play { font-size: 34px; padding: 8px 42px; }
+  .daily-btn { padding: 5px 12px; }
+  .daily-btn .d-top { font-size: 15px; }
   .card-label { font-size: 24px; }
   .tab { height: 52px; font-size: 20px; }
 }
@@ -795,16 +853,21 @@ button { font-family: var(--display); cursor: pointer; }
   .pause-right .card-value { font-size: 13px; }
   .menu-tag { font-size: 17px; margin-bottom: 0; }
   .zone-card { top: 22%; font-size: 34px; }
-  .hero { top: calc(64px + var(--safe-t)); }
+  .hero { top: calc(62px + var(--safe-t)); }
+  .hero h1 { font-size: 30px; margin: 6px 0; }
   .hero p { display: none; }
   .bank-badge { font-size: 13px; padding: 2px 8px; }
-  .play-wrap { bottom: calc(92px + var(--safe-b)); }
+  .play-wrap { bottom: calc(78px + var(--safe-b)); }
   .play-wrap .hint { display: none; }
-  .garage-strip { margin-bottom: 6px; }
-  .go-btn.play { font-size: 28px; padding: 6px 46px; }
-  .tiles { padding: 8px calc(14px + var(--safe-r)) calc(8px + var(--safe-b)) calc(14px + var(--safe-l)); }
-  .tile { height: 64px; }
-  .tile.dim { display: none; }
+  .garage-strip { margin-bottom: 5px; }
+  .go-btn.play { font-size: 28px; padding: 6px 34px; }
+  .daily-btn { padding: 4px 10px; }
+  .daily-btn .d-top { font-size: 14px; }
+  .tiles { padding: 7px calc(14px + var(--safe-r)) calc(7px + var(--safe-b)) calc(14px + var(--safe-l)); gap: 8px; }
+  .tile { height: 52px; padding: 4px 12px; }
+  .tile-top { font-size: 14px; }
+  .tile-bottom { font-size: 22px; }
+  .tile.dim { flex: 0.65; }
   .hud-right { top: 58%; }
   .tbtn.gas { height: 100px; }
   .tbtn.brake { height: 72px; }
@@ -817,20 +880,25 @@ button { font-family: var(--display); cursor: pointer; }
 /* Portrait phones: stack things that sit side by side on landscape. */
 @media (max-width: 600px) {
   .hud-tc {
-    top: calc(108px + var(--safe-t));
-    left: calc(114px + var(--safe-l));
+    top: calc(104px + var(--safe-t));
+    left: calc(110px + var(--safe-l));
     right: calc(12px + var(--safe-r));
     width: auto;
     transform: none;
+    gap: 4px;
   }
-  .fare { min-width: 0; width: 100%; }
-  .toast { top: calc(214px + var(--safe-t)); }
-  .minimap { width: 92px; height: 92px; }
+  .fare { min-width: 0; width: 100%; padding: 3px 16px 5px; }
+  .fare-name { font-size: 16px; }
+  .fare-info { font-size: 13px; }
+  .guide-arrow { width: 44px; height: 44px; }
+  .toast { top: calc(246px + var(--safe-t)); max-width: calc(100vw - 24px); white-space: normal; text-align: center; }
+  .minimap { width: 88px; height: 88px; }
   .steer-buttons, .pedals, .touch-right { gap: 6px; }
   .tbtn.small { width: 44px; height: 44px; font-size: 18px; }
   .tbtn.small.drift { font-size: 11px; }
   .hero { top: calc(68px + var(--safe-t)); width: auto; left: 16px; }
-  .play-wrap { left: 14px; right: 14px; bottom: calc(196px + var(--safe-b)); }
+  .play-wrap { left: 14px; right: 14px; bottom: calc(198px + var(--safe-b)); }
+  .play-actions { justify-content: center; }
   .garage-strip { justify-content: center; }
   .tiles { flex-wrap: wrap; }
   .tile { flex: 1 1 40%; }
@@ -842,7 +910,7 @@ button { font-family: var(--display); cursor: pointer; }
 }
 /* Touch devices: only the touch controls help (plus moves). */
 @media (pointer: coarse) {
-  .controls-pane .kb { display: none; }
+  .controls-pane .kb, .play-wrap .hint { display: none; }
 }
 
 @keyframes pulse { from { opacity: 1; } to { opacity: 0.55; } }
