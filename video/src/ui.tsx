@@ -36,7 +36,7 @@ export const Shot: React.FC<{
   const k = pulse(f, KICKS, 4) * 0.035 * punch;
   const s = 1.08 + zoom * t + k;
   const x = dir * 30 * (t - 0.5);
-  const flash = ease(f, start, start + 6, 0.7, 0);
+  const flash = ease(f, start, start + 5, 0.22, 0);
   return (
     <AbsoluteFill style={{ overflow: 'hidden', background: C.bg }}>
       <Img
