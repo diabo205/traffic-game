@@ -238,7 +238,7 @@ const KHI = [
   { at: bar(17, 0), src: shot('03_landmarks-mazar'), name: 'Mazar-e-Quaid', hash: '2c402ba' },
   { at: bar(17, 2), src: shot('03_landmarks-karsaz'), name: 'Karsaz flyover', hash: '2c402ba' },
   { at: bar(18, 0), src: shot('04_lyari-toll'), name: 'Lyari toll plaza', hash: 'e3a11cf' },
-  { at: bar(18, 2), src: shot('04_lyari-talwar'), name: 'Teen Talwar', hash: 'e3a11cf' },
+  { at: bar(18, 2), src: shot('04_lyari-talwar'), name: 'Clifton finish line', hash: 'e3a11cf' },
   { at: bar(19, 0), src: shot('05_reference-saddar'), name: 'Matched to real photos', hash: '13eedd5' },
   { at: bar(19, 2), src: shot('05_reference-faisal'), name: 'Shahrah-e-Faisal', hash: '13eedd5' },
 ];
