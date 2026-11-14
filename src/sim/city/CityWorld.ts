@@ -7,6 +7,7 @@ import type { GameOverReason, GamePhase, InputFrame, NpcView, Obb, SimEvent } fr
 import { cityMap } from './cityMap';
 import type { CityMap, Rect } from './cityMap';
 import { CityTraffic } from './CityTraffic';
+import { Fares } from './Fares';
 
 const RESTITUTION = 0.25;
 const HIT_COOLDOWN = 36;
@@ -18,9 +19,17 @@ class CityLevel {
   phase: GamePhase = 'ready';
   reason: GameOverReason = null;
   stats: RunStats = LevelManager.emptyStats();
-  readonly timeLeft = 0;
   readonly progress = 0;
+  constructor(private readonly fares: Fares) {}
+  /** The shift clock. */
+  get timeLeft(): number {
+    return this.fares.shiftTime;
+  }
 }
+
+/** Towing and repairs when the Alto is wrecked. */
+const TOW_COST = 300;
+const TOW_TIME = 10;
 
 /**
  * Open-world Saddar: free driving on a street grid with junctions, a
@@ -34,7 +43,11 @@ export class CityWorld {
   tick = 0;
   readonly player = new PlayerCar();
   readonly traffic: CityTraffic;
-  readonly level = new CityLevel();
+  readonly fares: Fares;
+  readonly level: CityLevel;
+  private startX = 0;
+  private startZ = 0;
+  private startHeading = 0;
   private events: SimEvent[] = [];
   private onRoad = true;
   private lastKerbTick = -1e9;
@@ -47,12 +60,17 @@ export class CityWorld {
     this.seed = seed >>> 0;
     this.map = cityMap();
     this.traffic = new CityTraffic(this.seed, this.map);
+    this.fares = new Fares(this.seed, this.map);
+    this.level = new CityLevel(this.fares);
     // Start on Abdullah Haroon Road, just north of the Empress Market roundabout, heading north.
     const start = this.map.links.find((l) => l.name === 'Abdullah Haroon Road' && l.dz > 0.5 && this.map.nodes[l.from].roundabout);
     if (start) {
       const p = this.map.linkPoint(start, 8, this.map.laneOffset(start, start.lanes - 1));
-      this.player.reset(p.x, p.z, start.heading);
-    } else this.player.reset(0, 0, 0);
+      this.startX = p.x;
+      this.startZ = p.z;
+      this.startHeading = start.heading;
+    }
+    this.player.reset(this.startX, this.startZ, this.startHeading);
     this.player.freeRoam = true;
     this.traffic.reset(this.player.x, this.player.z);
   }
@@ -80,7 +98,13 @@ export class CityWorld {
   start(): void {
     if (this.level.phase !== 'ready') return;
     this.level.phase = 'running';
-    this.events.push({ type: 'zone', zoneIndex: -1, name: 'Saddar', banner: 'SADDAR · FREE ROAM' });
+    this.events.push({ type: 'zone', zoneIndex: -1, name: 'Saddar', banner: 'SADDAR · ON DUTY' });
+    this.fares.startShift(this.events);
+  }
+
+  /** Start a new shift after the last one ended (keeps driving meanwhile). */
+  startShift(): void {
+    if (this.level.phase === 'running' && !this.fares.onShift) this.fares.startShift(this.events);
   }
 
   drainEvents(): SimEvent[] {
@@ -114,17 +138,28 @@ export class CityWorld {
     this.traffic.update(1 / 60, p);
     this.trafficCollisions();
     this.streetName();
+    this.fares.update(1 / 60, p, this.tick, this.events);
 
     if (running) {
       const st = this.level.stats;
       st.elapsed += 1 / 60;
       st.topSpeed = Math.max(st.topSpeed, Math.max(0, p.speed));
-      if (p.integrity <= 0) {
-        this.level.phase = 'gameover';
-        this.level.reason = 'wrecked';
-        this.events.push({ type: 'gameover', reason: 'wrecked' });
-      }
+      if (p.integrity <= 0) this.tow();
     }
+  }
+
+  /** Wrecked: no game over, just a tow back to the start, a repair bill and lost time. */
+  private tow(): void {
+    const f = this.fares;
+    if (f.fare) this.events.push({ type: 'fareFailed', name: f.places[f.fare.dest].name, reason: 'towed' });
+    f.cancelFare();
+    const cost = Math.min(f.money, TOW_COST);
+    f.money -= cost;
+    if (f.onShift) f.shiftTime = Math.max(1, f.shiftTime - TOW_TIME);
+    this.player.reset(this.startX, this.startZ, this.startHeading);
+    this.player.freeRoam = true;
+    this.onRoad = true;
+    this.events.push({ type: 'towed', cost });
   }
 
   // ---------------------------------------------------------------------------

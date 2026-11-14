@@ -7,6 +7,7 @@ import { ChaseCamera } from './ChaseCamera';
 import { CityScenery } from './CityScenery';
 import { Effects } from './Effects';
 import { Environment } from './Environment';
+import { FareVisuals } from './FareVisuals';
 import { VehicleFactory } from './VehicleFactory';
 import type { VehicleVisual, VisualKind } from './VehicleFactory';
 
@@ -31,6 +32,7 @@ export class Renderer {
   private sun: THREE.DirectionalLight;
   private env: Scenery | null = null;
   private envKey = '';
+  private fares: FareVisuals | null = null;
   private effects = new Effects();
   private birds = new Birds();
   private player: VehicleVisual | null = null;
@@ -99,6 +101,12 @@ export class Renderer {
       }
       this.scene.add(this.env.group);
       this.envKey = key;
+    }
+    if (this.fares) this.scene.remove(this.fares.group);
+    this.fares = null;
+    if (world.mode === 'city') {
+      this.fares = new FareVisuals();
+      this.scene.add(this.fares.group);
     }
     if (!this.player) {
       this.player = this.factory.create('alto', 0);
@@ -242,6 +250,7 @@ export class Renderer {
     this.birds.update(dt, pz, elev, this.time);
     this.sun.target.position.set(px, elev, -pz - 15);
     this.env?.update(this.time, px, pz);
+    if (world.mode === 'city') this.fares?.update(world.fares, px, pz, this.time);
     this.effects.update(dt);
 
     this.gl.render(this.scene, this.chase.camera);

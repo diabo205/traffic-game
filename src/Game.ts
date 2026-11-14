@@ -6,6 +6,7 @@ import { CityWorld } from './sim/city/CityWorld';
 import type { SimEvent } from './sim/types';
 import { DT, World } from './sim/World';
 import { Hud } from './ui/Hud';
+import { Minimap } from './ui/Minimap';
 import { TouchControls } from './ui/TouchControls';
 
 const MAX_STEPS_PER_FRAME = 5;
@@ -43,6 +44,8 @@ export class Game {
   private endShownAt = -1;
   private endPendingAt = -1;
   private clock = 0;
+  private minimap: Minimap | null = null;
+  private mapTimer = 0;
 
   private constructor(
     private readonly renderer: Renderer,
@@ -57,6 +60,7 @@ export class Game {
 
     this.hud = new Hud(uiRoot);
     this.hud.setMode(mode);
+    this.syncMinimap();
     this.touch = new TouchControls(this.hud.root, this.input.touch);
 
     // Touch HUD: auto-detect, remember manual choice.
@@ -89,6 +93,17 @@ export class Game {
     return this.mode === 'city' ? new CityWorld(this.seed) : new World(this.seed, this.startZ);
   }
 
+  /** The minimap exists only for the city. */
+  private syncMinimap(): void {
+    if (this.world.mode === 'city' && !this.minimap) {
+      this.minimap = new Minimap(this.world.map);
+      this.hud.mapSlot.appendChild(this.minimap.el);
+    } else if (this.world.mode !== 'city' && this.minimap) {
+      this.minimap.el.remove();
+      this.minimap = null;
+    }
+  }
+
   /** Start-screen choice: rebuild the world if the mode changed, then go. */
   private chooseMode(mode: Mode): void {
     if (this.world.phase !== 'ready') return;
@@ -97,6 +112,7 @@ export class Game {
       this.world = this.makeWorld();
       this.renderer.attach(this.world);
       this.hud.setMode(mode);
+      this.syncMinimap();
       storageSet('kt3d.mode', mode);
     }
     this.input.queueConfirm();
@@ -110,6 +126,7 @@ export class Game {
 
     this.hud.startBtn.addEventListener('click', () => this.chooseMode('route'));
     this.hud.cityBtn.addEventListener('click', () => this.chooseMode('city'));
+    this.hud.shiftBtn.addEventListener('click', () => this.input.queueConfirm());
     this.hud.restartBtn.addEventListener('click', () => this.input.queueConfirm());
     this.hud.muteBtn.addEventListener('click', () => this.setMuted(!this.audio.isMuted));
     this.hud.touchBtn.addEventListener('click', () => this.setTouchVisible(!this.touch.visible));
@@ -152,6 +169,7 @@ export class Game {
     this.accumulator = 0;
     this.endShownAt = this.endPendingAt = -1;
     this.hud.hideEnd();
+    this.hud.showShiftOver(null);
     this.world.start();
     this.drainAndHandle();
   }
@@ -171,6 +189,8 @@ export class Game {
       this.hud.showStart(false);
       this.world.start();
       this.drainAndHandle();
+    } else if (phase === 'running' && confirm && this.world.mode === 'city' && !this.world.fares.onShift) {
+      this.world.startShift();
     } else if ((phase === 'gameover' || phase === 'complete') && confirm && this.endShownAt >= 0 && this.clock - this.endShownAt > 0.6) {
       this.audio.unlock();
       this.restart();
@@ -201,6 +221,7 @@ export class Game {
     this.renderer.render(this.world, alpha, frameDt);
 
     const p = this.world.player;
+    this.updateTaxiHud(frameDt);
     this.hud.update(frameDt, p.speed * 3.6, p.integrity, this.world.level.timeLeft, this.world.level.progress);
 
     let slip = p.travel - p.heading;
@@ -222,6 +243,31 @@ export class Game {
     );
   }
 
+  private updateTaxiHud(dt: number): void {
+    const w = this.world;
+    if (w.mode !== 'city') return;
+    const f = w.fares;
+    const p = w.player;
+    const px = p.prevX + (p.x - p.prevX) * (this.accumulator / DT);
+    const pz = p.prevZ + (p.z - p.prevZ) * (this.accumulator / DT);
+    this.hud.setMoney(f.money);
+    const running = w.phase === 'running';
+    if (running && f.fare) {
+      const pl = f.places[f.fare.dest];
+      this.hud.setFare({ name: pl.name, distance: f.navDist, timeLeft: f.fare.timeLeft, limit: f.fare.limit });
+    } else if (running && f.onShift) this.hud.setFare({ hint: 'Find a passenger · stop beside them' });
+    else this.hud.setFare(null);
+    if (running && f.navDist > 0) {
+      const bearing = Math.atan2(f.navX - px, f.navZ - pz) - p.heading;
+      this.hud.setArrow(Math.atan2(Math.sin(bearing), Math.cos(bearing)));
+    } else this.hud.setArrow(null);
+    this.mapTimer -= dt;
+    if (this.minimap && this.mapTimer <= 0) {
+      this.mapTimer = 1 / 30;
+      this.minimap.draw(px, pz, p.heading, f);
+    }
+  }
+
   private drainAndHandle(): void {
     for (const e of this.world.drainEvents()) this.handle(e);
   }
@@ -235,6 +281,32 @@ export class Game {
       case 'checkpoint':
         this.hud.showToast(`+${e.bonus}s · ${e.label}`);
         this.audio.chime();
+        break;
+      case 'shiftStart':
+        this.hud.showShiftOver(null);
+        this.hud.showToast(`ON DUTY · ${e.time}s shift`);
+        break;
+      case 'shiftOver':
+        if (this.world.mode === 'city') this.hud.showShiftOver({ earned: e.earned, fares: e.fares, total: this.world.fares.money });
+        this.audio.chime();
+        break;
+      case 'pickup':
+        this.hud.showBanner(`➜ ${e.name.toUpperCase()}`);
+        this.hud.showToast(`${e.time}s to get there`);
+        this.audio.chime();
+        break;
+      case 'dropoff':
+        this.hud.showBanner(e.rating === 2 ? 'BOHAT TEZ! SHABASH!' : e.rating === 1 ? 'SHUKRIYA!' : 'THODA LATE...');
+        this.hud.showToast(`+Rs ${e.pay}${e.tip ? ` + Rs ${e.tip} tip` : ''} · +${e.bonus}s`);
+        this.audio.chime();
+        break;
+      case 'fareFailed':
+        if (e.reason !== 'shift') this.hud.showToast(e.reason === 'time' ? 'TOO SLOW! Passenger got out' : 'Fare lost', false);
+        break;
+      case 'towed':
+        this.hud.showBanner('TOWED TO THE MECHANIC');
+        this.hud.showToast(`Repairs −Rs ${e.cost} · −10s`, false);
+        this.renderer.chase.reset();
         break;
       case 'street':
         this.hud.showBanner(e.name.toUpperCase());

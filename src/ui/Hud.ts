@@ -8,6 +8,19 @@ export class Hud {
   private integrityText: HTMLSpanElement;
   private timer: HTMLDivElement;
   private speed: HTMLSpanElement;
+  private timerLabel: HTMLDivElement;
+  private money: HTMLDivElement;
+  private farePanel: HTMLDivElement;
+  private fareName: HTMLDivElement;
+  private fareInfo: HTMLDivElement;
+  private fareFill: HTMLDivElement;
+  private arrow: HTMLDivElement;
+  private shiftCard: HTMLDivElement;
+  private shiftText: HTMLDivElement;
+  readonly shiftBtn: HTMLButtonElement;
+  readonly mapSlot: HTMLDivElement;
+  private lastFareKey = '';
+  private lastMoney = -1;
   private progressFill: HTMLDivElement;
   private banner: HTMLDivElement;
   private toast: HTMLDivElement;
@@ -47,9 +60,10 @@ export class Hud {
 
     // Top-centre: timer.
     const timerWrap = div('panel timer-wrap');
-    timerWrap.innerHTML = '<div class="label">CHECKPOINT</div>';
+    this.timerLabel = div('label');
+    this.timerLabel.textContent = 'CHECKPOINT';
     this.timer = div('timer');
-    timerWrap.appendChild(this.timer);
+    timerWrap.append(this.timerLabel, this.timer);
 
     // Top-right: speed + route progress.
     const spd = div('panel speedo');
@@ -63,10 +77,31 @@ export class Hud {
     prog.appendChild(this.progressFill);
     const progLabel = div('progress-label');
     progLabel.innerHTML = '<span>SADDAR</span><span>CLIFTON</span>';
-    spd.append(this.speed, unit, prog, progLabel);
+    this.money = div('money');
+    spd.append(this.speed, unit, prog, progLabel, this.money);
 
     const top = div('top');
     top.append(integ, timerWrap, spd);
+
+    // Free-roam taxi: guide arrow, current fare, minimap slot, shift-over card.
+    this.arrow = div('guide-arrow hidden');
+    this.arrow.innerHTML = '<svg viewBox="0 0 40 40" width="100%" height="100%"><path d="M20 3 L36 34 L20 26 L4 34 Z" fill="#ffc23d" stroke="#1b1b1b" stroke-width="2.5" stroke-linejoin="round"/></svg>';
+    this.farePanel = div('panel fare hidden');
+    this.fareName = div('fare-name');
+    this.fareInfo = div('fare-info');
+    const fbar = div('fare-bar');
+    this.fareFill = div('fare-fill');
+    fbar.appendChild(this.fareFill);
+    this.farePanel.append(this.fareName, this.fareInfo, fbar);
+    const centre = div('centre-stack');
+    centre.append(this.arrow, this.farePanel);
+    this.mapSlot = div('map-slot');
+    this.shiftCard = div('panel shift-card hidden');
+    this.shiftText = div('shift-text');
+    this.shiftBtn = button('START NEW SHIFT', 'big-btn small', 'Start a new shift');
+    const shiftHint = div('hint');
+    shiftHint.textContent = 'Enter / A / tap · or keep driving off duty';
+    this.shiftCard.append(this.shiftText, this.shiftBtn, shiftHint);
 
     this.banner = div('banner');
     this.toast = div('toast');
@@ -115,7 +150,7 @@ export class Hud {
     endCard.append(this.endTitle, this.endSub, this.endStats, this.restartBtn, hint2);
     this.endScreen.appendChild(endCard);
 
-    this.root.append(top, this.banner, this.toast, this.flash, settings, this.startScreen, this.endScreen);
+    this.root.append(top, centre, this.mapSlot, this.shiftCard, this.banner, this.toast, this.flash, settings, this.startScreen, this.endScreen);
     this.showStart(true);
   }
 
@@ -138,6 +173,60 @@ export class Hud {
     this.root.classList.toggle('city', mode === 'city');
     this.cityBtn.classList.toggle('chosen', mode === 'city');
     this.startBtn.classList.toggle('chosen', mode === 'route');
+    this.timerLabel.textContent = mode === 'city' ? 'SHIFT' : 'CHECKPOINT';
+    if (mode !== 'city') {
+      this.setFare(null);
+      this.setArrow(null);
+      this.showShiftOver(null);
+    }
+  }
+
+  setMoney(rs: number): void {
+    if (rs === this.lastMoney) return;
+    this.lastMoney = rs;
+    this.money.textContent = `Rs ${rs.toLocaleString('en-PK')}`;
+  }
+
+  /** Current fare (or a hint when looking for one); null hides the panel. */
+  setFare(f: { name: string; distance: number; timeLeft: number; limit: number } | { hint: string } | null): void {
+    if (!f) {
+      this.farePanel.classList.add('hidden');
+      this.lastFareKey = '';
+      return;
+    }
+    this.farePanel.classList.remove('hidden');
+    if ('hint' in f) {
+      if (this.lastFareKey !== f.hint) {
+        this.fareName.textContent = f.hint;
+        this.fareInfo.textContent = '';
+        this.farePanel.classList.add('looking');
+        this.lastFareKey = f.hint;
+      }
+      return;
+    }
+    this.farePanel.classList.remove('looking');
+    const key = `${f.name}|${Math.round(f.distance / 10)}|${Math.ceil(f.timeLeft)}`;
+    if (key !== this.lastFareKey) {
+      this.lastFareKey = key;
+      this.fareName.textContent = f.name.toUpperCase();
+      this.fareInfo.textContent = `${f.distance < 1000 ? `${Math.round(f.distance / 10) * 10} m` : `${(f.distance / 1000).toFixed(1)} km`} · ${Math.ceil(f.timeLeft)} s`;
+    }
+    const frac = Math.max(0, Math.min(1, f.timeLeft / f.limit));
+    this.fareFill.style.width = `${(frac * 100).toFixed(1)}%`;
+    this.fareFill.className = `fare-fill ${frac > 0.5 ? 'ok' : frac > 0.25 ? 'warn' : 'crit'}`;
+  }
+
+  /** Guide arrow rotation relative to the car (radians, 0 = straight ahead), null hides. */
+  setArrow(angle: number | null): void {
+    this.arrow.classList.toggle('hidden', angle === null);
+    if (angle !== null) this.arrow.style.transform = `perspective(300px) rotateX(38deg) rotate(${angle.toFixed(3)}rad)`;
+  }
+
+  showShiftOver(info: { earned: number; fares: number; total: number } | null): void {
+    this.shiftCard.classList.toggle('hidden', !info);
+    if (info) {
+      this.shiftText.innerHTML = `<div class="kicker">SHIFT OVER</div><h2>Rs ${info.earned.toLocaleString('en-PK')}</h2><p>${info.fares} fare${info.fares === 1 ? '' : 's'} this shift · Rs ${info.total.toLocaleString('en-PK')} in your pocket</p>`;
+    }
   }
 
   showStart(v: boolean): void {

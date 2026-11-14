@@ -77,5 +77,11 @@ export type SimEvent =
   | { type: 'zone'; zoneIndex: number; name: string; banner: string }
   | { type: 'kerb'; severity: number }
   | { type: 'street'; name: string }
+  | { type: 'shiftStart'; time: number }
+  | { type: 'shiftOver'; earned: number; fares: number }
+  | { type: 'pickup'; name: string; time: number; distance: number }
+  | { type: 'dropoff'; name: string; pay: number; tip: number; bonus: number; rating: number }
+  | { type: 'fareFailed'; name: string; reason: 'time' | 'shift' | 'towed' }
+  | { type: 'towed'; cost: number }
   | { type: 'gameover'; reason: Exclude<GameOverReason, null> }
   | { type: 'complete' };

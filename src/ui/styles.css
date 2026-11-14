@@ -295,5 +295,55 @@ html, body {
 .big-btn.alt { background: #e9e4d8; color: #222; box-shadow: 0 6px 0 #9c968a; }
 .big-btn.alt:active { box-shadow: 0 3px 0 #9c968a; }
 .big-btn.chosen { outline: 3px solid #fff; outline-offset: 3px; }
-/* Free roam has no checkpoint timer or route progress. */
-.hud.city .timer-wrap, .hud.city .progress, .hud.city .progress-label { display: none; }
+/* Free roam has a shift clock but no route progress; route mode has no money. */
+.hud.city .progress, .hud.city .progress-label { display: none; }
+.hud:not(.city) .money, .hud:not(.city) .map-slot { display: none; }
+.money { font-weight: 900; color: var(--good); font-size: 15px; margin-top: 4px; text-align: right; }
+
+/* Guide arrow + fare panel under the timer. */
+.centre-stack {
+  position: absolute;
+  top: calc(84px + var(--safe-t));
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+.guide-arrow { width: 84px; height: 84px; filter: drop-shadow(0 4px 4px rgba(0, 0, 0, 0.45)); }
+.fare { text-align: center; min-width: 200px; padding: 6px 12px 8px; }
+.fare-name { font-weight: 900; letter-spacing: 0.05em; font-size: 15px; color: var(--accent); }
+.fare.looking .fare-name { color: var(--ink); font-weight: 700; font-size: 13px; letter-spacing: 0.02em; }
+.fare.looking .fare-bar { display: none; }
+.fare-info { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.fare-bar { height: 5px; margin-top: 5px; border-radius: 3px; background: rgba(0, 0, 0, 0.45); overflow: hidden; }
+.fare-fill { height: 100%; }
+.fare-fill.ok { background: var(--good); }
+.fare-fill.warn { background: var(--warn); }
+.fare-fill.crit { background: var(--bad); }
+
+.map-slot { position: absolute; top: calc(78px + var(--safe-t)); left: calc(10px + var(--safe-l)); }
+.minimap { width: 150px; height: 150px; display: block; border-radius: 50%; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35); }
+
+.shift-card {
+  position: absolute;
+  left: 50%;
+  bottom: calc(24px + var(--safe-b));
+  transform: translateX(-50%);
+  text-align: center;
+  padding: 14px 22px;
+  pointer-events: auto;
+}
+.shift-card h2 { margin: 4px 0; font-size: 30px; color: var(--good); }
+.shift-card p { margin: 0 0 6px; color: var(--muted); font-size: 13px; }
+.big-btn.small { margin-top: 6px; padding: 9px 22px; font-size: 14px; }
+
+@media (max-width: 700px), (max-height: 500px) {
+  .centre-stack { top: calc(64px + var(--safe-t)); }
+  .guide-arrow { width: 58px; height: 58px; }
+  .fare { min-width: 150px; padding: 4px 8px 6px; }
+  .fare-name { font-size: 12px; }
+  .minimap { width: 104px; height: 104px; }
+  .map-slot { top: calc(64px + var(--safe-t)); }
+}
