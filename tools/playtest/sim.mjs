@@ -68,6 +68,7 @@ async function main() {
   const mode = flag('mode', script.mode ?? 'city');
   const seed = Number(flag('seed', script.seed ?? 1337)) >>> 0;
   if (script.chaos) script.segments = makeChaos(script.chaos, seed ^ 0x9e3779b9);
+  script.segments = script.segments.map((s) => seg(s.t, s));
 
   const server = await createServer({ root, logLevel: 'error', server: { middlewareMode: true, hmr: false, ws: false }, appType: 'custom', optimizeDeps: { noDiscovery: true } });
   try {
