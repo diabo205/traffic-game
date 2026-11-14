@@ -1,13 +1,16 @@
 import { SoundEngine } from './audio/SoundEngine';
 import { InputManager } from './input/InputManager';
 import { Renderer } from './render/Renderer';
-import { sampleRoad } from './sim/road';
+import type { AnyWorld } from './render/Renderer';
+import { CityWorld } from './sim/city/CityWorld';
 import type { SimEvent } from './sim/types';
 import { DT, World } from './sim/World';
 import { Hud } from './ui/Hud';
 import { TouchControls } from './ui/TouchControls';
 
 const MAX_STEPS_PER_FRAME = 5;
+
+type Mode = 'route' | 'city';
 
 function storageGet(key: string): string | null {
   try {
@@ -29,7 +32,8 @@ function storageSet(key: string, value: string): void {
  * fixed-timestep loop (sim at 60 Hz, rendering at display rate).
  */
 export class Game {
-  private world: World;
+  private world: AnyWorld;
+  private mode: Mode;
   private readonly input = new InputManager();
   private readonly audio = new SoundEngine();
   private readonly hud: Hud;
@@ -44,12 +48,15 @@ export class Game {
     private readonly renderer: Renderer,
     private readonly seed: number,
     private readonly startZ: number,
+    mode: Mode,
     uiRoot: HTMLElement,
   ) {
-    this.world = new World(seed, startZ);
+    this.mode = mode;
+    this.world = this.makeWorld();
     renderer.attach(this.world);
 
     this.hud = new Hud(uiRoot);
+    this.hud.setMode(mode);
     this.touch = new TouchControls(this.hud.root, this.input.touch);
 
     // Touch HUD: auto-detect, remember manual choice.
@@ -70,8 +77,29 @@ export class Game {
     const lowSpec = params.has('low') || (window.matchMedia('(pointer: coarse)').matches && !params.has('high'));
     // Debug: ?z=1500 starts further along the route.
     const startZ = Math.max(0, Math.min(4200, Number(params.get('z') ?? '0') || 0));
+    // ?mode=route|city, else ?z implies the route, else the last mode played.
+    const asked = params.get('mode');
+    const saved = storageGet('kt3d.mode');
+    const mode: Mode = asked === 'route' || asked === 'city' ? asked : params.has('z') ? 'route' : saved === 'route' ? 'route' : 'city';
     const renderer = await Renderer.create(container, lowSpec);
-    return new Game(renderer, seed, startZ, uiRoot);
+    return new Game(renderer, seed, startZ, mode, uiRoot);
+  }
+
+  private makeWorld(): AnyWorld {
+    return this.mode === 'city' ? new CityWorld(this.seed) : new World(this.seed, this.startZ);
+  }
+
+  /** Start-screen choice: rebuild the world if the mode changed, then go. */
+  private chooseMode(mode: Mode): void {
+    if (this.world.phase !== 'ready') return;
+    if (mode !== this.mode) {
+      this.mode = mode;
+      this.world = this.makeWorld();
+      this.renderer.attach(this.world);
+      this.hud.setMode(mode);
+      storageSet('kt3d.mode', mode);
+    }
+    this.input.queueConfirm();
   }
 
   private bindUi(): void {
@@ -80,7 +108,8 @@ export class Game {
     window.addEventListener('pointerdown', unlock, { capture: true });
     window.addEventListener('keydown', unlock, { capture: true });
 
-    this.hud.startBtn.addEventListener('click', () => this.input.queueConfirm());
+    this.hud.startBtn.addEventListener('click', () => this.chooseMode('route'));
+    this.hud.cityBtn.addEventListener('click', () => this.chooseMode('city'));
     this.hud.restartBtn.addEventListener('click', () => this.input.queueConfirm());
     this.hud.muteBtn.addEventListener('click', () => this.setMuted(!this.audio.isMuted));
     this.hud.touchBtn.addEventListener('click', () => this.setTouchVisible(!this.touch.visible));
@@ -118,7 +147,7 @@ export class Game {
   }
 
   private restart(): void {
-    this.world = new World(this.seed, this.startZ);
+    this.world = this.makeWorld();
     this.renderer.attach(this.world);
     this.accumulator = 0;
     this.endShownAt = this.endPendingAt = -1;
@@ -184,7 +213,7 @@ export class Game {
       {
         speed: p.speed,
         throttle: p.throttle,
-        topSpeed: sampleRoad(p.z).topSpeed,
+        topSpeed: this.world.topSpeed(),
         horn: p.horn,
         screech,
         running: this.world.phase === 'running',
@@ -206,6 +235,12 @@ export class Game {
       case 'checkpoint':
         this.hud.showToast(`+${e.bonus}s · ${e.label}`);
         this.audio.chime();
+        break;
+      case 'street':
+        this.hud.showBanner(e.name.toUpperCase());
+        break;
+      case 'kerb':
+        this.audio.pothole(e.severity * 0.4);
         break;
       case 'pothole':
         this.audio.pothole(e.severity);

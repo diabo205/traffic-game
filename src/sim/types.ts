@@ -38,6 +38,24 @@ export type GamePhase = 'ready' | 'running' | 'gameover' | 'complete';
 
 export type GameOverReason = 'time' | 'wrecked' | null;
 
+/** What the renderer needs from any NPC (route or city traffic). */
+export interface NpcView {
+  id: number;
+  kind: NpcKind;
+  variant: number;
+  x: number;
+  z: number;
+  heading: number;
+  prevX: number;
+  prevZ: number;
+  prevHeading: number;
+  /** +1 with traffic, -1 wrong-way (route mode) */
+  dir: 1 | -1;
+  latVel: number;
+  brakeLights: boolean;
+  hazardLights: boolean;
+}
+
 /** Oriented box in the XZ plane. */
 export interface Obb {
   x: number;
@@ -57,5 +75,7 @@ export type SimEvent =
   | { type: 'scrape'; intensity: number }
   | { type: 'checkpoint'; label: string; bonus: number }
   | { type: 'zone'; zoneIndex: number; name: string; banner: string }
+  | { type: 'kerb'; severity: number }
+  | { type: 'street'; name: string }
   | { type: 'gameover'; reason: Exclude<GameOverReason, null> }
   | { type: 'complete' };

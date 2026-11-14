@@ -1,13 +1,21 @@
 import * as THREE from 'three';
-import { elevationAt, sampleRoad, ZONES } from '../sim/road';
+import type { CityWorld } from '../sim/city/CityWorld';
 import type { SimEvent } from '../sim/types';
 import type { World } from '../sim/World';
 import { Birds } from './Birds';
 import { ChaseCamera } from './ChaseCamera';
+import { CityScenery } from './CityScenery';
 import { Effects } from './Effects';
 import { Environment } from './Environment';
 import { VehicleFactory } from './VehicleFactory';
 import type { VehicleVisual, VisualKind } from './VehicleFactory';
+
+export type AnyWorld = World | CityWorld;
+
+interface Scenery {
+  group: THREE.Group;
+  update(time: number, x: number, z: number): void;
+}
 
 /** Dusty, bleached Karachi horizon. */
 const HORIZON = new THREE.Color('#d3d5cc');
@@ -21,8 +29,8 @@ export class Renderer {
   readonly scene = new THREE.Scene();
   readonly chase: ChaseCamera;
   private sun: THREE.DirectionalLight;
-  private env: Environment | null = null;
-  private envSeed = -1;
+  private env: Scenery | null = null;
+  private envKey = '';
   private effects = new Effects();
   private birds = new Birds();
   private player: VehicleVisual | null = null;
@@ -79,12 +87,18 @@ export class Renderer {
   }
 
   /** (Re)bind to a world. Rebuilds static scenery only if the seed changed. */
-  attach(world: World): void {
-    if (this.envSeed !== world.seed) {
+  attach(world: AnyWorld): void {
+    const key = `${world.mode}:${world.seed}`;
+    if (this.envKey !== key) {
       if (this.env) this.scene.remove(this.env.group);
-      this.env = new Environment(world.hazards, this.factory, this.lowSpec);
+      if (world.mode === 'route') {
+        const env = new Environment(world.hazards, this.factory, this.lowSpec);
+        this.env = { group: env.group, update: (t, _x, z) => env.update(t, z) };
+      } else {
+        this.env = new CityScenery(this.lowSpec);
+      }
       this.scene.add(this.env.group);
-      this.envSeed = world.seed;
+      this.envKey = key;
     }
     if (!this.player) {
       this.player = this.factory.create('alto', 0);
@@ -102,12 +116,15 @@ export class Renderer {
     this.chase.resize(w / h);
   }
 
-  handleEvent(e: SimEvent, world: World): void {
+  handleEvent(e: SimEvent, world: AnyWorld): void {
     const p = world.player;
-    const y = elevationAt(p.z);
+    const y = world.groundY(p.x, p.z);
     switch (e.type) {
+      case 'kerb':
+        this.chase.addTrauma(0.08 + e.severity * 0.2);
+        break;
       case 'crash':
-        this.effects.sparks(e.x, elevationAt(e.z), -e.z, Math.min(1, e.impact / 15));
+        this.effects.sparks(e.x, world.groundY(e.x, e.z) + 0.4, -e.z, Math.min(1, e.impact / 15));
         this.chase.addTrauma(0.25 + Math.min(0.6, e.impact / 20));
         break;
       case 'pothole':
@@ -152,7 +169,13 @@ export class Renderer {
     list.push(v);
   }
 
-  render(world: World, alpha: number, dt: number): void {
+  /** Nose-up pitch of the ground under a vehicle (three-space radians). */
+  private slope(world: AnyWorld, x: number, z: number, heading: number): number {
+    const fx = Math.sin(heading) * 1.2, fz = Math.cos(heading) * 1.2;
+    return Math.atan2(world.groundY(x + fx, z + fz) - world.groundY(x - fx, z - fz), 2.4);
+  }
+
+  render(world: AnyWorld, alpha: number, dt: number): void {
     this.time += dt;
     const p = world.player;
     const lerp = (a: number, b: number) => a + (b - a) * alpha;
@@ -161,11 +184,12 @@ export class Renderer {
     const px = lerp(p.prevX, p.x);
     const pz = lerp(p.prevZ, p.z);
     const heading = lerp(p.prevHeading, p.heading);
-    const elev = elevationAt(pz);
-    const slope = Math.atan2(elevationAt(pz + 1.2) - elevationAt(pz - 1.2), 2.4);
+    const elev = world.groundY(px, pz);
+    const slope = this.slope(world, px, pz, heading);
     if (this.player) {
       const v = this.player;
       v.root.position.set(px, elev, -pz);
+      v.root.rotation.order = 'YXZ';
       v.root.rotation.set(slope, -heading, 0);
       v.body.rotation.set(lerp(p.prevPitch, p.pitch), 0, -lerp(p.prevRoll, p.roll));
       v.body.position.y = lerp(p.prevBump, p.bump) * 0.6;
@@ -182,7 +206,7 @@ export class Renderer {
     // ---- NPCs --------------------------------------------------------------
     const seen = new Set<number>();
     const blink = Math.floor(this.time * 2.5) % 2 === 0;
-    for (const n of world.traffic.npcs) {
+    for (const n of world.npcs) {
       seen.add(n.id);
       let v = this.npcVisuals.get(n.id);
       if (!v) {
@@ -190,12 +214,13 @@ export class Renderer {
         v.root.userData.variant = n.variant;
         this.npcVisuals.set(n.id, v);
       }
+      const nx = lerp(n.prevX, n.x);
       const nz = lerp(n.prevZ, n.z);
       const nh = lerp(n.prevHeading, n.heading);
-      const ne = elevationAt(nz);
-      const ns = Math.atan2(elevationAt(nz + 1.2) - elevationAt(nz - 1.2), 2.4) * n.dir;
-      v.root.position.set(lerp(n.prevX, n.x), ne, -nz);
-      v.root.rotation.set(ns, -nh, 0);
+      const ne = world.groundY(nx, nz);
+      v.root.position.set(nx, ne, -nz);
+      v.root.rotation.order = 'YXZ';
+      v.root.rotation.set(this.slope(world, nx, nz, nh), -nh, 0);
       const lean = n.kind === 'bike' ? -n.latVel * 0.12 * n.dir : -n.latVel * 0.02 * n.dir;
       v.body.rotation.z = Math.max(-0.35, Math.min(0.35, lean));
       v.setBrake(n.brakeLights);
@@ -209,16 +234,14 @@ export class Renderer {
     }
 
     // ---- Camera / world -----------------------------------------------------
-    const road = sampleRoad(pz);
-    const expressway = ZONES[road.zoneIndex].elevated;
-    const kick = expressway ? Math.max(0, Math.min(1, (p.speed - 20) / 14)) : 0;
+    const kick = world.speedRush();
     this.tmp.set(px, elev, -pz);
     this.chase.update(dt, this.tmp, heading, p.speed, kick, lerp(p.prevBump, p.bump));
 
     this.sun.position.set(px - 40, elev + 60, -pz + 25);
     this.birds.update(dt, pz, elev, this.time);
     this.sun.target.position.set(px, elev, -pz - 15);
-    this.env?.update(this.time, pz);
+    this.env?.update(this.time, px, pz);
     this.effects.update(dt);
 
     this.gl.render(this.scene, this.chase.camera);

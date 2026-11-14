@@ -289,3 +289,11 @@ html, body {
 
 @keyframes pulse { from { opacity: 1; } to { opacity: 0.55; } }
 @keyframes fadeout { to { opacity: 0; } }
+
+/* Mode choice on the start screen. */
+.modes { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+.big-btn.alt { background: #e9e4d8; color: #222; box-shadow: 0 6px 0 #9c968a; }
+.big-btn.alt:active { box-shadow: 0 3px 0 #9c968a; }
+.big-btn.chosen { outline: 3px solid #fff; outline-offset: 3px; }
+/* Free roam has no checkpoint timer or route progress. */
+.hud.city .timer-wrap, .hud.city .progress, .hud.city .progress-label { display: none; }

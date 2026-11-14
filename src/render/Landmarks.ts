@@ -63,12 +63,20 @@ export function buildLandmarks(group: THREE.Group, lowSpec: boolean): void {
 // ---- Empress Market (Saddar, left side) -----------------------------------------
 
 function buildEmpressMarket(group: THREE.Group, shadow: boolean): void {
+  buildEmpressMarketAt(group, shadow, corridorEdges(EMPRESS_Z).left - FOOTPATH_W - 1.5, -EMPRESS_Z, 72);
+}
+
+/**
+ * Empress Market hall, street facade facing +x.
+ * @param face three-space x of the street facade
+ * @param zc three-space z of the hall's centre
+ * @param len length along z
+ */
+export function buildEmpressMarketAt(group: THREE.Group, shadow: boolean, face: number, zc: number, len: number): void {
   const g = new THREE.Group();
   group.add(g);
-  const face = corridorEdges(EMPRESS_Z).left - FOOTPATH_W - 1.5; // street facade x
-  const depth = 26, len = 72, h = 12;
+  const depth = 26, h = 12;
   const cx = face - depth / 2;
-  const zc = -EMPRESS_Z;
   const stone = lam('#d6b06a');
   const darkStone = lam('#b8914f');
   const wall = gothicWallTexture();

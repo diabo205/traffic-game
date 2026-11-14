@@ -21,6 +21,8 @@ export class Hud {
   readonly touchBtn: HTMLButtonElement;
   readonly stickBtn: HTMLButtonElement;
   readonly startBtn: HTMLButtonElement;
+  readonly cityBtn: HTMLButtonElement;
+  private mode: 'route' | 'city' = 'city';
   readonly restartBtn: HTMLButtonElement;
   private bannerTimer = 0;
   private toastTimer = 0;
@@ -82,8 +84,8 @@ export class Hud {
     this.startScreen.innerHTML = `
       <div class="card">
         <div class="kicker">KARACHI TRAFFIC 3D</div>
-        <h1>Saddar ➜ Lyari Expressway ➜ Clifton</h1>
-        <p class="lede">Get your 660cc Alto across Karachi before the checkpoint timer runs out. Dodge potholes, open manholes, W-11s, rickshaws and VIP protocol. Keep the car in one piece.</p>
+        <h1>Saddar · Lyari Expressway · Clifton</h1>
+        <p class="lede"><b>Free roam:</b> drive the streets of Saddar wherever you like — junctions, the Empress Market roundabout, back alleys and pavements. <b>Route run:</b> race your 660cc Alto across Karachi before the checkpoint timer runs out. Either way, keep the car in one piece.</p>
         <div class="controls-grid">
           <div class="kb"><b>Keyboard</b><br>W/↑ gas · S/↓ brake/reverse<br>A D / ← → steer<br>Space horn · F/Shift dipper</div>
           <div class="gp"><b>Gamepad</b><br>RT gas · LT brake<br>Left stick steer<br>A horn · X dipper</div>
@@ -91,10 +93,13 @@ export class Hud {
         </div>
         <p class="tip">Tip: brake before a pothole and it won't damage the car. Flash your dipper and slow cars move over.</p>
       </div>`;
-    this.startBtn = button('START DRIVING', 'big-btn', 'Start');
-    this.startScreen.querySelector('.card')?.appendChild(this.startBtn);
+    this.cityBtn = button('FREE ROAM · SADDAR', 'big-btn', 'Free roam in Saddar');
+    this.startBtn = button('ROUTE RUN', 'big-btn alt', 'Route run to Clifton');
+    const modes = div('modes');
+    modes.append(this.cityBtn, this.startBtn);
+    this.startScreen.querySelector('.card')?.appendChild(modes);
     const hint = div('hint');
-    hint.textContent = 'Enter / A / tap to start';
+    hint.textContent = 'Enter / A starts the highlighted mode';
     this.startScreen.querySelector('.card')?.appendChild(hint);
 
     // End screen.
@@ -127,6 +132,14 @@ export class Hud {
     this.stickBtn.classList.toggle('hidden', !v);
   }
 
+  /** Route mode shows the checkpoint timer and route progress; the city hides them. */
+  setMode(mode: 'route' | 'city'): void {
+    this.mode = mode;
+    this.root.classList.toggle('city', mode === 'city');
+    this.cityBtn.classList.toggle('chosen', mode === 'city');
+    this.startBtn.classList.toggle('chosen', mode === 'route');
+  }
+
   showStart(v: boolean): void {
     this.startScreen.classList.toggle('hidden', !v);
     this.root.classList.toggle('in-menu', v);
@@ -141,14 +154,19 @@ export class Hud {
         ? 'The Alto gave up. Mechanic in Saddar says: "Bas ho gaya, sahab."'
         : `Stuck in traffic — ${Math.round(progress * 100)}% of the way to Clifton.`;
     const fmt = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+    if (this.mode === 'city') this.endSub.textContent = 'The Alto gave up in the middle of Saddar. Mechanic says: "Bas ho gaya, sahab."';
     const rows: [string, string][] = [
       ['Time driven', fmt(stats.elapsed)],
-      ['Route covered', `${Math.round(progress * 100)}%`],
+      ...(this.mode === 'route' ? [['Route covered', `${Math.round(progress * 100)}%`] as [string, string]] : []),
       ['Car integrity', `${Math.round(integrity)} HP`],
       ['Top speed', `${Math.round(stats.topSpeed * 3.6)} km/h`],
       ['Crashes', String(stats.crashes)],
-      ['Potholes hit', String(stats.potholes)],
-      ['Manholes hit', String(stats.manholes)],
+      ...(this.mode === 'route'
+        ? ([
+            ['Potholes hit', String(stats.potholes)],
+            ['Manholes hit', String(stats.manholes)],
+          ] as [string, string][])
+        : []),
     ];
     if (win) rows.push(['Time to spare', `${timeLeft.toFixed(1)} s`]);
     this.endStats.innerHTML = rows.map(([k, v]) => `<div><span>${k}</span><b>${v}</b></div>`).join('');

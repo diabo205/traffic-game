@@ -1,5 +1,4 @@
 import { approach, clamp } from './math';
-import type { RoadSample } from './road';
 import type { InputFrame, Obb } from './types';
 
 /**
@@ -44,6 +43,8 @@ export class PlayerCar {
   bump = 0;
   bumpVel = 0;
   integrity = 100;
+  /** open-world driving: no heading limit or pull back toward the route axis */
+  freeRoam = false;
 
   horn = false;
   dipper = false;
@@ -64,11 +65,11 @@ export class PlayerCar {
   prevPitch = 0;
   prevBump = 0;
 
-  reset(x: number, z: number): void {
+  reset(x: number, z: number, heading = 0): void {
     this.x = this.prevX = x;
     this.z = this.prevZ = z;
-    this.heading = this.prevHeading = 0;
-    this.travel = 0;
+    this.heading = this.prevHeading = heading;
+    this.travel = heading;
     this.speed = 0;
     this.steerAngle = 0;
     this.yawRate = 0;
@@ -120,7 +121,8 @@ export class PlayerCar {
     this.prevBump = this.bump;
   }
 
-  update(input: InputFrame, road: RoadSample, dt: number, controllable: boolean): void {
+  /** @param vTop top speed here (m/s) */
+  update(input: InputFrame, vTop: number, dt: number, controllable: boolean): void {
     const throttle = controllable ? input.throttle : 0;
     const brake = controllable ? input.brake : 0.6;
     const steerIn = controllable ? input.steer : 0;
@@ -129,7 +131,6 @@ export class PlayerCar {
 
     const v = this.speed;
     const absV = Math.abs(v);
-    const vTop = road.topSpeed;
 
     // --- Steering --------------------------------------------------------
     const maxSteer = ALTO.maxSteerLow / (1 + absV * ALTO.steerSpeedFalloff);
@@ -191,10 +192,12 @@ export class PlayerCar {
 
     // Self-align heading toward road direction a touch when nearly straight
     // (keeps arcade cars from drifting slowly off-axis forever).
-    if (Math.abs(steerIn) < 0.05 && absV > 1) {
-      this.heading -= this.heading * Math.min(1, 0.35 * dt);
+    if (!this.freeRoam) {
+      if (Math.abs(steerIn) < 0.05 && absV > 1) {
+        this.heading -= this.heading * Math.min(1, 0.35 * dt);
+      }
+      this.heading = clamp(this.heading, -1.3, 1.3);
     }
-    this.heading = clamp(this.heading, -1.3, 1.3);
 
     // --- Integrate position -------------------------------------------------
     this.x += Math.sin(this.travel) * nv * dt;

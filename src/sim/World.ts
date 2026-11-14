@@ -3,9 +3,9 @@ import type { Hazard } from './HazardManager';
 import { LevelManager } from './LevelManager';
 import { clamp, obbOverlap, pointObbDistance } from './math';
 import { ALTO, PlayerCar } from './PlayerCar';
-import { ZONES, sampleRoad } from './road';
+import { ZONES, elevationAt, sampleRoad } from './road';
 import { NPC_SPECS, TrafficManager } from './TrafficManager';
-import type { InputFrame, SimEvent } from './types';
+import type { InputFrame, NpcView, SimEvent } from './types';
 
 export const TICK_RATE = 60;
 export const DT = 1 / TICK_RATE;
@@ -48,8 +48,28 @@ export class World {
     }
   }
 
+  readonly mode = 'route' as const;
+
   get phase() {
     return this.level.phase;
+  }
+
+  get npcs(): readonly NpcView[] {
+    return this.traffic.npcs;
+  }
+
+  /** Ground height under a point (renderer / audio helper). */
+  groundY(_x: number, z: number): number {
+    return elevationAt(z);
+  }
+
+  topSpeed(): number {
+    return sampleRoad(this.player.z).topSpeed;
+  }
+
+  /** 0..1 camera speed-rush on the expressway. */
+  speedRush(): number {
+    return ZONES[sampleRoad(this.player.z).zoneIndex].elevated ? clamp((this.player.speed - 20) / 14, 0, 1) : 0;
   }
 
   start(): void {
@@ -91,7 +111,7 @@ export class World {
     const road = sampleRoad(p.z);
 
     this.applySurface();
-    p.update(input, road, DT, running);
+    p.update(input, road.topSpeed, DT, running);
     this.constrainToRoad();
     this.hazardContacts(input);
     this.traffic.update(DT, p, this.hazards, this.tick);

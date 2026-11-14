@@ -42,7 +42,10 @@ export class ChaseCamera {
   update(dt: number, target: THREE.Vector3, heading: number, speed: number, fovKick: number, bump: number): void {
     // Smooth the yaw we orbit around so steering doesn't whip the camera.
     const yawRate = 1 - Math.exp(-dt * 4.5);
-    this.yaw += (heading - this.yaw) * yawRate;
+    // Shortest way round, so free-roam headings past +-pi don't spin the camera.
+    let dYaw = heading - this.yaw;
+    dYaw = Math.atan2(Math.sin(dYaw), Math.cos(dYaw));
+    this.yaw += dYaw * yawRate;
 
     const back = speed < -0.5 ? -0.6 : 1; // look forward even when reversing slowly
     const dist = this.distance + Math.min(0.9, Math.max(0, speed) * 0.025);
