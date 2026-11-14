@@ -274,10 +274,12 @@ const AltoWipe: React.FC<{ f: number }> = ({ f }) => {
 };
 
 const BLENDER = [
-  { at: bar(21, 0), src: shot('06_altoglb-alto_1'), name: 'Alto, built in bpy', sub: 'Headless Blender → alto.glb', hash: 'fcd0f00' },
-  { at: bar(21, 2), src: shot('08_smooth-alto_2'), name: '121 cross-sections', sub: 'Rebuilt from the real car’s dimensions', hash: 'ab99422' },
-  { at: bar(22, 0), src: shot('07_rickshaw-saddar_2'), name: 'Sazgar rickshaw', sub: '4 liveries · driver · open back', hash: '0f603bc' },
-  { at: bar(23, 0), src: shot('09_minibus-saddar_3'), name: 'Truck-art minibus', sub: 'Peacocks · roof riders · 7.4 m', hash: 'f23a3c0' },
+  { at: bar(21, 0), src: shot('08_smooth-alto_2'), name: 'Alto, built in bpy', sub: 'Headless Blender → alto.glb', hash: 'fcd0f00' },
+  { at: bar(21, 2), src: shot('13_showroom-alto0_40'), name: '121 cross-sections', sub: 'Rebuilt from the real car’s dimensions', hash: 'ab99422' },
+  { at: bar(22, 0), src: shot('13_showroom-rickshaw0_40'), name: 'Sazgar rickshaw', sub: 'Open back · back-to-back benches', hash: '0f603bc' },
+  { at: bar(22, 2), src: shot('13_showroom-rickshaw1_m35'), name: 'Four liveries', sub: 'Orange · green · yellow · rust', hash: '0f603bc' },
+  { at: bar(23, 0), src: shot('13_showroom-minibus0_150'), name: 'Truck-art minibus', sub: 'Peacocks + Urdu route name', hash: 'f23a3c0' },
+  { at: bar(23, 2), src: shot('13_showroom-minibus2_m30'), name: 'Roof riders included', sub: 'Collision box 7.4 m × 2.2 m', hash: 'f23a3c0' },
 ];
 const Blender: React.FC<{ f: number }> = ({ f }) => {
   if (f < bar(21)) return <AltoWipe f={f} />;
@@ -447,9 +449,9 @@ const EVOLUTION: { src: string; hash: string; date: string }[] = [
   { src: '04_lyari-faisal', hash: 'e3a11cf', date: 'NOV 12 11:00' },
   { src: '05_reference-lyari', hash: '13eedd5', date: 'NOV 12 12:10' },
   { src: '06_altoglb-alto', hash: 'fcd0f00', date: 'NOV 12 12:47' },
-  { src: '07_rickshaw-saddar', hash: '0f603bc', date: 'NOV 13 09:26' },
+  { src: '13_showroom-rickshaw0_160', hash: '0f603bc', date: 'NOV 13 09:26' },
   { src: '08_smooth-alto', hash: 'ab99422', date: 'NOV 13 09:37' },
-  { src: '09_minibus-faisal_1', hash: 'f23a3c0', date: 'NOV 14 11:16' },
+  { src: '13_showroom-minibus0_35', hash: 'f23a3c0', date: 'NOV 14 11:16' },
   { src: '10_city-city_2', hash: 'd20d07b', date: 'NOV 14 13:30' },
   { src: '11_fares-fares_3', hash: 'e8765c8', date: 'NOV 14 13:41' },
   { src: '12_juice-drift_1', hash: '2e5aa63', date: 'NOV 14 13:47' },
