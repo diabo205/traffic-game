@@ -1,3 +1,8 @@
+import '@fontsource/barlow-condensed/600.css';
+import '@fontsource/barlow-condensed/700.css';
+import '@fontsource/barlow-condensed/800.css';
+import '@fontsource/barlow-condensed/800-italic.css';
+import '@fontsource/barlow-condensed/900-italic.css';
 import './ui/styles.css';
 import { Game } from './Game';
 

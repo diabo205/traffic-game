@@ -52,6 +52,8 @@ export class ChaseCamera {
   distance = 5.0;
   height = 2.2;
   baseFov = 62;
+  /** Player setting: 1 = near, >1 pulls the camera further back. */
+  zoom = 1;
   /** Extra degrees of FOV at full speed. */
   speedFov = 14;
 
@@ -103,8 +105,8 @@ export class ChaseCamera {
 
     // ---- Desired position: further back and a bit lower at speed -----------------------
     const back = speed < -0.5 ? -0.6 : 1; // keep looking forward when reversing slowly
-    const dist = this.distance + ratio * 0.8;
-    const height = this.height - ratio * 0.25;
+    const dist = (this.distance + ratio * 0.8) * this.zoom;
+    const height = (this.height - ratio * 0.25) * (1 + (this.zoom - 1) * 0.8);
     this.desired.set(
       target.x - Math.sin(this.yaw) * dist * back,
       target.y + height,

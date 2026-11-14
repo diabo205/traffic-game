@@ -80,6 +80,14 @@ export class SoundEngine {
     if (ctx.state === 'suspended') void ctx.resume();
   }
 
+  /** Pause menu: freeze all sound (engine loops included). */
+  setPaused(p: boolean): void {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    if (p && ctx.state === 'running') void ctx.suspend();
+    else if (!p && ctx.state === 'suspended') void ctx.resume();
+  }
+
   setMuted(m: boolean): void {
     this.muted = m;
     if (this.ctx) this.master.gain.setTargetAtTime(m ? 0 : 0.55, this.ctx.currentTime, 0.05);

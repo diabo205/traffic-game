@@ -4,6 +4,8 @@ import { Renderer } from './render/Renderer';
 import type { AnyWorld } from './render/Renderer';
 import { CityWorld } from './sim/city/CityWorld';
 import { COMBO_WINDOW } from './sim/city/Stunts';
+import { MOVES } from './sim/PlayerCar';
+import { ZONES } from './sim/road';
 import type { SimEvent } from './sim/types';
 import { DT, World } from './sim/World';
 import { Hud } from './ui/Hud';
@@ -46,6 +48,8 @@ export class Game {
   private endPendingAt = -1;
   private clock = 0;
   private minimap: Minimap | null = null;
+  private paused = false;
+  private farCamera = false;
   private mapTimer = 0;
 
   private constructor(
@@ -70,6 +74,7 @@ export class Game {
     this.setTouchVisible(savedTouch === null ? coarse : savedTouch === '1', false);
     if (storageGet('kt3d.stick') === '1') this.setStickMode(true, false);
     this.setMuted(storageGet('kt3d.muted') === '1');
+    this.setCamera(storageGet('kt3d.cam') === 'far', false);
 
     this.bindUi();
     window.addEventListener('resize', () => this.renderer.resize());
@@ -105,7 +110,7 @@ export class Game {
     }
   }
 
-  /** Start-screen choice: rebuild the world if the mode changed, then go. */
+  /** Mode tile on the start screen: rebuild the world if the mode changed (PLAY starts it). */
   private chooseMode(mode: Mode): void {
     if (this.world.phase !== 'ready') return;
     if (mode !== this.mode) {
@@ -116,7 +121,62 @@ export class Game {
       this.syncMinimap();
       storageSet('kt3d.mode', mode);
     }
-    this.input.queueConfirm();
+  }
+
+  // ---- Pause ----------------------------------------------------------------------------
+
+  private pause(): void {
+    if (this.paused || this.world.phase !== 'running') return;
+    this.paused = true;
+    this.audio.setPaused(true);
+    const w = this.world;
+    const goals: string[] = [];
+    let zone = 'Karachi';
+    if (w.mode === 'city') {
+      const f = w.fares;
+      zone = 'Saddar';
+      if (f.fare) goals.push(`Deliver to ${f.places[f.fare.dest].name} · ${Math.round(f.navDist)} m · ${Math.ceil(f.fare.timeLeft)} s left`);
+      else if (f.onShift) goals.push('Find a passenger and stop beside them');
+      else goals.push('Shift over · start a new one when you are ready');
+      goals.push(`Shift clock ${Math.floor(f.shiftTime / 60)}:${String(Math.floor(f.shiftTime % 60)).padStart(2, '0')} · ${f.shiftFares} fares · Rs ${f.shiftEarnings.toLocaleString('en-PK')}`);
+      goals.push(`Stunt points ${w.stunts.shiftScore.toLocaleString('en-PK')} · best combo ${w.stunts.bestCombo.toLocaleString('en-PK')}`);
+    } else {
+      zone = ZONES[w.level.zoneIndex]?.name.split(/[/·]/)[0].trim() ?? 'Karachi';
+      goals.push(`Reach Clifton · ${Math.round(w.level.progress * 100)}% of the way`);
+      goals.push(`Checkpoint timer ${Math.ceil(w.level.timeLeft)} s · keep the Alto above 0 HP`);
+    }
+    this.hud.showPause(true, zone, goals);
+  }
+
+  private resume(): void {
+    if (!this.paused) return;
+    this.paused = false;
+    this.audio.setPaused(false);
+    this.hud.showPause(false);
+    this.lastTime = performance.now();
+    this.input.consumeConfirm();
+  }
+
+  /** Back to the mode select screen with a fresh world. */
+  private quitToMenu(): void {
+    this.paused = false;
+    this.audio.setPaused(false);
+    this.hud.showPause(false);
+    this.hud.showShiftOver(null);
+    this.hud.hideEnd();
+    this.endShownAt = this.endPendingAt = -1;
+    this.world = this.makeWorld();
+    this.renderer.attach(this.world);
+    this.accumulator = 0;
+    this.hud.showStart(true);
+    this.input.consumeConfirm();
+  }
+
+  private setCamera(far: boolean, save = true): void {
+    this.farCamera = far;
+    this.renderer.chase.zoom = far ? 1.3 : 1;
+    this.hud.setCamera(far);
+    if (save) storageSet('kt3d.cam', far ? 'far' : 'near');
   }
 
   private bindUi(): void {
@@ -127,6 +187,13 @@ export class Game {
 
     this.hud.startBtn.addEventListener('click', () => this.chooseMode('route'));
     this.hud.cityBtn.addEventListener('click', () => this.chooseMode('city'));
+    this.hud.playBtn.addEventListener('click', () => this.input.queueConfirm());
+    this.hud.pauseBtn.addEventListener('click', () => this.pause());
+    this.hud.resumeBtn.addEventListener('click', () => this.resume());
+    this.hud.quitBtn.addEventListener('click', () => this.quitToMenu());
+    this.hud.pauseSoundBtn.addEventListener('click', () => this.setMuted(!this.audio.isMuted));
+    this.hud.camBtn.addEventListener('click', () => this.setCamera(!this.farCamera));
+    this.hud.pauseCamBtn.addEventListener('click', () => this.setCamera(!this.farCamera));
     this.hud.shiftBtn.addEventListener('click', () => this.input.queueConfirm());
     this.hud.restartBtn.addEventListener('click', () => this.input.queueConfirm());
     this.hud.muteBtn.addEventListener('click', () => this.setMuted(!this.audio.isMuted));
@@ -182,7 +249,20 @@ export class Game {
 
     const input = this.input.sample(frameDt);
     if (this.input.consumeMute()) this.setMuted(!this.audio.isMuted);
-    const confirm = this.input.consumeConfirm();
+    const pausePressed = this.input.consumePause();
+    // Esc / Start: back out of game options first, then toggle pause.
+    if (pausePressed) {
+      if (this.hud.settingsOpen) this.hud.closeSettings();
+      else if (this.paused) this.resume();
+      else this.pause();
+    }
+    if (this.paused) {
+      // Frozen: keep drawing the scene behind the menu, nothing advances.
+      this.input.consumeConfirm();
+      this.renderer.render(this.world, this.accumulator / DT, 0);
+      return;
+    }
+    const confirm = this.input.consumeConfirm() && !this.hud.settingsOpen;
     const phase = this.world.phase;
 
     if (phase === 'ready' && confirm) {
@@ -223,6 +303,8 @@ export class Game {
 
     const p = this.world.player;
     this.updateTaxiHud(frameDt);
+    // Boost meter: what's left while boosting, else how far it has recharged.
+    this.hud.setBoost(p.boostTime > 0 ? p.boostTime / 0.9 : 1 - p.boostCooldown / MOVES.boostCooldown, p.boostTime > 0, p.handbrake);
     this.hud.update(frameDt, p.speed * 3.6, p.integrity, this.world.level.timeLeft, this.world.level.progress);
 
     let slip = p.travel - p.heading;

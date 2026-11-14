@@ -45,6 +45,8 @@ export class InputManager {
   private prevPadConfirm = false;
   private prevPadMute = false;
   private muteQueued = false;
+  private pauseQueued = false;
+  private prevPadPause = false;
   lastSource: InputSource = 'keyboard';
   gamepadConnected = false;
 
@@ -58,6 +60,7 @@ export class InputManager {
       this.lastSource = 'keyboard';
       if (e.code === 'Enter' || e.code === 'NumpadEnter') this.confirmQueued = true;
       if (e.code === 'KeyM') this.muteQueued = true;
+      if (e.code === 'Escape' || e.code === 'KeyP') this.pauseQueued = true;
       if (this.isGameKey(e.code)) e.preventDefault();
     });
     target.addEventListener('keyup', (e) => this.keys.delete(e.code));
@@ -78,6 +81,13 @@ export class InputManager {
     const c = this.confirmQueued;
     this.confirmQueued = false;
     return c;
+  }
+
+  /** Esc / P / gamepad Start: pause or resume. */
+  consumePause(): boolean {
+    const p = this.pauseQueued;
+    this.pauseQueued = false;
+    return p;
   }
 
   queueConfirm(): void {
@@ -137,6 +147,10 @@ export class InputManager {
       gHorn = !!b(0)?.pressed;
       gDipper = !!b(2)?.pressed;
       if (gThrottle || gBrake || gSteer || gHorn || gDipper) this.lastSource = 'gamepad';
+      // Start pauses during play (and confirms on menus); A confirms.
+      const startBtn = !!b(9)?.pressed;
+      if (startBtn && !this.prevPadPause) this.pauseQueued = true;
+      this.prevPadPause = startBtn;
       const confirm = !!(b(9)?.pressed || b(0)?.pressed);
       if (confirm && !this.prevPadConfirm) this.confirmQueued = true;
       this.prevPadConfirm = confirm;
