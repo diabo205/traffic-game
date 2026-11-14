@@ -1,3 +1,4 @@
+import type { TouchSteerMode } from '../input/InputManager';
 import type { TimeOfDay } from '../render/Renderer';
 import type { FareKind, ShiftRank } from '../sim/city/Fares';
 import type { RunStats } from '../sim/LevelManager';
@@ -85,6 +86,7 @@ export class Hud {
   readonly touchBtn: HTMLButtonElement;
   readonly stickBtn: HTMLButtonElement;
   readonly autoGasBtn: HTMLButtonElement;
+  readonly hapticsBtn: HTMLButtonElement;
   private pauseScreen: HTMLDivElement;
   private pauseZone: HTMLDivElement;
   private pauseGoals: HTMLDivElement;
@@ -280,9 +282,11 @@ export class Hud {
     this.camBtn = cardBtn('CAMERA', 'NEAR', 'Camera distance');
     this.todBtn = cardBtn('TIME OF DAY', 'NOON', 'Noon, sunset, or night');
     this.touchBtn = cardBtn('TOUCH CONTROLS', 'OFF', 'Show or hide touch controls');
-    this.stickBtn = cardBtn('STEERING', 'BUTTONS', 'Steering buttons or joystick');
+    this.stickBtn = cardBtn('STEERING', 'BUTTONS', 'Steering buttons, joystick, or tilt');
     this.autoGasBtn = cardBtn('AUTO-GAS', 'OFF', 'Auto-accelerate on touch');
-    this.paneSound.append(this.rideBtn, this.muteBtn, this.camBtn, this.todBtn, this.touchBtn, this.stickBtn, this.autoGasBtn);
+    this.hapticsBtn = cardBtn('HAPTICS', 'ON', 'Vibration feedback on supported devices');
+    this.hapticsBtn.classList.add('wide');
+    this.paneSound.append(this.rideBtn, this.muteBtn, this.camBtn, this.todBtn, this.touchBtn, this.stickBtn, this.autoGasBtn, this.hapticsBtn);
     this.paneControls = div('controls-pane hidden');
     this.paneControls.innerHTML = `
       <div class="ctl kb"><h3>KEYBOARD</h3>
@@ -294,7 +298,7 @@ export class Hud {
         <p><b>LEFT STICK</b> steer · <b>B</b> drift</p>
         <p><b>A</b> horn · <b>X</b> dipper · <b>START</b> pause</p></div>
       <div class="ctl tc"><h3>TOUCH</h3>
-        <p><b>◀ ▶</b> or joystick to steer</p>
+        <p><b>◀ ▶</b>, joystick or tilt · <b>ZERO TILT</b> centers</p>
         <p><b>GAS / BRAKE</b> pedals · <b>DRIFT</b></p>
         <p><b>📯</b> horn · <b>💡</b> dipper · <b>II</b> pause</p></div>
       <div class="ctl moves"><h3>MOVES</h3>
@@ -420,13 +424,17 @@ export class Hud {
     setCard(this.autoGasBtn, on ? 'ON' : 'OFF');
   }
 
+  setHaptics(on: boolean): void {
+    setCard(this.hapticsBtn, on ? 'ON' : 'OFF');
+  }
+
   setMuted(m: boolean): void {
     setCard(this.muteBtn, m ? 'OFF' : 'ON');
     setCard(this.pauseSoundBtn, m ? 'OFF' : 'ON');
   }
 
-  setStickMode(joystick: boolean): void {
-    setCard(this.stickBtn, joystick ? 'JOYSTICK' : 'BUTTONS');
+  setSteerMode(mode: TouchSteerMode): void {
+    setCard(this.stickBtn, mode.toUpperCase());
   }
 
   setTouchVisible(v: boolean): void {

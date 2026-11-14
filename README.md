@@ -13,16 +13,16 @@ Cumulative earnings bank across runs to unlock rides:
 - **RICKSHAW** (`Rs 400`) — agile gap-filterer
 - **W-11** (`Rs 1,200`) — heavy traffic sweeper
 
-## Controls
+## Controls & Features
 - **Keyboard:** `W`/`↑` gas, `S`/`↓` brake/reverse, `A`/`D` or `←`/`→` steer, `E` drift, `Space` horn, `F`/`Shift` dipper, `M` mute, `Esc` pause.
 - **Moves:** **Drift** (gas + brake + steer at speed, power out for boost), **Launch** (hold brake + gas stopped, release brake), **Dash** (double-tap gas out of corners).
-- **Touch / Gamepad:** On-screen pedals or joystick steering with optional Auto-Gas; standard gamepad supported.
+- **Touch / Mobile / Gamepad:** On-screen **Buttons**, **Joystick**, or **Tilt** (gyro steering with portrait/landscape mapping & `ZERO TILT` recalibration), optional **Auto-Gas**, guarded **Haptics**, offline **PWA** installability (`manifest.webmanifest` + `sw.js`), and spatial stereo audio; standard gamepad supported.
 
 ## Development
 ```bash
 npm install
 npm run dev              # http://localhost:5173 and LAN IP for phones on Wi-Fi
-npm run build            # type-check + production bundle in dist/
+npm run build            # type-check + production bundle + PWA assets in dist/
 npm run preview          # serve dist/ on LAN
 npm run playtest:metrics # run all headless sim feel probes
 ```

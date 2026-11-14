@@ -22,3 +22,9 @@ async function boot(): Promise<void> {
 }
 
 void boot();
+
+if ('serviceWorker' in navigator && window.isSecureContext && location.protocol.startsWith('http')) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js').catch(() => {});
+  });
+}

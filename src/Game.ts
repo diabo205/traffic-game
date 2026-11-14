@@ -1,5 +1,6 @@
 import { SoundEngine } from './audio/SoundEngine';
 import { InputManager } from './input/InputManager';
+import type { TouchSteerMode } from './input/InputManager';
 import { Renderer } from './render/Renderer';
 import type { AnyWorld, TimeOfDay } from './render/Renderer';
 import { CityWorld } from './sim/city/CityWorld';
@@ -17,6 +18,7 @@ import type { ShiftRank } from './sim/city/Fares';
 const MAX_STEPS_PER_FRAME = 5;
 const VEHICLES: readonly PlayerVehicle[] = ['alto', 'rickshaw', 'minibus'];
 const TIMES_OF_DAY: readonly TimeOfDay[] = ['noon', 'sunset', 'night'];
+const STEER_MODES: readonly TouchSteerMode[] = ['buttons', 'joystick', 'tilt'];
 const MONTHS = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
 
 type Mode = 'route' | 'city';
@@ -69,6 +71,10 @@ export class Game {
   private bank = 0;
   private tod: TimeOfDay = 'noon';
   private autoGas = false;
+  private haptics = true;
+  private steerMode: TouchSteerMode = 'buttons';
+  private whooshCooldown = 0;
+  private npcHornCooldown = 0;
   private lastTrackedMoney = 0;
   private lastCountdownSec = -1;
   private readonly input = new InputManager();
@@ -122,9 +128,22 @@ export class Game {
     // Touch HUD: auto-detect, remember manual choice.
     const coarse = window.matchMedia('(pointer: coarse)').matches;
     const savedTouch = storageGet('kt3d.touch');
+    const rawSteer = storageGet('kt3d.steer');
+    let initialSteer: TouchSteerMode =
+      rawSteer === 'tilt' || rawSteer === 'joystick' || rawSteer === 'buttons'
+        ? rawSteer
+        : storageGet('kt3d.stick') === '1'
+          ? 'joystick'
+          : 'buttons';
+    const needsIosGesture =
+      'DeviceOrientationEvent' in window &&
+      typeof (window.DeviceOrientationEvent as unknown as { requestPermission?: () => Promise<string> }).requestPermission === 'function';
+    if (initialSteer === 'tilt' && needsIosGesture) initialSteer = 'buttons';
+
     this.setTouchVisible(savedTouch === null ? coarse : savedTouch === '1', false);
-    if (storageGet('kt3d.stick') === '1') this.setStickMode(true, false);
+    this.setSteerMode(initialSteer, false);
     this.setAutoGas(storageGet('kt3d.autogas') === '1', false);
+    this.setHaptics(storageGet('kt3d.haptics') !== '0', false);
     this.setMuted(storageGet('kt3d.muted') === '1');
     this.setCamera(storageGet('kt3d.cam') === 'far', false);
 
@@ -362,10 +381,31 @@ export class Game {
     this.hud.restartBtn.addEventListener('click', () => this.input.queueConfirm());
     this.hud.muteBtn.addEventListener('click', () => this.setMuted(!this.audio.isMuted));
     this.hud.touchBtn.addEventListener('click', () => this.setTouchVisible(!this.touch.visible));
-    this.hud.stickBtn.addEventListener('click', () => this.setStickMode(this.touch.currentMode !== 'joystick'));
+    this.hud.stickBtn.addEventListener('click', () => void this.cycleSteerMode());
+    this.hud.hapticsBtn.addEventListener('click', () => this.setHaptics(!this.haptics));
+    this.touch.calBtn.addEventListener('click', () => {
+      this.input.calibrateTilt();
+      this.vibrate(15);
+      this.toastNow('TILT RE-CENTERED');
+    });
     // Prevent pinch-zoom / double-tap zoom on iOS Safari.
     document.addEventListener('gesturestart', (e) => e.preventDefault());
     document.addEventListener('dblclick', (e) => e.preventDefault());
+  }
+
+  private vibrate(pattern: number | number[]): void {
+    if (!this.haptics || typeof navigator.vibrate !== 'function') return;
+    try {
+      navigator.vibrate(pattern);
+    } catch {
+      /* ignore before user gesture or unsupported runtime */
+    }
+  }
+
+  private setHaptics(on: boolean, save = true): void {
+    this.haptics = on;
+    this.hud.setHaptics(on);
+    if (save) storageSet('kt3d.haptics', on ? '1' : '0');
   }
 
   private setMuted(m: boolean): void {
@@ -377,13 +417,31 @@ export class Game {
   private setTouchVisible(v: boolean, save = true): void {
     this.touch.setVisible(v);
     this.hud.setTouchVisible(v);
+    this.input.setTiltEnabled(v && this.steerMode === 'tilt');
     if (save) storageSet('kt3d.touch', v ? '1' : '0');
   }
 
-  private setStickMode(joystick: boolean, save = true): void {
-    this.touch.setMode(joystick ? 'joystick' : 'buttons');
-    this.hud.setStickMode(joystick);
-    if (save) storageSet('kt3d.stick', joystick ? '1' : '0');
+  private async cycleSteerMode(): Promise<void> {
+    const next = STEER_MODES[(STEER_MODES.indexOf(this.steerMode) + 1) % STEER_MODES.length];
+    if (next === 'tilt') {
+      const perm = await this.input.requestTiltPermission();
+      if (perm !== 'granted') {
+        this.toastNow(perm === 'unsupported' ? 'TILT SENSOR NOT AVAILABLE' : 'MOTION PERMISSION DENIED', false);
+        this.setSteerMode('buttons');
+        return;
+      }
+      this.input.calibrateTilt();
+      this.toastNow('TILT TO STEER · TAP ZERO TILT TO CENTER');
+    }
+    this.setSteerMode(next);
+  }
+
+  private setSteerMode(mode: TouchSteerMode, save = true): void {
+    this.steerMode = mode;
+    this.touch.setMode(mode);
+    this.hud.setSteerMode(mode);
+    this.input.setTiltEnabled(this.touch.visible && mode === 'tilt');
+    if (save) storageSet('kt3d.steer', mode);
   }
 
   private setAutoGas(on: boolean, save = true): void {
@@ -531,6 +589,73 @@ export class Game {
       },
       frameDt,
     );
+    this.updateSpatialTrafficAudio(frameDt);
+  }
+
+  private panFromWorld(wx: number, wz: number): number {
+    const p = this.world.player;
+    const dx = wx - p.x;
+    const dz = wz - p.z;
+    const localRight = dx * Math.cos(p.heading) - dz * Math.sin(p.heading);
+    return Math.max(-0.9, Math.min(0.9, localRight / 6));
+  }
+
+  private updateSpatialTrafficAudio(dt: number): void {
+    this.whooshCooldown = Math.max(0, this.whooshCooldown - dt);
+    this.npcHornCooldown = Math.max(0, this.npcHornCooldown - dt);
+    if (this.world.phase !== 'running' || !this.audio.unlocked || this.audio.isMuted) return;
+
+    const p = this.world.player;
+    const sinH = Math.sin(p.heading);
+    const cosH = Math.cos(p.heading);
+    const pvx = p.speed * sinH;
+    const pvz = p.speed * cosH;
+
+    if (this.whooshCooldown <= 0 && Math.abs(p.speed) > 9) {
+      let bestDist = 7.5;
+      let bestPan = 0;
+      let bestRel = 0;
+      for (const n of this.world.npcs) {
+        const dx = n.x - p.x;
+        const dz = n.z - p.z;
+        const distSq = dx * dx + dz * dz;
+        if (distSq > 56.25) continue;
+        const localFwd = dx * sinH + dz * cosH;
+        const localRight = dx * cosH - dz * sinH;
+        const absRight = Math.abs(localRight);
+        if (Math.abs(localFwd) > 4.5 || absRight < 1.4 || absRight > 7.5) continue;
+        const nvx = (n.x - n.prevX) / DT;
+        const nvz = (n.z - n.prevZ) / DT;
+        const relSpeed = Math.hypot(nvx - pvx, nvz - pvz);
+        if (relSpeed > 11 && absRight < bestDist) {
+          bestDist = absRight;
+          bestPan = Math.max(-0.9, Math.min(0.9, localRight / 5.5));
+          bestRel = relSpeed;
+        }
+      }
+      if (bestRel > 0) {
+        this.audio.passingRush(bestPan, Math.min(1, bestRel / 26));
+        this.whooshCooldown = 0.45;
+      }
+    }
+
+    if (this.npcHornCooldown <= 0 && (p.horn || Math.abs(p.speed) > 13)) {
+      for (const n of this.world.npcs) {
+        if (n.kind === 'cart') continue;
+        const dx = n.x - p.x;
+        const dz = n.z - p.z;
+        const localFwd = dx * sinH + dz * cosH;
+        const localRight = dx * cosH - dz * sinH;
+        if (localFwd < 1 || localFwd > 20 || Math.abs(localRight) > 5.5) continue;
+        const opposing = Math.cos(n.heading - p.heading) < -0.35;
+        if (p.horn || (opposing && localFwd < 14)) {
+          const pan = Math.max(-0.85, Math.min(0.85, localRight / 5.5));
+          this.audio.npcHorn(pan, 0.9 + ((n.id % 5) - 2) * 0.06);
+          this.npcHornCooldown = 2.6;
+          break;
+        }
+      }
+    }
   }
 
   private updateTaxiHud(dt: number): void {
@@ -586,6 +711,7 @@ export class Game {
       case 'checkpoint':
         this.toastNow(`+${e.bonus}s · +15% HP · ${e.label}`);
         this.audio.chime();
+        this.vibrate([20, 35, 30]);
         break;
       case 'shiftStart':
         this.hud.showShiftOver(null);
@@ -635,6 +761,7 @@ export class Game {
         this.toastNow(`${tag}${e.time}s to get there`);
         if (e.kind === 'vip' || e.kind === 'party') this.audio.fanfare(1);
         else this.audio.chime();
+        this.vibrate(25);
         break;
       }
       case 'dropoff': {
@@ -642,6 +769,7 @@ export class Game {
           this.hud.showBanner(`STOP 1 DONE! ➜ ${e.nextStop.toUpperCase()}`);
           this.toastNow(`+Rs ${e.pay} · +${e.bonus}s · NEXT STOP!`);
           this.audio.chime();
+          this.vibrate([20, 35, 25]);
           break;
         }
         const stars = e.rating === 2 ? '★★★ ' : e.rating === 1 ? '★★ ' : '★ ';
@@ -650,6 +778,7 @@ export class Game {
         this.toastNow(`${stars}${fever}+Rs ${e.pay}${e.tip ? ` + Rs ${e.tip} tip` : ''} · +${e.bonus}s`);
         if (e.chain && e.chain >= 2) this.audio.fanfare(1);
         else this.audio.chime();
+        this.vibrate([25, 40, 45]);
         break;
       }
       case 'fareFailed':
@@ -658,10 +787,12 @@ export class Game {
       case 'towed':
         this.hud.showBanner('TOWED TO THE MECHANIC');
         this.toastNow(`Repairs −Rs ${e.cost} · −10s`, false);
+        this.vibrate([60, 50, 90]);
         this.renderer.chase.reset();
         break;
       case 'boost':
         this.audio.whoosh();
+        this.vibrate(e.kind === 'launch' ? [35, 30, 55] : [25, 25, 40]);
         this.toastNow(e.kind === 'drift' ? 'DRIFT BOOST!' : e.kind === 'launch' ? 'LAUNCH!' : 'DASH!');
         break;
       case 'drift':
@@ -669,10 +800,12 @@ export class Game {
         break;
       case 'land':
         this.audio.pothole(Math.min(1, e.impact / 10));
+        if (e.air > 0.35 || e.impact > 4) this.vibrate(Math.round(Math.min(55, 16 + e.impact * 3)));
         if (e.air > 0.5) this.toastNow(`AIR ${e.air.toFixed(1)}s!`);
         break;
       case 'smash':
-        this.audio.smash(e.kind, e.impact / 15);
+        this.audio.smash(e.kind, e.impact / 15, this.panFromWorld(e.x, e.z));
+        this.vibrate(18);
         break;
       case 'stunt':
         this.hud.showStunt(e.label, e.points);
@@ -698,9 +831,11 @@ export class Game {
         break;
       case 'kerb':
         this.audio.pothole(e.severity * 0.4);
+        if (e.severity > 0.25) this.vibrate(12);
         break;
       case 'pothole':
         this.audio.pothole(e.severity);
+        this.vibrate(Math.round(18 + e.severity * 25));
         if (e.damage > 0) {
           this.toastNow(`POTHOLE −${e.damage} HP`, false);
           this.hud.damageFlash(0.1);
@@ -708,11 +843,13 @@ export class Game {
         break;
       case 'manhole':
         this.audio.manhole();
+        this.vibrate([45, 35, 65]);
         this.toastNow(`OPEN MANHOLE! −${e.damage} HP`, false);
         this.hud.damageFlash(0.4);
         break;
       case 'crash':
-        this.audio.crash(e.impact / 15);
+        this.audio.crash(e.impact / 15, this.panFromWorld(e.x, e.z));
+        if (e.impact > 3) this.vibrate(Math.round(Math.min(110, 22 + e.impact * 5)));
         if (e.damage >= 1) this.hud.damageFlash(Math.min(0.5, e.damage / 40));
         break;
       case 'scrape':
@@ -725,6 +862,7 @@ export class Game {
       case 'gameover':
       case 'complete': {
         this.endPendingAt = this.clock + (e.type === 'complete' ? 1.5 : 1.2);
+        this.vibrate(e.type === 'complete' ? [40, 50, 40, 50, 80] : [90, 60, 120]);
         const rKey = `kt3d.best.route.${this.vehicle}`;
         const prev = storageGet(rKey) ?? '';
         if (e.type === 'complete') {

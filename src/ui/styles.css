@@ -769,6 +769,7 @@ button { font-family: var(--display); cursor: pointer; }
 .aux { display: flex; flex-direction: column; gap: 10px; }
 .tbtn.small { width: 56px; height: 56px; font-size: 22px; border-radius: 50%; }
 .tbtn.small.drift { font-size: 14px; background: rgba(255, 45, 111, 0.55); }
+.tbtn.small.tilt-cal { width: auto; height: 48px; padding: 0 16px; border-radius: 24px; font-size: 15px; border-color: var(--lime); background: rgba(9, 18, 42, 0.72); color: var(--lime); }
 .pedals { display: flex; gap: 10px; align-items: flex-end; }
 .tbtn.pedal { width: clamp(64px, 14vw, 88px); font-size: 18px; }
 .tbtn.gas { position: relative; height: clamp(110px, 24vw, 150px); background: rgba(198, 244, 50, 0.35); color: #fff; }

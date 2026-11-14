@@ -1,17 +1,18 @@
-import type { TouchInputState } from '../input/InputManager';
+import type { TouchInputState, TouchSteerMode } from '../input/InputManager';
 
 /**
  * On-screen controls for touch devices. Pure DOM; writes into TouchInputState.
- * Bottom-left: steering buttons or a virtual joystick (toggleable).
+ * Bottom-left: steering buttons, a virtual joystick, or tilt re-center pill.
  * Bottom-right: gas / brake pedals + horn / dipper.
  */
 export class TouchControls {
   readonly root: HTMLDivElement;
+  readonly calBtn: HTMLButtonElement;
   private buttonsPad: HTMLDivElement;
   private stickPad: HTMLDivElement;
   private knob: HTMLDivElement;
   private gasBtn: HTMLButtonElement;
-  private mode: 'buttons' | 'joystick' = 'buttons';
+  private mode: TouchSteerMode = 'buttons';
   private stickPointer: number | null = null;
   private stickOrigin = 0;
 
@@ -30,7 +31,11 @@ export class TouchControls {
     this.knob = el('div', 'stick-knob');
     this.stickPad.appendChild(this.knob);
     this.bindStick();
-    left.append(this.buttonsPad, this.stickPad);
+    this.calBtn = document.createElement('button');
+    this.calBtn.className = 'tbtn small tilt-cal hidden';
+    this.calBtn.textContent = 'ZERO TILT';
+    this.calBtn.setAttribute('aria-label', 'Recalibrate tilt steering');
+    left.append(this.buttonsPad, this.stickPad, this.calBtn);
 
     // ---- Right: pedals + horn/dipper ---------------------------------------
     const right = el('div', 'touch-right');
@@ -69,15 +74,16 @@ export class TouchControls {
     return !this.root.classList.contains('hidden');
   }
 
-  setMode(mode: 'buttons' | 'joystick'): void {
+  setMode(mode: TouchSteerMode): void {
     this.mode = mode;
     this.buttonsPad.classList.toggle('hidden', mode !== 'buttons');
     this.stickPad.classList.toggle('hidden', mode !== 'joystick');
+    this.calBtn.classList.toggle('hidden', mode !== 'tilt');
     this.state.left = this.state.right = false;
     this.state.joystick = 0;
   }
 
-  get currentMode(): 'buttons' | 'joystick' {
+  get currentMode(): TouchSteerMode {
     return this.mode;
   }
 

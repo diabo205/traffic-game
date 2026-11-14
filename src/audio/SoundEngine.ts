@@ -28,13 +28,17 @@ export class SoundEngine {
   private noise!: AudioBuffer;
   private muted = false;
 
-  // Engine voice.
+  // Engine voice (primary intake/crank + secondary bandpass exhaust grit).
   private engOsc1!: OscillatorNode;
   private engOsc2!: OscillatorNode;
   private engSub!: OscillatorNode;
   private engFilter!: BiquadFilterNode;
   private engGain!: GainNode;
+  private exhaustOsc!: OscillatorNode;
+  private exhaustFilter!: BiquadFilterNode;
+  private exhaustGain!: GainNode;
   private rpm = 900;
+  private lastGear = 1;
 
   // Horn voice.
   private hornGain!: GainNode;
@@ -104,6 +108,19 @@ export class SoundEngine {
     return src;
   }
 
+  private connectMaster(node: AudioNode, pan = 0): void {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    const p = Math.max(-1, Math.min(1, pan));
+    if (Math.abs(p) > 0.02 && typeof ctx.createStereoPanner === 'function') {
+      const panner = ctx.createStereoPanner();
+      panner.pan.value = p;
+      node.connect(panner).connect(this.master);
+    } else {
+      node.connect(this.master);
+    }
+  }
+
   private buildEngine(ctx: AudioContext): void {
     this.engFilter = ctx.createBiquadFilter();
     this.engFilter.type = 'lowpass';
@@ -131,7 +148,19 @@ export class SoundEngine {
     lfoGain.gain.value = 0.08;
     lfo.connect(lfoGain).connect(this.engGain.gain);
     this.engFilter.connect(this.engGain).connect(this.master);
-    [this.engOsc1, this.engOsc2, this.engSub, lfo].forEach((o) => o.start());
+
+    // Dual-layer exhaust rasp: bandpass-filtered harmonic growl.
+    this.exhaustOsc = ctx.createOscillator();
+    this.exhaustOsc.type = 'sawtooth';
+    this.exhaustFilter = ctx.createBiquadFilter();
+    this.exhaustFilter.type = 'bandpass';
+    this.exhaustFilter.frequency.value = 280;
+    this.exhaustFilter.Q.value = 2.4;
+    this.exhaustGain = ctx.createGain();
+    this.exhaustGain.gain.value = 0;
+    this.exhaustOsc.connect(this.exhaustFilter).connect(this.exhaustGain).connect(this.master);
+
+    [this.engOsc1, this.engOsc2, this.engSub, lfo, this.exhaustOsc].forEach((o) => o.start());
   }
 
   private buildHorn(ctx: AudioContext): void {
@@ -203,6 +232,11 @@ export class SoundEngine {
     if (!p.running) targetRpm = 850;
     this.rpm += (targetRpm - this.rpm) * Math.min(1, dt * 8);
 
+    if (p.running && gear > this.lastGear && p.throttle > 0.35 && v > 4) {
+      this.exhaustPop();
+    }
+    this.lastGear = p.running ? gear : 1;
+
     // 3 cylinders, 4-stroke: firing freq = rpm/60 * 1.5; scaled per vehicle
     const pitchMul = p.vehicle === 'minibus' ? 0.56 : p.vehicle === 'rickshaw' ? 1.18 : 1;
     const filtMul = p.vehicle === 'minibus' ? 0.65 : p.vehicle === 'rickshaw' ? 1.2 : 1;
@@ -213,15 +247,25 @@ export class SoundEngine {
     this.engFilter.frequency.setTargetAtTime((500 + this.rpm * 0.35 + p.throttle * 900) * filtMul, t, 0.05);
     this.engGain.gain.setTargetAtTime(0.16 + p.throttle * 0.14, t, 0.05);
 
+    const exMul = p.vehicle === 'minibus' ? 0.72 : p.vehicle === 'rickshaw' ? 1.35 : 0.95;
+    this.exhaustOsc.frequency.setTargetAtTime(fire * exMul, t, 0.03);
+    this.exhaustFilter.frequency.setTargetAtTime((210 + this.rpm * 0.14 + p.throttle * 340) * filtMul, t, 0.05);
+    this.exhaustGain.gain.setTargetAtTime(p.running ? 0.045 + p.throttle * 0.085 : 0.025, t, 0.05);
+
     this.hornGain.gain.setTargetAtTime(p.horn ? 0.32 : 0, t, 0.012);
     this.screechGain.gain.setTargetAtTime(Math.min(1, p.screech) * 0.22, t, 0.04);
     this.roadGain.gain.setTargetAtTime(Math.min(0.25, v * 0.008), t, 0.1);
     this.roadFilter.frequency.setTargetAtTime(250 + v * 25, t, 0.1);
   }
 
+  private exhaustPop(): void {
+    this.burst(0.065, 420, 1.8, 0.2, 'bandpass');
+    this.thump(95, 0.055, 0.14);
+  }
+
   // ---- One-shots ------------------------------------------------------------
 
-  private burst(duration: number, freq: number, q: number, gain: number, type: BiquadFilterType = 'lowpass'): void {
+  private burst(duration: number, freq: number, q: number, gain: number, type: BiquadFilterType = 'lowpass', pan = 0): void {
     const ctx = this.ctx;
     if (!ctx) return;
     const t = ctx.currentTime;
@@ -234,12 +278,13 @@ export class SoundEngine {
     const g = ctx.createGain();
     g.gain.setValueAtTime(gain, t);
     g.gain.exponentialRampToValueAtTime(0.001, t + duration);
-    src.connect(f).connect(g).connect(this.master);
+    src.connect(f).connect(g);
+    this.connectMaster(g, pan);
     src.start(t, Math.random() * 1.5);
     src.stop(t + duration + 0.05);
   }
 
-  private thump(freq: number, duration: number, gain: number): void {
+  private thump(freq: number, duration: number, gain: number, pan = 0): void {
     const ctx = this.ctx;
     if (!ctx) return;
     const t = ctx.currentTime;
@@ -250,7 +295,8 @@ export class SoundEngine {
     const g = ctx.createGain();
     g.gain.setValueAtTime(gain, t);
     g.gain.exponentialRampToValueAtTime(0.001, t + duration);
-    o.connect(g).connect(this.master);
+    o.connect(g);
+    this.connectMaster(g, pan);
     o.start(t);
     o.stop(t + duration + 0.05);
   }
@@ -267,12 +313,12 @@ export class SoundEngine {
     this.burst(0.25, 2400, 12, 0.4, 'bandpass');
   }
 
-  crash(intensity: number): void {
+  crash(intensity: number, pan = 0): void {
     const i = Math.min(1, intensity);
-    this.thump(90, 0.3, 0.6 + i * 0.4);
-    this.burst(0.35 + i * 0.4, 1800, 0.7, 0.5 + i * 0.5);
-    this.burst(0.5, 3200, 14, 0.25 + i * 0.3, 'bandpass'); // metal ring
-    this.burst(0.2, 5200, 3, 0.2 * i, 'highpass'); // glass tinkle
+    this.thump(90, 0.3, 0.6 + i * 0.4, pan);
+    this.burst(0.35 + i * 0.4, 1800, 0.7, 0.5 + i * 0.5, 'lowpass', pan);
+    this.burst(0.5, 3200, 14, 0.25 + i * 0.3, 'bandpass', pan); // metal ring
+    this.burst(0.2, 5200, 3, 0.2 * i, 'highpass', pan); // glass tinkle
   }
 
   scrape(intensity: number): void {
@@ -282,6 +328,55 @@ export class SoundEngine {
   splash(): void {
     this.burst(0.6, 1400, 0.6, 0.55);
     this.burst(0.35, 400, 1, 0.3);
+  }
+
+  /** Spatial Doppler rush when slicing fast past close traffic. */
+  passingRush(pan: number, intensity = 1): void {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    const t = ctx.currentTime;
+    const i = Math.max(0.2, Math.min(1, intensity));
+    const src = ctx.createBufferSource();
+    src.buffer = this.noise;
+    const f = ctx.createBiquadFilter();
+    f.type = 'bandpass';
+    f.Q.value = 1.6;
+    f.frequency.setValueAtTime(980, t);
+    f.frequency.exponentialRampToValueAtTime(340, t + 0.18);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.001, t);
+    g.gain.exponentialRampToValueAtTime(0.14 * i, t + 0.04);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.2);
+    src.connect(f).connect(g);
+    this.connectMaster(g, pan);
+    src.start(t, Math.random() * 1.5);
+    src.stop(t + 0.22);
+  }
+
+  /** Brief spatial horn reply from nearby Karachi traffic. */
+  npcHorn(pan: number, pitchScale = 1): void {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    const t = ctx.currentTime;
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.value = 1250;
+    bp.Q.value = 1.1;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.001, t);
+    g.gain.exponentialRampToValueAtTime(0.11, t + 0.015);
+    g.gain.setValueAtTime(0.11, t + 0.09);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.15);
+    for (const freq of [390 * pitchScale, 468 * pitchScale]) {
+      const o = ctx.createOscillator();
+      o.type = 'square';
+      o.frequency.value = freq;
+      o.connect(bp);
+      o.start(t);
+      o.stop(t + 0.17);
+    }
+    bp.connect(g);
+    this.connectMaster(g, pan);
   }
 
   chime(): void {
@@ -345,18 +440,18 @@ export class SoundEngine {
   }
 
   /** Something knocked flying: wood / plastic clatter, or a hollow drum bonk. */
-  smash(kind: string, intensity: number): void {
+  smash(kind: string, intensity: number, pan = 0): void {
     const i = Math.min(1, intensity);
     if (kind === 'drum') {
-      this.thump(140, 0.35, 0.5 + i * 0.3);
-      this.burst(0.2, 900, 4, 0.2, 'bandpass');
+      this.thump(140, 0.35, 0.5 + i * 0.3, pan);
+      this.burst(0.2, 900, 4, 0.2, 'bandpass', pan);
     } else if (kind === 'cone' || kind === 'chair') {
-      this.burst(0.12, 1600, 3, 0.25 + i * 0.2, 'bandpass');
-      this.thump(220, 0.08, 0.2);
+      this.burst(0.12, 1600, 3, 0.25 + i * 0.2, 'bandpass', pan);
+      this.thump(220, 0.08, 0.2, pan);
     } else {
-      this.thump(95, 0.22, 0.45 + i * 0.3);
-      this.burst(0.3, 1200, 1.2, 0.35 + i * 0.3);
-      this.burst(0.18, 2600, 6, 0.2, 'bandpass');
+      this.thump(95, 0.22, 0.45 + i * 0.3, pan);
+      this.burst(0.3, 1200, 1.2, 0.35 + i * 0.3, 'lowpass', pan);
+      this.burst(0.18, 2600, 6, 0.2, 'bandpass', pan);
     }
   }
 
