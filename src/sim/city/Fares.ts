@@ -209,9 +209,9 @@ export class Fares {
   private board(w: Passenger, p: PlayerCar, events: SimEvent[]): void {
     const place = this.places[w.dest];
     const dist = this.routeLength(p.x, p.z, p.heading, place);
-    const pace = w.kind === 'vip' ? 9.8 : 8.5;
-    const pad = w.kind === 'vip' ? 8 : 11;
-    const limit = Math.round(dist / pace + pad);
+    const pace = w.kind === 'vip' ? 11.8 : 10.6;
+    const pad = w.kind === 'vip' ? 5 : 6;
+    const limit = Math.max(12, Math.round(dist / pace + pad));
     const stops = w.kind === 'party' ? 2 : 1;
     const partyCount = w.kind === 'party' ? (p.vehicle === 'minibus' ? 3 : 2) : 1;
     this.fare = {
@@ -247,7 +247,7 @@ export class Fares {
     if (f.stopsLeft > 1) {
       // Mid-ride stop on a Party fare: pay leg 1 and chain seamlessly to stop 2!
       const legPay = Math.round(((50 + f.distance * 0.4) * (1 + (f.partyCount - 1) * 0.25)) / 10) * 10;
-      const bonus = 4;
+      const bonus = 6;
       this.money += legPay;
       this.shiftEarnings += legPay;
       this.shiftTime += bonus;
@@ -255,10 +255,10 @@ export class Fares {
       const nextDest = this.pickDest(p.x, p.z, f.dest);
       const nextPlace = this.places[nextDest];
       const nextDist = this.routeLength(p.x, p.z, p.heading, nextPlace);
-      const nextLimit = Math.max(12, Math.round(nextDist / 8.5 + 10));
+      const nextLimit = Math.max(12, Math.round(nextDist / 10.6 + 6));
       f.dest = nextDest;
       f.distance = nextDist;
-      f.timeLeft = Math.min(nextLimit, f.timeLeft + Math.round(nextDist / 9 + 8));
+      f.timeLeft = Math.min(nextLimit, f.timeLeft + Math.round(nextDist / 10.6 + 5));
       f.limit = Math.max(f.limit, f.timeLeft);
       f.stopsLeft--;
       f.alight = 0;
@@ -284,7 +284,7 @@ export class Fares {
     const kindMul = f.kind === 'vip' ? 2.0 : f.kind === 'party' ? 1.45 : 1.0;
     const base = Math.round(((60 + f.distance * 0.5) * kindMul * streakMul) / 10) * 10;
     const tip = frac > 0.5 ? Math.round((base * 0.5) / 10) * 10 : frac > 0.25 ? Math.round((base * 0.2) / 10) * 10 : 0;
-    const bonus = Math.round((5 + 12 * frac + (f.kind === 'vip' ? 5 : 0)) * (1 + Math.min(3, Math.max(0, this.chain - 1)) * 0.1));
+    const bonus = Math.round((8 + 14 * frac + (f.kind === 'vip' ? 5 : 0)) * (1 + Math.min(3, Math.max(0, this.chain - 1)) * 0.1));
     this.money += base + tip;
     this.shiftEarnings += base + tip;
     this.shiftFares++;

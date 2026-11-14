@@ -109,8 +109,8 @@ export class Hud {
   private lastIntegrity = -1;
   private lastFareKey = '';
   private targetMoney = 0;
-  private shownMoney = -1;
-  private lastMoneyShown = -1;
+  private shownMoney = Number.NaN;
+  private lastMoneyShown = Number.NaN;
   private lastScore = -1;
   private lastCombo = '';
   private lastDistLeft = -1;
@@ -375,7 +375,7 @@ export class Hud {
     }
     this.lastDistLeft = this.lastScore = this.lastIntegrity = -1;
     this.targetMoney = 0;
-    this.shownMoney = this.lastMoneyShown = -1;
+    this.shownMoney = this.lastMoneyShown = Number.NaN;
     if (mode !== 'city') {
       this.setFare(null);
       this.setArrow(null);
@@ -565,7 +565,7 @@ export class Hud {
 
   setMoney(rs: number): void {
     this.targetMoney = rs;
-    if (this.shownMoney < 0 || rs < this.shownMoney) {
+    if (Number.isNaN(this.shownMoney) || rs < this.shownMoney) {
       this.shownMoney = rs;
       this.syncMoneyDisplay();
     }

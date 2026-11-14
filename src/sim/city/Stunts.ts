@@ -35,6 +35,7 @@ export class Stunts {
   private donutAnchorZ = 1e6;
   private sameSpotDonuts = 0;
   private shaveCooldown = 0;
+  private smashCooldown = 0;
   private fareTipLeft = 320;
 
   get active(): boolean {
@@ -50,6 +51,7 @@ export class Stunts {
     this.donutAnchorZ = 1e6;
     this.sameSpotDonuts = 0;
     this.shaveCooldown = 0;
+    this.smashCooldown = 0;
     this.fareTipLeft = 320;
   }
 
@@ -69,7 +71,10 @@ export class Stunts {
         this.fareTipLeft = e.kind === 'vip' ? 520 : e.kind === 'party' ? 540 : 320;
         break;
       case 'smash':
-        if (e.impact > 4) this.add('smash', e.kind === 'fruitcart' ? 'THELA SMASH' : 'SMASH', SMASH_POINTS[e.kind] ?? 15, events);
+        if (e.impact > 7 && this.smashCooldown <= 0) {
+          this.smashCooldown = 0.45;
+          this.add('smash', e.kind === 'fruitcart' ? 'THELA SMASH' : 'SMASH', SMASH_POINTS[e.kind] ?? 15, events);
+        }
         break;
       case 'land':
         if (e.air > 0.35) this.add('air', `AIR ${e.air.toFixed(1)}s`, 60 + e.air * 220, events);
@@ -114,6 +119,7 @@ export class Stunts {
   ): void {
     if (this.donutCooldown > 0) this.donutCooldown = Math.max(0, this.donutCooldown - dt);
     if (this.shaveCooldown > 0) this.shaveCooldown = Math.max(0, this.shaveCooldown - dt);
+    if (this.smashCooldown > 0) this.smashCooldown = Math.max(0, this.smashCooldown - dt);
 
     const v = Math.abs(p.speed);
     const fx = Math.sin(p.heading), fz = Math.cos(p.heading);

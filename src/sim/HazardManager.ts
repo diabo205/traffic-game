@@ -48,29 +48,29 @@ interface ZoneHazardPlan {
 }
 
 const PLANS: readonly ZoneHazardPlan[] = [
-  // Saddar: potholes everywhere, open manholes, monsoon puddles, construction.
+  // Saddar: potholes, open manholes, monsoon puddles, construction.
   {
-    potholeEvery: [22, 42],
-    manholeEvery: [110, 190],
-    waterEvery: [140, 230],
-    barrierEvery: [190, 300],
+    potholeEvery: [36, 62],
+    manholeEvery: [170, 260],
+    waterEvery: [190, 290],
+    barrierEvery: [240, 350],
     roadblockEvery: null,
   },
   // Lyari Expressway: smoother; no carts, no manholes.
   {
-    potholeEvery: [90, 170],
+    potholeEvery: [110, 190],
     manholeEvery: null,
-    waterEvery: [420, 640],
+    waterEvery: [460, 680],
     barrierEvery: null,
     roadblockEvery: null,
   },
   // Shahrah-e-Faisal / Clifton: VIP protocol checkpoints.
   {
-    potholeEvery: [45, 90],
+    potholeEvery: [70, 120],
     manholeEvery: null,
-    waterEvery: [260, 380],
+    waterEvery: [280, 400],
     barrierEvery: null,
-    roadblockEvery: [300, 380],
+    roadblockEvery: [380, 480],
   },
 ];
 

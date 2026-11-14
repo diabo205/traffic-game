@@ -45,7 +45,7 @@ export const ALTO: VehicleSpec = {
   rollingDrag: 0.28,
   aeroDrag: 0.00046,
   maxSteerLow: 0.6,
-  steerSpeedFalloff: 0.05,
+  steerSpeedFalloff: 0.042,
   steerRate: 3.4,
   steerReturnRate: 4.8,
   maxLateralAccel: 9.8,
@@ -69,7 +69,7 @@ export const VEHICLE_SPECS: Readonly<Record<PlayerVehicle, VehicleSpec>> = {
     rollingDrag: 0.3,
     aeroDrag: 0.0006,
     maxSteerLow: 0.72,
-    steerSpeedFalloff: 0.038,
+    steerSpeedFalloff: 0.032,
     steerRate: 3.9,
     steerReturnRate: 5.4,
     maxLateralAccel: 10.8,
@@ -90,7 +90,7 @@ export const VEHICLE_SPECS: Readonly<Record<PlayerVehicle, VehicleSpec>> = {
     rollingDrag: 0.25,
     aeroDrag: 0.00055,
     maxSteerLow: 0.54,
-    steerSpeedFalloff: 0.062,
+    steerSpeedFalloff: 0.052,
     steerRate: 2.7,
     steerReturnRate: 3.9,
     maxLateralAccel: 7.8,
@@ -451,9 +451,10 @@ export class PlayerCar {
     } else if (v >= -0.2) {
       // Forward gear.
       const ratio = Math.max(v, 0) / top;
-      // Cubic falloff: strong pull through the mid-range so the car actually
-      // reaches the zone limit instead of creeping up to it forever.
-      const drive = ratio < 1 ? 1 - ratio * ratio * ratio : -(ratio - 1) * 4; // over the limit -> engine braking
+      // Quartic falloff: strong pull through the top-20% so the car hits
+      // the zone limit crisply instead of creeping up to it for 4 seconds.
+      const r2 = ratio * ratio;
+      const drive = ratio < 1 ? 1 - r2 * r2 : -(ratio - 1) * 4; // over the limit -> engine braking
       // Part throttle (sticks, triggers) responds a little more eagerly.
       a += Math.pow(throttle, 0.7) * sp.driveAccel * drive;
       if (ratio > 1 && throttle < 0.05) a -= (ratio - 1) * 6;

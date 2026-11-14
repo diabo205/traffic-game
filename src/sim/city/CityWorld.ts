@@ -211,7 +211,8 @@ export class CityWorld {
     const f = this.fares;
     if (f.fare) this.events.push({ type: 'fareFailed', name: f.places[f.fare.dest].name, reason: 'towed' });
     f.cancelFare();
-    const cost = Math.min(f.money, TOW_COST);
+    const rawBill = Math.round((Math.max(0, f.money) * 0.35) / 10) * 10;
+    const cost = Math.min(TOW_COST, Math.max(120, rawBill));
     f.money -= cost;
     if (f.onShift) f.shiftTime = Math.max(0, f.shiftTime - TOW_TIME);
 

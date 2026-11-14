@@ -584,7 +584,7 @@ export class Game {
         this.hud.showBanner(e.banner);
         break;
       case 'checkpoint':
-        this.toastNow(`+${e.bonus}s · ${e.label}`);
+        this.toastNow(`+${e.bonus}s · +15% HP · ${e.label}`);
         this.audio.chime();
         break;
       case 'shiftStart':

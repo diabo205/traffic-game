@@ -28,7 +28,7 @@ const TRAFFIC_RESTITUTION = 0.1;
 export function trafficDamage(impact: number, kindDamage: number): number {
   if (impact <= 2.5) return 0;
   const x = impact - 2.5;
-  return Math.min(35, x * (0.35 + x * 0.06) * kindDamage);
+  return Math.min(22, x * (0.22 + x * 0.036) * kindDamage);
 }
 
 /**
@@ -140,7 +140,9 @@ export class World {
     this.traffic.update(DT, p, this.hazards, this.tick);
     this.trafficCollisions();
 
+    const prevCp = this.level.nextCheckpoint;
     this.level.update(DT, p.z, Math.max(0, p.speed), p.integrity, this.events);
+    if (this.level.nextCheckpoint > prevCp && running) p.integrity = Math.min(100, p.integrity + 15);
   }
 
   // ---------------------------------------------------------------------
@@ -253,7 +255,7 @@ export class World {
     p.speed *= 1 - 0.05 * severity;
     let dmg = 0;
     if (v > 7 && input.brake < 0.35) {
-      dmg = Math.round(3 + 5 * clamp((v - 7) / 18, 0, 1));
+      dmg = Math.round(2 + 3 * clamp((v - 7) / 18, 0, 1));
       this.damage(dmg);
     }
     this.level.stats.potholes++;
@@ -266,8 +268,8 @@ export class World {
     if (pointObbDistance(h.x, h.z, p.obb()) > h.hw * 0.8) return;
     h.lastHitTick = this.tick;
     const v = Math.abs(p.speed);
-    // Hurts and jolts, but no longer halves your speed: one hole shouldn't decide the run.
-    const dmg = v > 3 ? Math.round(6 + 8 * clamp(v / 25, 0, 1)) : 2;
+    // Hurts and jolts, without cheap one-shot wipes.
+    const dmg = v > 3 ? Math.round(4 + 5 * clamp(v / 25, 0, 1)) : 2;
     this.damage(dmg);
     p.kick(-1.3);
     p.speed *= 0.78;
