@@ -32,6 +32,8 @@ export const EMPTY_INPUT: Readonly<InputFrame> = Object.freeze({
 
 export type NpcKind = 'bike' | 'minibus' | 'rickshaw' | 'cart' | 'car' | 'truck';
 
+export type PlayerVehicle = 'alto' | 'rickshaw' | 'minibus';
+
 export type HazardKind = 'pothole' | 'manhole' | 'water' | 'barrier' | 'checkpoint';
 
 export type GamePhase = 'ready' | 'running' | 'gameover' | 'complete';
@@ -94,5 +96,6 @@ export type SimEvent =
   | { type: 'comboEnd'; total: number; mult: number; tip: number }
   | { type: 'comboBroken'; lost: number }
   | { type: 'honk'; cleared: number }
+  | { type: 'pedDodge'; count: number }
   | { type: 'gameover'; reason: Exclude<GameOverReason, null> }
   | { type: 'complete' };

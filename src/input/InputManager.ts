@@ -107,7 +107,7 @@ export class InputManager {
   }
 
   /** Sample all sources. Call once per rendered frame. */
-  sample(dt: number): InputFrame {
+  sample(dt: number, autoGas = false): InputFrame {
     const k = this.keys;
     const t = this.touch;
 
@@ -161,10 +161,12 @@ export class InputManager {
 
     if (t.gas || t.brake || t.drift || t.left || t.right || t.joystick || t.horn || t.dipper) this.lastSource = 'touch';
 
+    const brake = Math.max(kBrake, t.brake || t.drift ? 1 : 0, gBrake);
+    const cruise = autoGas && brake < 0.05 ? 1 : 0;
     const steer = Math.max(-1, Math.min(1, this.digitalSteer + t.joystick + gSteer));
     return {
-      throttle: Math.max(kThrottle, t.gas || t.drift ? 1 : 0, gThrottle),
-      brake: Math.max(kBrake, t.brake || t.drift ? 1 : 0, gBrake),
+      throttle: Math.max(kThrottle, t.gas || t.drift ? 1 : 0, gThrottle, cruise),
+      brake,
       steer,
       horn: kHorn || t.horn || gHorn,
       dipper: kDipper || t.dipper || gDipper,

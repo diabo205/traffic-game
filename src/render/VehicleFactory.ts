@@ -287,16 +287,16 @@ export class VehicleFactory {
 
   private protos = new Map<string, Proto>();
 
-  create(kind: VisualKind, variant: number): VehicleVisual {
-    const key = `${kind}:${variant}`;
+  create(kind: VisualKind, variant: number, keepWheels = kind === 'alto'): VehicleVisual {
+    const key = `${kind}:${variant}:${keepWheels ? 'p' : 'n'}`;
     let proto = this.protos.get(key);
     if (!proto) {
       proto = this.build(kind, variant);
-      finalize(proto, kind === 'alto');
+      finalize(proto, keepWheels);
       this.protos.set(key, proto);
     }
     const v = bind(kind, proto.root.clone(true), proto.wheelRadius);
-    if (kind === 'alto') v.setHeadlights(1);
+    if (keepWheels) v.setHeadlights(1);
     return v;
   }
 

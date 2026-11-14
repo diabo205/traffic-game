@@ -1,16 +1,43 @@
 import { approach, clamp } from './math';
-import type { InputFrame, Obb } from './types';
+import type { InputFrame, Obb, PlayerVehicle } from './types';
+
+export interface VehicleSpec {
+  readonly label: string;
+  readonly tag: string;
+  readonly halfWidth: number;
+  readonly halfLength: number;
+  readonly wheelBase: number;
+  readonly mass: number;
+  /** peak drive acceleration at standstill */
+  readonly driveAccel: number;
+  readonly brakeDecel: number;
+  readonly reverseAccel: number;
+  readonly maxReverse: number;
+  readonly rollingDrag: number;
+  readonly aeroDrag: number;
+  readonly maxSteerLow: number;
+  readonly steerSpeedFalloff: number;
+  readonly steerRate: number;
+  readonly steerReturnRate: number;
+  /** lateral grip, m/s^2 */
+  readonly maxLateralAccel: number;
+  /** top speed multiplier relative to road/city speed limit */
+  readonly topSpeedMul: number;
+  /** incoming collision damage multiplier */
+  readonly damageRes: number;
+}
 
 /**
  * Arcade model of a 660cc Suzuki Alto: light, nimble, eager at low speed,
  * runs out of breath quickly. All units SI (m, s, rad).
  */
-export const ALTO = {
+export const ALTO: VehicleSpec = {
+  label: 'ALTO',
+  tag: '660CC ALL-ROUNDER',
   halfWidth: 0.74,
   halfLength: 1.7,
   wheelBase: 2.36,
   mass: 750,
-  /** peak drive acceleration at standstill */
   driveAccel: 4.6,
   brakeDecel: 10.5,
   reverseAccel: 3.2,
@@ -21,9 +48,63 @@ export const ALTO = {
   steerSpeedFalloff: 0.065,
   steerRate: 3.2,
   steerReturnRate: 4.5,
-  /** lateral grip, m/s^2 */
   maxLateralAccel: 9.5,
+  topSpeedMul: 1,
+  damageRes: 1,
 } as const;
+
+export const VEHICLE_SPECS: Readonly<Record<PlayerVehicle, VehicleSpec>> = {
+  alto: ALTO,
+  rickshaw: {
+    label: 'RICKSHAW',
+    tag: 'RAZOR-SHARP GAP FILTER',
+    halfWidth: 0.66,
+    halfLength: 1.38,
+    wheelBase: 1.9,
+    mass: 520,
+    driveAccel: 5.25,
+    brakeDecel: 11.4,
+    reverseAccel: 3.4,
+    maxReverse: 5.0,
+    rollingDrag: 0.3,
+    aeroDrag: 0.00075,
+    maxSteerLow: 0.72,
+    steerSpeedFalloff: 0.045,
+    steerRate: 3.8,
+    steerReturnRate: 5.2,
+    maxLateralAccel: 10.6,
+    topSpeedMul: 0.9,
+    damageRes: 1.15,
+  },
+  minibus: {
+    label: 'W-11',
+    tag: 'HEAVY TRAFFIC SWEEPER',
+    halfWidth: 1.12,
+    halfLength: 4.05,
+    wheelBase: 4.8,
+    mass: 4200,
+    driveAccel: 3.65,
+    brakeDecel: 8.6,
+    reverseAccel: 2.8,
+    maxReverse: 5.0,
+    rollingDrag: 0.25,
+    aeroDrag: 0.0007,
+    maxSteerLow: 0.54,
+    steerSpeedFalloff: 0.075,
+    steerRate: 2.6,
+    steerReturnRate: 3.8,
+    maxLateralAccel: 7.6,
+    topSpeedMul: 1.04,
+    damageRes: 0.62,
+  },
+};
+
+/** Unlock prices in cumulative earned Rupees. */
+export const VEHICLE_COST: Readonly<Record<PlayerVehicle, number>> = {
+  alto: 0,
+  rickshaw: 400,
+  minibus: 1200,
+};
 
 /** Arcade moves. */
 export const MOVES = {
@@ -64,6 +145,9 @@ export const WALL = {
 export type BoostKind = 'launch' | 'dash' | 'drift';
 
 export class PlayerCar {
+  vehicle: PlayerVehicle = 'alto';
+  spec: VehicleSpec = ALTO;
+
   x = 0;
   z = 0;
   /** height of the car's base above y = 0 (ground, ramps, air) */
@@ -107,6 +191,7 @@ export class PlayerCar {
   driftEnded = 0;
   private launchCharge = 0;
   private dashCooldown = 0;
+  private lastTopSpeed = 27.8;
   /** seconds pinned against a wall with the gas held */
   pinnedTime = 0;
   private sinceRelease = 1e9;
@@ -136,6 +221,34 @@ export class PlayerCar {
   prevRoll = 0;
   prevPitch = 0;
   prevBump = 0;
+
+  setVehicle(kind: PlayerVehicle): void {
+    this.vehicle = kind;
+    this.spec = VEHICLE_SPECS[kind];
+  }
+
+  /** 0..1 progress toward a launch boost (holding gas + brake stopped). */
+  get launchFraction(): number {
+    return clamp(this.launchCharge / MOVES.launchCharge, 0, 1);
+  }
+
+  get launchReady(): boolean {
+    return this.launchCharge >= MOVES.launchCharge;
+  }
+
+  get dashReady(): boolean {
+    return (
+      !this.airborne &&
+      this.dashCooldown <= 0 &&
+      this.boostCooldown <= 0 &&
+      this.speed > 1 &&
+      this.speed < this.lastTopSpeed * MOVES.dashMaxSpeed
+    );
+  }
+
+  get dashCooldownFraction(): number {
+    return 1 - clamp(this.dashCooldown / MOVES.dashCooldown, 0, 1);
+  }
 
   reset(x: number, z: number, heading = 0, y = 0): void {
     this.x = this.prevX = x;
@@ -172,7 +285,7 @@ export class PlayerCar {
   }
 
   obb(): Obb {
-    return { x: this.x, z: this.z, hw: ALTO.halfWidth, hl: ALTO.halfLength, heading: this.heading };
+    return { x: this.x, z: this.z, hw: this.spec.halfWidth, hl: this.spec.halfLength, heading: this.heading };
   }
 
   /** Velocity vector in world space. */
@@ -249,6 +362,8 @@ export class PlayerCar {
 
   /** @param vTop top speed here (m/s) */
   update(input: InputFrame, vTop: number, dt: number, controllable: boolean): void {
+    const sp = this.spec;
+    this.lastTopSpeed = vTop;
     const throttle = controllable ? input.throttle : 0;
     const brake = controllable ? input.brake : 0.6;
     const steerIn = controllable ? input.steer : 0;
@@ -298,9 +413,9 @@ export class PlayerCar {
     const top = boosting ? vTop * MOVES.boostTopSpeed : vTop;
 
     // --- Steering --------------------------------------------------------
-    const maxSteer = ALTO.maxSteerLow / (1 + absV * ALTO.steerSpeedFalloff * (1 - this.drift * 0.45));
+    const maxSteer = sp.maxSteerLow / (1 + absV * sp.steerSpeedFalloff * (1 - this.drift * 0.45));
     const target = steerIn * maxSteer;
-    const rate = Math.abs(target) < Math.abs(this.steerAngle) ? ALTO.steerReturnRate : ALTO.steerRate;
+    const rate = Math.abs(target) < Math.abs(this.steerAngle) ? sp.steerReturnRate : sp.steerRate;
     this.steerAngle = approach(this.steerAngle, target, rate * maxSteer * dt * 2.2);
 
     // --- Longitudinal ----------------------------------------------------
@@ -310,7 +425,7 @@ export class PlayerCar {
       // No grip in the air: just drag.
     } else if (this.handbrake) {
       // Rear locked, engine still pulling: bleeds a little speed.
-      a += throttle * ALTO.driveAccel * 0.5 - 1.0;
+      a += throttle * sp.driveAccel * 0.5 - 1.0;
     } else if (v >= -0.2) {
       // Forward gear.
       const ratio = Math.max(v, 0) / top;
@@ -318,26 +433,26 @@ export class PlayerCar {
       // reaches the zone limit instead of creeping up to it forever.
       const drive = ratio < 1 ? 1 - ratio * ratio * ratio : -(ratio - 1) * 4; // over the limit -> engine braking
       // Part throttle (sticks, triggers) responds a little more eagerly.
-      a += Math.pow(throttle, 0.7) * ALTO.driveAccel * drive;
+      a += Math.pow(throttle, 0.7) * sp.driveAccel * drive;
       if (ratio > 1 && throttle < 0.05) a -= (ratio - 1) * 6;
       if (brake > 0.05) {
         // Arcade stop: brakes bite harder as you slow, so you stop on a dime.
-        if (v > 0.6) a -= brake * ALTO.brakeDecel * (v < 14 ? 1.7 : 1.2);
+        if (v > 0.6) a -= brake * sp.brakeDecel * (v < 14 ? 1.7 : 1.2);
         else if (throttle < 0.1 && controllable) {
           // Hold brake at standstill -> reverse.
-          a -= brake * ALTO.reverseAccel;
+          a -= brake * sp.reverseAccel;
           this.reversing = true;
         } else a -= v / dt; // stop
       }
     } else {
       // Reversing.
       this.reversing = true;
-      if (brake > 0.05) a -= brake * ALTO.reverseAccel;
-      if (throttle > 0.05) a += throttle * ALTO.brakeDecel;
-      if (v < -ALTO.maxReverse) a += (-ALTO.maxReverse - v) * 4;
+      if (brake > 0.05) a -= brake * sp.reverseAccel;
+      if (throttle > 0.05) a += throttle * sp.brakeDecel;
+      if (v < -sp.maxReverse) a += (-sp.maxReverse - v) * 4;
     }
     if (boosting && !air && v > -0.2 && !this.handbrake) a += MOVES.boostAccel * Math.max(0, 1 - Math.max(v, 0) / top);
-    const drag = ALTO.rollingDrag * (air ? 0 : 1) + ALTO.aeroDrag * v * v + this.extraDrag;
+    const drag = sp.rollingDrag * (air ? 0 : 1) + sp.aeroDrag * v * v + this.extraDrag;
     if (absV > 0.01) a -= Math.sign(v) * Math.min(drag, absV / dt);
     // Sliding sideways scrubs speed.
     let slipNow = this.heading - this.travel;
@@ -359,12 +474,12 @@ export class PlayerCar {
       // Keep whatever spin we took off with.
       yaw = this.yawRate * Math.exp(-dt * 0.6);
     } else {
-      const grip = ALTO.maxLateralAccel * this.traction;
+      const grip = sp.maxLateralAccel * this.traction;
       const d = this.drift;
       // Pinned against a wall: let gas/brake + steer pivot the nose off it.
       const pinned = this.wallContact > 0 && Math.abs(nv) < WALL.pivotSpeed && (throttle > 0.1 || brake > 0.1);
       const yawV = pinned ? (nv < -0.2 || (brake > 0.1 && throttle < 0.1) ? -WALL.pivotSpeed : WALL.pivotSpeed) : nv;
-      yaw = ((yawV * Math.tan(this.steerAngle)) / ALTO.wheelBase) * (1 + d * 0.9);
+      yaw = ((yawV * Math.tan(this.steerAngle)) / sp.wheelBase) * (1 + d * 0.9);
       const maxYaw = grip / Math.max(Math.abs(nv), 1);
       // Loose rear (drift) or low traction: the car rotates more freely than it changes course.
       const loose = Math.max(d, this.traction < 0.6 ? 1 : 0);

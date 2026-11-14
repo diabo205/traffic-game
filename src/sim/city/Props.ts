@@ -1,5 +1,4 @@
 import { obbOverlap, pointObbDistance } from '../math';
-import { ALTO } from '../PlayerCar';
 import type { PlayerCar } from '../PlayerCar';
 import { Rng } from '../rng';
 import type { SimEvent } from '../types';
@@ -164,7 +163,7 @@ export class Props {
           // Send it flying, mostly the way the car is going, a bit sideways.
           const push = Math.max(pv, 2);
           const lat = this.rng.range(-0.35, 0.35);
-          const heavy = spec.mass / (spec.mass + ALTO.mass);
+          const heavy = spec.mass / (spec.mass + player.spec.mass);
           const k = (1.15 + this.rng.range(0, 0.35)) * (1 - heavy * 1.6);
           const dirx = pv > 0.5 ? pvx / pv : mtv.nx, dirz = pv > 0.5 ? pvz / pv : mtv.nz;
           p.vx = (dirx + -dirz * lat) * push * k + mtv.nx * 1.5;
@@ -176,7 +175,7 @@ export class Props {
           p.x += mtv.nx * mtv.depth * -1 + dirx * 0.3;
           p.z += mtv.nz * mtv.depth * -1 + dirz * 0.3;
           if (p.state !== 1) {
-            const loss = spec.mass / (spec.mass + ALTO.mass);
+            const loss = spec.mass / (spec.mass + player.spec.mass);
             player.speed *= 1 - loss * 0.6;
             if (pv > 4) damage += spec.damage;
             events.push({ type: 'smash', kind: p.kind, x: p.x, z: p.z, impact: pv });

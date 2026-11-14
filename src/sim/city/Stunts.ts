@@ -1,11 +1,10 @@
-import { ALTO } from '../PlayerCar';
 import type { PlayerCar } from '../PlayerCar';
 import { NPC_SPECS } from '../TrafficManager';
 import type { SimEvent } from '../types';
 import type { CityNpc } from './CityTraffic';
 
 /**
- * Stunts and combos. Near misses, drifts, air time, jumping over traffic
+ * Stunts and combos. Near misses, drifts, donuts, air time, jumping over traffic
  * and smashing things all score points. Chaining stunts within a few
  * seconds builds a multiplier; when the chain lapses the combo banks into
  * your score and, if you have a passenger, earns a tip. A real crash breaks
@@ -30,6 +29,9 @@ export class Stunts {
   bestCombo = 0;
   private nearTick = new Map<number, number>();
   private overTick = new Map<number, number>();
+  private donutTime = 0;
+  private donutCooldown = 0;
+  private shaveCooldown = 0;
 
   get active(): boolean {
     return this.mult > 0;
@@ -38,6 +40,9 @@ export class Stunts {
   resetShift(): void {
     this.shiftScore = 0;
     this.bestCombo = 0;
+    this.donutTime = 0;
+    this.donutCooldown = 0;
+    this.shaveCooldown = 0;
   }
 
   private add(kind: string, label: string, points: number, events: SimEvent[]): void {
@@ -49,7 +54,7 @@ export class Stunts {
     events.push({ type: 'stunt', kind, label, points: pts, mult: this.mult });
   }
 
-  /** React to this tick's world events (landings, drifts, smashes, crashes). */
+  /** React to this tick's world events (landings, drifts, smashes, crashes, dodges). */
   handle(e: SimEvent, events: SimEvent[]): void {
     switch (e.type) {
       case 'smash':
@@ -60,6 +65,12 @@ export class Stunts {
         break;
       case 'drift':
         this.add('drift', `DRIFT ${e.seconds.toFixed(1)}s`, e.seconds * 90, events);
+        break;
+      case 'pedDodge':
+        if (this.shaveCooldown <= 0) {
+          this.shaveCooldown = 1.5;
+          this.add('shave', 'CLOSE SHAVE', 35 * Math.min(2, e.count), events);
+        }
         break;
       case 'crash':
         if (e.damage >= 4) this.breakCombo(events);
@@ -77,11 +88,28 @@ export class Stunts {
     this.pending = 0;
     this.mult = 0;
     this.window = 0;
+    this.donutTime = 0;
   }
 
   update(dt: number, tick: number, p: PlayerCar, npcs: readonly CityNpc[], carrying: boolean, events: SimEvent[], pay: (rs: number) => void): void {
+    if (this.donutCooldown > 0) this.donutCooldown = Math.max(0, this.donutCooldown - dt);
+    if (this.shaveCooldown > 0) this.shaveCooldown = Math.max(0, this.shaveCooldown - dt);
+
     const v = Math.abs(p.speed);
     const fx = Math.sin(p.heading), fz = Math.cos(p.heading);
+    const sp = p.spec;
+
+    // Sustained tight spin (gas + steer / handbrake circle) -> DONUT stunt.
+    if (!p.airborne && Math.abs(p.yawRate) > 1.45 && v > 2 && v < 13.5 && (p.handbrake || Math.abs(p.steerAngle) > 0.35)) {
+      this.donutTime += dt;
+      if (this.donutTime >= 0.85 && this.donutCooldown <= 0) {
+        this.add('donut', 'DONUT', 95, events);
+        this.donutTime = 0;
+        this.donutCooldown = 1.8;
+      }
+    } else {
+      this.donutTime = Math.max(0, this.donutTime - dt * 2);
+    }
 
     for (const n of npcs) {
       const dx = n.x - p.x, dz = n.z - p.z;
@@ -100,8 +128,8 @@ export class Stunts {
       const cosRel = Math.cos(n.heading - p.heading);
       // Footprint of the NPC across the car's sideways axis.
       const nAcross = spec.hw * Math.abs(cosRel) + spec.hl * Math.sqrt(Math.max(0, 1 - cosRel * cosRel));
-      const gap = lat - ALTO.halfWidth - nAcross;
-      if (Math.abs(along) > ALTO.halfLength + spec.hl || gap <= 0.05 || gap > NEAR_GAP) continue;
+      const gap = lat - sp.halfWidth - nAcross;
+      if (Math.abs(along) > sp.halfLength + spec.hl || gap <= 0.05 || gap > NEAR_GAP) continue;
       if (tick - n.lastHitTick < 120) continue;
       if (tick - (this.nearTick.get(n.id) ?? -1e9) < 180) continue;
       this.nearTick.set(n.id, tick);
@@ -116,8 +144,8 @@ export class Stunts {
       for (const [id, t] of this.overTick) if (tick - t > 600) this.overTick.delete(id);
     }
 
-    // The window freezes while a stunt is still going (drifting, in the air).
-    if (this.mult > 0 && !p.handbrake && !p.airborne) {
+    // The window freezes while a stunt is still going (drifting, spinning a donut, in the air).
+    if (this.mult > 0 && !p.handbrake && !p.airborne && this.donutTime < 0.25) {
       this.window -= dt;
       if (this.window <= 0) {
         const total = this.pending * this.mult;

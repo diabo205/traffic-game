@@ -1,6 +1,8 @@
+import type { PlayerVehicle } from '../sim/types';
+
 /**
  * Procedural Web Audio synth — no audio files.
- * Engine (3-cylinder 660cc buzz), horn, brake screech, thuds, crashes, splash.
+ * Engine (3-cylinder 660cc buzz, raspy rickshaw, or W-11 diesel), horn, brake screech, thuds, crashes, splash.
  * The AudioContext is created/resumed on the first user gesture (unlock()).
  */
 
@@ -14,6 +16,7 @@ export interface EngineParams {
   /** 0..1 tyre screech amount */
   screech: number;
   running: boolean;
+  vehicle?: PlayerVehicle;
 }
 
 /** Gear upshift points as fractions of top speed (5-speed manual). */
@@ -200,12 +203,14 @@ export class SoundEngine {
     if (!p.running) targetRpm = 850;
     this.rpm += (targetRpm - this.rpm) * Math.min(1, dt * 8);
 
-    // 3 cylinders, 4-stroke: firing freq = rpm/60 * 1.5
-    const fire = (this.rpm / 60) * 1.5;
+    // 3 cylinders, 4-stroke: firing freq = rpm/60 * 1.5; scaled per vehicle
+    const pitchMul = p.vehicle === 'minibus' ? 0.56 : p.vehicle === 'rickshaw' ? 1.18 : 1;
+    const filtMul = p.vehicle === 'minibus' ? 0.65 : p.vehicle === 'rickshaw' ? 1.2 : 1;
+    const fire = (this.rpm / 60) * 1.5 * pitchMul;
     this.engOsc1.frequency.setTargetAtTime(fire, t, 0.03);
     this.engOsc2.frequency.setTargetAtTime(fire * 2.01, t, 0.03);
     this.engSub.frequency.setTargetAtTime(fire / 2, t, 0.03);
-    this.engFilter.frequency.setTargetAtTime(500 + this.rpm * 0.35 + p.throttle * 900, t, 0.05);
+    this.engFilter.frequency.setTargetAtTime((500 + this.rpm * 0.35 + p.throttle * 900) * filtMul, t, 0.05);
     this.engGain.gain.setTargetAtTime(0.16 + p.throttle * 0.14, t, 0.05);
 
     this.hornGain.gain.setTargetAtTime(p.horn ? 0.32 : 0, t, 0.012);
@@ -352,5 +357,22 @@ export class SoundEngine {
     o.connect(g).connect(this.master);
     o.start(t);
     o.stop(t + 0.2);
+  }
+
+  /** Countdown tick for the final seconds of a fare or checkpoint timer. */
+  timerTick(urgent: boolean): void {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    const t = ctx.currentTime;
+    const o = ctx.createOscillator();
+    o.type = 'triangle';
+    o.frequency.setValueAtTime(urgent ? 1040 : 780, t);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(urgent ? 0.11 : 0.07, t + 0.005);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.08);
+    o.connect(g).connect(this.master);
+    o.start(t);
+    o.stop(t + 0.1);
   }
 }

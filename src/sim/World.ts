@@ -2,10 +2,10 @@ import { HazardManager } from './HazardManager';
 import type { Hazard } from './HazardManager';
 import { LevelManager } from './LevelManager';
 import { clamp, obbOverlap, pointObbDistance } from './math';
-import { ALTO, MOVES, PlayerCar, WALL } from './PlayerCar';
+import { MOVES, PlayerCar, WALL } from './PlayerCar';
 import { ZONES, elevationAt, sampleRoad } from './road';
 import { NPC_SPECS, TrafficManager } from './TrafficManager';
-import type { InputFrame, NpcView, SimEvent } from './types';
+import type { InputFrame, NpcView, PlayerVehicle, SimEvent } from './types';
 
 export const TICK_RATE = 60;
 export const DT = 1 / TICK_RATE;
@@ -50,8 +50,9 @@ export class World {
   private lastScrapeTick = -1e9;
 
   /** @param startZ debug: start further along the route (default 0). */
-  constructor(seed: number, startZ = 0) {
+  constructor(seed: number, startZ = 0, vehicle: PlayerVehicle = 'alto') {
     this.seed = seed >>> 0;
+    this.player.setVehicle(vehicle);
     this.hazards = new HazardManager(this.seed);
     this.traffic = new TrafficManager(this.seed);
     const road = sampleRoad(startZ);
@@ -80,7 +81,7 @@ export class World {
   }
 
   topSpeed(): number {
-    return sampleRoad(this.player.z).topSpeed;
+    return sampleRoad(this.player.z).topSpeed * this.player.spec.topSpeedMul;
   }
 
   /** 0..1 camera speed-rush on the expressway. */
@@ -106,8 +107,9 @@ export class World {
 
   private damage(amount: number): void {
     if (amount <= 0 || this.level.phase !== 'running') return;
-    this.player.integrity = Math.max(0, this.player.integrity - amount);
-    this.level.stats.damageTaken += amount;
+    const scaled = amount * this.player.spec.damageRes;
+    this.player.integrity = Math.max(0, this.player.integrity - scaled);
+    this.level.stats.damageTaken += scaled;
   }
 
   step(input: InputFrame): void {
@@ -128,7 +130,7 @@ export class World {
     const road = sampleRoad(p.z);
 
     this.applySurface();
-    p.update(input, road.topSpeed, DT, running);
+    p.update(input, road.topSpeed * p.spec.topSpeedMul, DT, running);
     if (p.boostFired) this.events.push({ type: 'boost', kind: p.boostFired });
     if (p.driftEnded > 1) this.events.push({ type: 'drift', seconds: p.driftEnded });
     p.settle(elevationAt(p.z), DT);
@@ -160,13 +162,13 @@ export class World {
     this.onWater = wet;
     // The dirt shoulder is rough: drivable for dodging, never the fast line.
     const road = sampleRoad(p.z);
-    if (p.x < road.left - ALTO.halfWidth * 0.5) p.extraDrag += SHOULDER_DRAG;
+    if (p.x < road.left - p.spec.halfWidth * 0.5) p.extraDrag += SHOULDER_DRAG;
   }
 
   private constrainToRoad(): void {
     const p = this.player;
     const road = sampleRoad(p.z);
-    const reach = ALTO.halfWidth * Math.abs(Math.cos(p.heading)) + ALTO.halfLength * Math.abs(Math.sin(p.heading));
+    const reach = p.spec.halfWidth * Math.abs(Math.cos(p.heading)) + p.spec.halfLength * Math.abs(Math.sin(p.heading));
     const minX = road.left - road.shoulder + reach;
     const maxX = road.right - 0.25 - reach;
     let side = 0;
@@ -309,7 +311,7 @@ export class World {
       if (n.speed < 1.5) p.wallContact = WALL.memoryTicks;
       const spec = NPC_SPECS[n.kind];
       // Mass share: how much of the correction the player takes.
-      const mr = spec.mass / (spec.mass + ALTO.mass);
+      const mr = spec.mass / (spec.mass + p.spec.mass);
       p.x += mtv.nx * mtv.depth * mr;
       p.z += mtv.nz * mtv.depth * mr;
       n.x -= mtv.nx * mtv.depth * (1 - mr);

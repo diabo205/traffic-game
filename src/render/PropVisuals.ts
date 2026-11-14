@@ -86,46 +86,87 @@ function propGeometry(kind: PropKind): G {
 
 const KINDS: PropKind[] = ['cone', 'fruitcart', 'stall', 'drum', 'chair', 'crate'];
 
-/** Instanced street props, posed from the sim every frame something moves. */
+const PROP_CHUNK = 280;
+
+interface PropChunk {
+  cx: number;
+  cz: number;
+  group: THREE.Group;
+}
+
+/** Instanced street props, partitioned by home chunk and posed from the sim when active. */
 export class PropVisuals {
   readonly group = new THREE.Group();
-  private meshes = new Map<PropKind, THREE.InstancedMesh>();
-  /** prop index -> slot in its kind's instanced mesh */
+  private chunks: PropChunk[] = [];
+  private propMesh: THREE.InstancedMesh[] = [];
   private slot: number[] = [];
+  private sharedGeos: THREE.BufferGeometry[] = [];
+  private mat = new THREE.MeshLambertMaterial({ vertexColors: true });
   private dummy = new THREE.Object3D();
   private first = true;
   /** props drawn away from their home pose last time (must be redrawn once more when reset) */
   private away: boolean[] = [];
 
   constructor(props: Props, shadow: boolean) {
-    const counts = new Map<PropKind, number>();
-    for (const p of props.props) {
-      const c = counts.get(p.kind) ?? 0;
-      this.slot[p.id] = c;
-      counts.set(p.kind, c + 1);
-    }
-    const mat = new THREE.MeshLambertMaterial({ vertexColors: true });
+    const geos = new Map<PropKind, THREE.BufferGeometry>();
     for (const k of KINDS) {
-      const n = counts.get(k) ?? 0;
-      if (!n) continue;
-      const m = new THREE.InstancedMesh(propGeometry(k), mat, n);
-      m.castShadow = shadow;
-      m.receiveShadow = true;
-      m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-      this.meshes.set(k, m);
-      this.group.add(m);
+      const g = propGeometry(k);
+      geos.set(k, g);
+      this.sharedGeos.push(g);
+    }
+
+    const byKey = new Map<string, { cx: number; cz: number; items: typeof props.props }>();
+    for (const p of props.props) {
+      const gx = Math.floor(p.homeX / PROP_CHUNK);
+      const gz = Math.floor(p.homeZ / PROP_CHUNK);
+      const key = `${gx},${gz}`;
+      let entry = byKey.get(key);
+      if (!entry) {
+        entry = { cx: (gx + 0.5) * PROP_CHUNK, cz: (gz + 0.5) * PROP_CHUNK, items: [] };
+        byKey.set(key, entry);
+      }
+      entry.items.push(p);
+    }
+
+    for (const entry of byKey.values()) {
+      const counts = new Map<PropKind, number>();
+      for (const p of entry.items) {
+        const c = counts.get(p.kind) ?? 0;
+        this.slot[p.id] = c;
+        counts.set(p.kind, c + 1);
+      }
+      const chunkGroup = new THREE.Group();
+      const meshes = new Map<PropKind, THREE.InstancedMesh>();
+      for (const k of KINDS) {
+        const n = counts.get(k) ?? 0;
+        if (!n) continue;
+        const m = new THREE.InstancedMesh(geos.get(k)!, this.mat, n);
+        m.castShadow = shadow;
+        m.receiveShadow = true;
+        m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+        meshes.set(k, m);
+        chunkGroup.add(m);
+      }
+      for (const p of entry.items) {
+        this.propMesh[p.id] = meshes.get(p.kind)!;
+      }
+      this.group.add(chunkGroup);
+      this.chunks.push({ cx: entry.cx, cz: entry.cz, group: chunkGroup });
     }
     this.dummy.rotation.order = 'YXZ';
   }
 
-  update(props: Props): void {
+  update(props: Props, px = 0, pz = 0): void {
+    for (const c of this.chunks) {
+      c.group.visible = Math.abs(c.cx - px) < 420 && Math.abs(c.cz - pz) < 420;
+    }
     if (!props.dirty && !this.first) return;
     const touched = new Set<THREE.InstancedMesh>();
     for (const p of props.props) {
       const atHome = p.state === 0 && p.tumble === 0 && p.x === p.homeX && p.z === p.homeZ;
       if (!this.first && atHome && !this.away[p.id]) continue;
       this.away[p.id] = !atHome;
-      const mesh = this.meshes.get(p.kind);
+      const mesh = this.propMesh[p.id];
       if (!mesh) continue;
       const spec = PROP_SPECS[p.kind];
       // Half-extent pointing up after tumbling about the sideways axis.
@@ -142,5 +183,13 @@ export class PropVisuals {
       m.computeBoundingSphere();
     }
     this.first = false;
+  }
+
+  dispose(): void {
+    for (const g of this.sharedGeos) g.dispose();
+    this.mat.dispose();
+    this.sharedGeos = [];
+    this.chunks = [];
+    this.propMesh = [];
   }
 }

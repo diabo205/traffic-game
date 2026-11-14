@@ -52,8 +52,20 @@ button { font-family: var(--display); cursor: pointer; }
 /* ===================== In-game HUD ===================== */
 .hud { position: absolute; inset: 0; pointer-events: none; }
 .hud button { pointer-events: auto; }
+.speed-lines {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.14s ease-out;
+  background:
+    repeating-conic-gradient(from 0deg at 50% 48%, rgba(255, 255, 255, 0.24) 0deg 1.1deg, transparent 1.1deg 7.5deg);
+  -webkit-mask-image: radial-gradient(ellipse 68% 62% at 50% 48%, transparent 48%, #000 92%);
+  mask-image: radial-gradient(ellipse 68% 62% at 50% 48%, transparent 48%, #000 92%);
+}
 .hud.in-menu .hud-tl, .hud.in-menu .hud-tc, .hud.in-menu .hud-tr, .hud.in-menu .hud-right,
-.hud.in-menu .touch, .hud.in-menu .shift-card, .hud.in-menu .banner, .hud.in-menu .toast { display: none; }
+.hud.in-menu .touch, .hud.in-menu .shift-card, .hud.in-menu .banner,
+.hud.in-menu .speed-lines { display: none; }
 
 /* ---- Top-left: pause + stats + integrity + minimap ---- */
 .hud-tl {
@@ -139,6 +151,8 @@ button { font-family: var(--display); cursor: pointer; }
 }
 .boost[data-state='charging'] .boost-fill { background: linear-gradient(90deg, #7d8aa0, #b9c3d4); }
 .boost[data-state='ready'] .boost-fill { box-shadow: inset 0 0 12px #fff; }
+.boost[data-state='launch'] .boost-fill { background: linear-gradient(90deg, #ff7a00, var(--gold)); }
+.boost[data-state='launch-ready'] .boost-fill { background: linear-gradient(90deg, var(--gold), #fff, var(--lime)); animation: boost-flicker 0.1s infinite alternate; }
 .boost[data-state='active'] .boost-fill { background: linear-gradient(90deg, #ff9d00, #ffe14d 60%, #fff); animation: boost-flicker 0.12s infinite alternate; }
 .boost[data-state='drift'] .boost-fill { background: linear-gradient(90deg, var(--magenta-2), var(--magenta)); }
 .boost-label {
@@ -154,7 +168,7 @@ button { font-family: var(--display); cursor: pointer; }
   color: var(--navy);
   text-shadow: 0 0 6px rgba(255, 255, 255, 0.6);
 }
-.boost[data-state='charging'] .boost-label { color: rgba(11, 21, 48, 0.75); }
+.boost[data-state='charging'] .boost-label, .boost[data-state='launch'] .boost-label { color: rgba(11, 21, 48, 0.8); }
 .boost[data-state='drift'] .boost-label { color: #fff; text-shadow: none; }
 @keyframes boost-flicker { from { filter: brightness(1); } to { filter: brightness(1.25); } }
 
@@ -311,6 +325,7 @@ button { font-family: var(--display); cursor: pointer; }
   position: absolute;
   top: calc(158px + var(--safe-t));
   left: 50%;
+  z-index: 10;
   transform: translateX(-50%) translateY(-6px);
   padding: 4px 22px;
   font-weight: 800;
@@ -431,6 +446,16 @@ button { font-family: var(--display); cursor: pointer; }
   clip-path: polygon(0 0, 100% 0, calc(100% - 22px) 100%, 0 100%);
 }
 .brand-name { margin-left: 10px; font-size: 16px; font-weight: 800; line-height: 1; letter-spacing: 0.08em; }
+.topbar-right { display: flex; align-items: center; gap: 10px; }
+.bank-badge {
+  padding: 3px 10px;
+  background: rgba(255, 255, 255, 0.12);
+  border-left: 3px solid var(--lime);
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  color: var(--lime);
+}
 .topbar-btn { border: 0; background: none; color: #fff; padding: 6px; }
 .hero {
   position: absolute;
@@ -456,6 +481,28 @@ button { font-family: var(--display); cursor: pointer; }
   bottom: calc(150px + var(--safe-b));
   text-align: center;
 }
+.garage-strip {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+  justify-content: flex-end;
+}
+.garage-btn {
+  min-width: 84px;
+  padding: 5px 10px;
+  border: 2px solid #2b3f75;
+  background: rgba(11, 21, 48, 0.88);
+  color: #cbd5ee;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  line-height: 1.05;
+}
+.garage-btn .g-name { font-size: 16px; font-weight: 800; letter-spacing: 0.04em; }
+.garage-btn .g-sub { font-size: 11px; font-weight: 700; letter-spacing: 0.05em; color: var(--gold); }
+.garage-btn.chosen { background: #fff; color: var(--navy); border-color: var(--lime); }
+.garage-btn.chosen .g-sub { color: var(--magenta-2); }
+.garage-btn.locked { opacity: 0.68; }
 .go-btn.play { padding: 12px 84px; font-size: 44px; }
 .tiles {
   position: absolute;
@@ -539,6 +586,7 @@ button { font-family: var(--display); cursor: pointer; }
 }
 .tab.on { background: linear-gradient(180deg, #1b3577, #13224a); border-color: #3b5bb0; box-shadow: inset 0 -4px 0 var(--magenta); }
 .card-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; width: min(760px, 100%); }
+.card-btn.wide { grid-column: 1 / -1; min-height: 62px; }
 .controls-pane { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; width: min(860px, 100%); }
 .ctl { background: #fff; color: var(--navy); padding: 10px 16px 12px; border-left: 6px solid var(--magenta); }
 .ctl h3 { margin: 0 0 4px; font-size: 24px; font-weight: 800; letter-spacing: 0.04em; }
@@ -686,6 +734,9 @@ button { font-family: var(--display); cursor: pointer; }
 .tbtn.brake { height: clamp(80px, 18vw, 110px); background: rgba(255, 45, 111, 0.35); }
 .tbtn.gas.active { background: var(--lime); color: var(--navy); }
 .tbtn.brake.active { background: var(--magenta); }
+.tbtn.gas.dash-ready { border-color: #fff; }
+.tbtn.gas.auto-on { background: rgba(198, 244, 50, 0.58); color: var(--navy); box-shadow: inset 0 0 0 3px var(--lime); }
+.tbtn.gas.launch-ready { border-color: var(--gold); box-shadow: 0 0 16px var(--gold); }
 .stick {
   position: relative;
   width: clamp(130px, 30vw, 170px);
@@ -724,6 +775,8 @@ button { font-family: var(--display); cursor: pointer; }
   .tile-top { font-size: 17px; }
   .tile-bottom { font-size: 28px; }
   .play-wrap { bottom: calc(110px + var(--safe-b)); }
+  .garage-btn { min-width: 72px; padding: 4px 8px; }
+  .garage-btn .g-name { font-size: 14px; }
   .go-btn.play { font-size: 34px; padding: 8px 60px; }
   .card-label { font-size: 24px; }
   .tab { height: 52px; font-size: 20px; }
@@ -744,6 +797,13 @@ button { font-family: var(--display); cursor: pointer; }
   .zone-card { top: 22%; font-size: 34px; }
   .hero { top: calc(64px + var(--safe-t)); }
   .hero p { display: none; }
+  .bank-badge { font-size: 13px; padding: 2px 8px; }
+  .play-wrap { bottom: calc(92px + var(--safe-b)); }
+  .play-wrap .hint { display: none; }
+  .garage-strip { margin-bottom: 6px; }
+  .go-btn.play { font-size: 28px; padding: 6px 46px; }
+  .tiles { padding: 8px calc(14px + var(--safe-r)) calc(8px + var(--safe-b)) calc(14px + var(--safe-l)); }
+  .tile { height: 64px; }
   .tile.dim { display: none; }
   .hud-right { top: 58%; }
   .tbtn.gas { height: 100px; }
@@ -756,8 +816,22 @@ button { font-family: var(--display); cursor: pointer; }
 }
 /* Portrait phones: stack things that sit side by side on landscape. */
 @media (max-width: 600px) {
-  .hud-tc { top: calc(132px + var(--safe-t)); width: 86vw; }
-  .hero { width: auto; left: 16px; }
+  .hud-tc {
+    top: calc(108px + var(--safe-t));
+    left: calc(114px + var(--safe-l));
+    right: calc(12px + var(--safe-r));
+    width: auto;
+    transform: none;
+  }
+  .fare { min-width: 0; width: 100%; }
+  .toast { top: calc(214px + var(--safe-t)); }
+  .minimap { width: 92px; height: 92px; }
+  .steer-buttons, .pedals, .touch-right { gap: 6px; }
+  .tbtn.small { width: 44px; height: 44px; font-size: 18px; }
+  .tbtn.small.drift { font-size: 11px; }
+  .hero { top: calc(68px + var(--safe-t)); width: auto; left: 16px; }
+  .play-wrap { left: 14px; right: 14px; bottom: calc(196px + var(--safe-b)); }
+  .garage-strip { justify-content: center; }
   .tiles { flex-wrap: wrap; }
   .tile { flex: 1 1 40%; }
   .card-grid, .controls-pane { grid-template-columns: 1fr; }

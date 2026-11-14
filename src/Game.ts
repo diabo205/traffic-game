@@ -1,18 +1,20 @@
 import { SoundEngine } from './audio/SoundEngine';
 import { InputManager } from './input/InputManager';
 import { Renderer } from './render/Renderer';
-import type { AnyWorld } from './render/Renderer';
+import type { AnyWorld, TimeOfDay } from './render/Renderer';
 import { CityWorld } from './sim/city/CityWorld';
 import { COMBO_WINDOW } from './sim/city/Stunts';
-import { MOVES } from './sim/PlayerCar';
+import { MOVES, VEHICLE_COST, VEHICLE_SPECS } from './sim/PlayerCar';
 import { ZONES } from './sim/road';
-import type { SimEvent } from './sim/types';
+import type { PlayerVehicle, SimEvent } from './sim/types';
 import { DT, World } from './sim/World';
 import { Hud } from './ui/Hud';
 import { Minimap } from './ui/Minimap';
 import { TouchControls } from './ui/TouchControls';
 
 const MAX_STEPS_PER_FRAME = 5;
+const VEHICLES: readonly PlayerVehicle[] = ['alto', 'rickshaw', 'minibus'];
+const TIMES_OF_DAY: readonly TimeOfDay[] = ['noon', 'sunset', 'night'];
 
 type Mode = 'route' | 'city';
 
@@ -38,6 +40,12 @@ function storageSet(key: string, value: string): void {
 export class Game {
   private world: AnyWorld;
   private mode: Mode;
+  private vehicle: PlayerVehicle = 'alto';
+  private bank = 0;
+  private tod: TimeOfDay = 'noon';
+  private autoGas = false;
+  private lastTrackedMoney = 0;
+  private lastCountdownSec = -1;
   private readonly input = new InputManager();
   private readonly audio = new SoundEngine();
   private readonly hud: Hud;
@@ -60,11 +68,22 @@ export class Game {
     uiRoot: HTMLElement,
   ) {
     this.mode = mode;
+    this.bank = Math.max(0, Math.floor(Number(storageGet('kt3d.bank') ?? '0') || 0));
+    const savedVeh = storageGet('kt3d.veh');
+    if (savedVeh === 'alto' || savedVeh === 'rickshaw' || savedVeh === 'minibus') {
+      if (this.bank >= VEHICLE_COST[savedVeh]) this.vehicle = savedVeh;
+    }
+    const savedTod = storageGet('kt3d.tod');
+    if (savedTod === 'noon' || savedTod === 'sunset' || savedTod === 'night') this.tod = savedTod;
+
     this.world = this.makeWorld();
+    renderer.setTimeOfDay(this.tod);
     renderer.attach(this.world);
 
     this.hud = new Hud(uiRoot);
     this.hud.setMode(mode);
+    this.hud.setVehicle(this.vehicle, this.bank);
+    this.hud.setTimeOfDay(this.tod);
     this.syncMinimap();
     this.touch = new TouchControls(this.hud.root, this.input.touch);
 
@@ -73,6 +92,7 @@ export class Game {
     const savedTouch = storageGet('kt3d.touch');
     this.setTouchVisible(savedTouch === null ? coarse : savedTouch === '1', false);
     if (storageGet('kt3d.stick') === '1') this.setStickMode(true, false);
+    this.setAutoGas(storageGet('kt3d.autogas') === '1', false);
     this.setMuted(storageGet('kt3d.muted') === '1');
     this.setCamera(storageGet('kt3d.cam') === 'far', false);
 
@@ -96,7 +116,63 @@ export class Game {
   }
 
   private makeWorld(): AnyWorld {
-    return this.mode === 'city' ? new CityWorld(this.seed) : new World(this.seed, this.startZ);
+    this.lastTrackedMoney = 0;
+    this.lastCountdownSec = -1;
+    return this.mode === 'city' ? new CityWorld(this.seed, this.vehicle) : new World(this.seed, this.startZ, this.vehicle);
+  }
+
+  private addBank(delta: number): void {
+    const gain = Math.round(delta);
+    if (gain <= 0) return;
+    const prev = this.bank;
+    this.bank += gain;
+    storageSet('kt3d.bank', String(this.bank));
+    this.hud.setVehicle(this.vehicle, this.bank);
+    for (const v of VEHICLES) {
+      const cost = VEHICLE_COST[v];
+      if (cost > 0 && prev < cost && this.bank >= cost) {
+        this.hud.showBanner(`${VEHICLE_SPECS[v].label} UNLOCKED!`);
+        this.audio.chime();
+      }
+    }
+  }
+
+  private selectVehicle(v: PlayerVehicle, save = true): void {
+    const cost = VEHICLE_COST[v];
+    if (this.bank < cost) {
+      this.hud.showToast(`NEED RS ${cost.toLocaleString('en-PK')} TOTAL IN BANK`, false);
+      return;
+    }
+    if (v === this.vehicle) return;
+    this.vehicle = v;
+    if (save) storageSet('kt3d.veh', v);
+    this.hud.setVehicle(v, this.bank);
+    if (this.world.phase === 'ready') {
+      this.world = this.makeWorld();
+      this.renderer.attach(this.world);
+      this.syncMinimap();
+    } else {
+      this.hud.showToast(`${VEHICLE_SPECS[v].label} READY NEXT RUN`);
+    }
+  }
+
+  private cycleVehicle(): void {
+    const unlocked = VEHICLES.filter((v) => this.bank >= VEHICLE_COST[v]);
+    if (unlocked.length <= 1) {
+      const next = VEHICLES.find((v) => this.bank < VEHICLE_COST[v]);
+      if (next) this.hud.showToast(`EARN RS ${VEHICLE_COST[next].toLocaleString('en-PK')} TO UNLOCK ${VEHICLE_SPECS[next].label}`, false);
+      return;
+    }
+    const idx = unlocked.indexOf(this.vehicle);
+    this.selectVehicle(unlocked[(idx + 1) % unlocked.length]);
+  }
+
+  private cycleTimeOfDay(): void {
+    const next = TIMES_OF_DAY[(TIMES_OF_DAY.indexOf(this.tod) + 1) % TIMES_OF_DAY.length];
+    this.tod = next;
+    this.renderer.setTimeOfDay(next);
+    this.hud.setTimeOfDay(next);
+    storageSet('kt3d.tod', next);
   }
 
   /** The minimap exists only for the city. */
@@ -143,7 +219,7 @@ export class Game {
     } else {
       zone = ZONES[w.level.zoneIndex]?.name.split(/[/·]/)[0].trim() ?? 'Karachi';
       goals.push(`Reach Clifton · ${Math.round(w.level.progress * 100)}% of the way`);
-      goals.push(`Checkpoint timer ${Math.ceil(w.level.timeLeft)} s · keep the Alto above 0 HP`);
+      goals.push(`Checkpoint timer ${Math.ceil(w.level.timeLeft)} s · keep ${VEHICLE_SPECS[this.vehicle].label} above 0 HP`);
     }
     this.hud.showPause(true, zone, goals);
   }
@@ -185,6 +261,12 @@ export class Game {
     window.addEventListener('pointerdown', unlock, { capture: true });
     window.addEventListener('keydown', unlock, { capture: true });
 
+    for (const v of VEHICLES) {
+      this.hud.rideBtns[v].addEventListener('click', () => this.selectVehicle(v));
+    }
+    this.hud.rideBtn.addEventListener('click', () => this.cycleVehicle());
+    this.hud.todBtn.addEventListener('click', () => this.cycleTimeOfDay());
+    this.hud.autoGasBtn.addEventListener('click', () => this.setAutoGas(!this.autoGas));
     this.hud.startBtn.addEventListener('click', () => this.chooseMode('route'));
     this.hud.cityBtn.addEventListener('click', () => this.chooseMode('city'));
     this.hud.playBtn.addEventListener('click', () => this.input.queueConfirm());
@@ -222,6 +304,12 @@ export class Game {
     if (save) storageSet('kt3d.stick', joystick ? '1' : '0');
   }
 
+  private setAutoGas(on: boolean, save = true): void {
+    this.autoGas = on;
+    this.hud.setAutoGas(on);
+    if (save) storageSet('kt3d.autogas', on ? '1' : '0');
+  }
+
   start(): void {
     this.lastTime = performance.now();
     const frame = (now: number) => {
@@ -239,6 +327,7 @@ export class Game {
     this.hud.hideEnd();
     this.hud.showShiftOver(null);
     this.world.start();
+    if (this.world.mode === 'route') this.hud.showToast('REACH CLIFTON · 4.2 KM');
     this.drainAndHandle();
   }
 
@@ -247,7 +336,8 @@ export class Game {
     this.lastTime = now;
     this.clock += frameDt;
 
-    const input = this.input.sample(frameDt);
+    const auto = this.autoGas && this.touch.visible && this.world.phase === 'running';
+    const input = this.input.sample(frameDt, auto);
     if (this.input.consumeMute()) this.setMuted(!this.audio.isMuted);
     const pausePressed = this.input.consumePause();
     // Esc / Start: back out of game options first, then toggle pause.
@@ -269,6 +359,7 @@ export class Game {
       this.audio.unlock();
       this.hud.showStart(false);
       this.world.start();
+      if (this.world.mode === 'route') this.hud.showToast('REACH CLIFTON · 4.2 KM');
       this.drainAndHandle();
     } else if (phase === 'running' && confirm && this.world.mode === 'city' && !this.world.fares.onShift) {
       this.world.startShift();
@@ -304,8 +395,32 @@ export class Game {
     const p = this.world.player;
     this.updateTaxiHud(frameDt);
     // Boost meter: what's left while boosting, else how far it has recharged.
-    this.hud.setBoost(p.boostTime > 0 ? p.boostTime / 0.9 : 1 - p.boostCooldown / MOVES.boostCooldown, p.boostTime > 0, p.handbrake);
+    this.hud.setBoost(
+      p.boostTime > 0 ? p.boostTime / 0.9 : 1 - p.boostCooldown / MOVES.boostCooldown,
+      p.boostTime > 0,
+      p.handbrake,
+      p.launchFraction,
+      p.dashReady,
+    );
+    this.hud.setSpeedRush(this.world.speedRush());
+    this.touch.setPedalCues(p.launchReady, p.dashReady, auto);
     this.hud.update(frameDt, p.speed * 3.6, p.integrity, this.world.level.timeLeft, this.world.level.progress);
+
+    const timerSecLeft =
+      this.world.phase !== 'running'
+        ? 99
+        : this.world.mode === 'city'
+          ? (this.world.fares.fare?.timeLeft ?? (this.world.fares.onShift ? this.world.fares.shiftTime : 99))
+          : this.world.level.timeLeft;
+    if (timerSecLeft > 0 && timerSecLeft <= 5) {
+      const sec = Math.ceil(timerSecLeft);
+      if (sec !== this.lastCountdownSec) {
+        this.lastCountdownSec = sec;
+        this.audio.timerTick(timerSecLeft <= 2.5);
+      }
+    } else {
+      this.lastCountdownSec = -1;
+    }
 
     let slip = p.travel - p.heading;
     slip = Math.abs(Math.atan2(Math.sin(slip), Math.cos(slip)));
@@ -321,6 +436,7 @@ export class Game {
         horn: p.horn,
         screech,
         running: this.world.phase === 'running',
+        vehicle: p.vehicle,
       },
       frameDt,
     );
@@ -330,6 +446,8 @@ export class Game {
     const w = this.world;
     if (w.mode !== 'city') return;
     const f = w.fares;
+    if (f.money > this.lastTrackedMoney) this.addBank(f.money - this.lastTrackedMoney);
+    this.lastTrackedMoney = f.money;
     const p = w.player;
     const px = p.prevX + (p.x - p.prevX) * (this.accumulator / DT);
     const pz = p.prevZ + (p.z - p.prevZ) * (this.accumulator / DT);
@@ -345,7 +463,8 @@ export class Game {
     else this.hud.setFare(null);
     if (running && f.navDist > 0) {
       const bearing = Math.atan2(f.navX - px, f.navZ - pz) - p.heading;
-      this.hud.setArrow(Math.atan2(Math.sin(bearing), Math.cos(bearing)));
+      const urgency = f.fare && f.navDist < 45 ? 'hot' : f.fare && f.navDist < 130 ? 'warn' : 'ok';
+      this.hud.setArrow(Math.atan2(Math.sin(bearing), Math.cos(bearing)), urgency);
     } else this.hud.setArrow(null);
     this.mapTimer -= dt;
     if (this.minimap && this.mapTimer <= 0) {
@@ -384,11 +503,13 @@ export class Game {
         this.hud.showToast(`${e.time}s to get there`);
         this.audio.chime();
         break;
-      case 'dropoff':
+      case 'dropoff': {
+        const stars = e.rating === 2 ? '★★★ ' : e.rating === 1 ? '★★ ' : '★ ';
         this.hud.showBanner(e.rating === 2 ? 'BOHAT TEZ! SHABASH!' : e.rating === 1 ? 'SHUKRIYA!' : 'THODA LATE...');
-        this.hud.showToast(`+Rs ${e.pay}${e.tip ? ` + Rs ${e.tip} tip` : ''} · +${e.bonus}s`);
+        this.hud.showToast(`${stars}+Rs ${e.pay}${e.tip ? ` + Rs ${e.tip} tip` : ''} · +${e.bonus}s`);
         this.audio.chime();
         break;
+      }
       case 'fareFailed':
         if (e.reason !== 'shift') this.hud.showToast(e.reason === 'time' ? 'TOO SLOW! Passenger got out' : 'Fare lost', false);
         break;
@@ -462,7 +583,11 @@ export class Game {
       case 'gameover':
       case 'complete':
         this.endPendingAt = this.clock + (e.type === 'complete' ? 1.5 : 1.2);
-        if (e.type === 'complete') this.audio.chime();
+        if (e.type === 'complete') {
+          this.addBank(300);
+          this.hud.showToast('CLIFTON REACHED! +RS 300 BANKED');
+          this.audio.chime();
+        }
         break;
     }
   }

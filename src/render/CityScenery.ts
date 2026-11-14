@@ -85,14 +85,28 @@ function instanced(group: THREE.Group, geo: THREE.BufferGeometry, mat: THREE.Mat
   group.add(m);
 }
 
+const CHUNK_SIZE = 260;
+
+interface Chunk {
+  cx: number;
+  cz: number;
+  group: THREE.Group;
+}
+
 /**
  * Draws the Real Saddar OSM open-city map: asphalt strips + junction caps,
  * raised pavements & Jehangir Park with road-facing kerbs, lane markings,
  * roundabouts, Empress Market, oriented buildings with shop signs and roof
- * clutter, poles/wires, neem trees, construction yards and ramps. Static; built once.
+ * clutter, poles/wires, neem trees, construction yards and ramps.
+ * Spatial 260m chunks cull buildings, poles, wires and trees beyond fog range.
  */
 export class CityScenery {
   readonly group = new THREE.Group();
+  private chunks: Chunk[] = [];
+  private chunkMap = new Map<string, Chunk>();
+  private ownedGeos: THREE.BufferGeometry[] = [];
+  private ownedMats: THREE.Material[] = [];
+  private ownedTex: THREE.Texture[] = [];
 
   constructor(lowSpec: boolean) {
     const map = cityMap();
@@ -118,8 +132,44 @@ export class CityScenery {
     }
   }
 
-  update(_time: number, _x: number, _z: number): void {
-    /* static scenery */
+  private chunkFor(x: number, z: number): THREE.Group {
+    const gx = Math.floor(x / CHUNK_SIZE);
+    const gz = Math.floor(z / CHUNK_SIZE);
+    const key = `${gx},${gz}`;
+    let c = this.chunkMap.get(key);
+    if (!c) {
+      const group = new THREE.Group();
+      c = { cx: (gx + 0.5) * CHUNK_SIZE, cz: (gz + 0.5) * CHUNK_SIZE, group };
+      this.chunkMap.set(key, c);
+      this.chunks.push(c);
+      this.group.add(group);
+    }
+    return c.group;
+  }
+
+  update(_time: number, x: number, z: number): void {
+    for (const c of this.chunks) {
+      c.group.visible = Math.abs(c.cx - x) < 460 && Math.abs(c.cz - z) < 460;
+    }
+  }
+
+  dispose(): void {
+    for (const g of this.ownedGeos) g.dispose();
+    for (const m of this.ownedMats) m.dispose();
+    for (const t of this.ownedTex) t.dispose();
+    this.group.traverse((o) => {
+      if (o instanceof THREE.Mesh || o instanceof THREE.LineSegments) {
+        o.geometry.dispose();
+        const mat = o.material;
+        if (Array.isArray(mat)) mat.forEach((m) => m.dispose());
+        else mat.dispose();
+      }
+    });
+    this.ownedGeos = [];
+    this.ownedMats = [];
+    this.ownedTex = [];
+    this.chunks = [];
+    this.chunkMap.clear();
   }
 
   private ground(map: CityMap): void {
@@ -129,6 +179,7 @@ export class CityScenery {
     const tex = dirtTexture().clone();
     tex.repeat.set(Math.round(w / 13), Math.round(d / 13));
     tex.needsUpdate = true;
+    this.ownedTex.push(tex);
     const g = new THREE.Mesh(new THREE.PlaneGeometry(w, d), new THREE.MeshLambertMaterial({ color: '#d8c39a', map: tex }));
     g.rotation.x = -Math.PI / 2;
     g.position.set((b.x0 + b.x1) / 2, -0.03, -(b.z0 + b.z1) / 2);
@@ -356,23 +407,47 @@ export class CityScenery {
   }
 
   private buildings(map: CityMap, shadow: boolean): void {
-    const mats: THREE.Matrix4[] = [];
-    const colors: THREE.Color[] = [];
-    const tanks: THREE.Matrix4[] = [];
-    const tankColors: THREE.Color[] = [];
-    const rooms: THREE.Matrix4[] = [];
-    const signs: THREE.Matrix4[][] = Array.from({ length: SHOP_SIGN_COUNT }, () => []);
-    const awnings: THREE.Matrix4[] = [];
-    const awningColors: THREE.Color[] = [];
+    type BChunk = {
+      group: THREE.Group;
+      mats: THREE.Matrix4[];
+      colors: THREE.Color[];
+      tanks: THREE.Matrix4[];
+      tankColors: THREE.Color[];
+      rooms: THREE.Matrix4[];
+      signs: THREE.Matrix4[][];
+      awnings: THREE.Matrix4[];
+      awningColors: THREE.Color[];
+    };
+    const buckets = new Map<THREE.Group, BChunk>();
+    const bucketFor = (x: number, z: number): BChunk => {
+      const group = this.chunkFor(x, z);
+      let b = buckets.get(group);
+      if (!b) {
+        b = {
+          group,
+          mats: [],
+          colors: [],
+          tanks: [],
+          tankColors: [],
+          rooms: [],
+          signs: Array.from({ length: SHOP_SIGN_COUNT }, () => []),
+          awnings: [],
+          awningColors: [],
+        };
+        buckets.set(group, b);
+      }
+      return b;
+    };
     const awningPalette = ['#1e6fb8', '#2e7d32', '#c62828', '#f9a825', '#6a1b9a', '#00838f'].map((c) => new THREE.Color(c));
 
     for (const b of map.buildings) {
+      const bk = bucketFor(b.x, b.z);
       const rng = new Rng(b.seed);
       const base = KERB_H;
       const ry = -b.heading;
       const s = Math.sin(b.heading), c = Math.cos(b.heading);
-      mats.push(place(b.x, base, -b.z, ry, b.hw * 2, b.h, b.hl * 2));
-      colors.push(new THREE.Color(BUILDING_COLORS[rng.int(0, BUILDING_COLORS.length - 1)]).multiplyScalar(rng.range(0.92, 1.05)));
+      bk.mats.push(place(b.x, base, -b.z, ry, b.hw * 2, b.h, b.hl * 2));
+      bk.colors.push(new THREE.Color(BUILDING_COLORS[rng.int(0, BUILDING_COLORS.length - 1)]).multiplyScalar(rng.range(0.92, 1.05)));
       const top = base + b.h;
       // Roof clutter: black / blue water tanks and a stair room.
       if (rng.chance(0.7)) {
@@ -382,8 +457,8 @@ export class CityScenery {
           const lr = rng.range(-b.hw + 1.2, b.hw - 1.2);
           const tx = b.x + lf * s + lr * c;
           const tz = b.z + lf * c - lr * s;
-          tanks.push(place(tx, top, -tz, ry, 1, rng.range(0.9, 1.2), 1));
-          tankColors.push(new THREE.Color(rng.chance(0.75) ? '#1d1f22' : '#2f6fb0'));
+          bk.tanks.push(place(tx, top, -tz, ry, 1, rng.range(0.9, 1.2), 1));
+          bk.tankColors.push(new THREE.Color(rng.chance(0.75) ? '#1d1f22' : '#2f6fb0'));
         }
       }
       if (rng.chance(0.5) && b.hw > 2.5 && b.hl > 2.5) {
@@ -391,7 +466,7 @@ export class CityScenery {
         const lr = rng.range(-b.hw + 2, b.hw - 2);
         const rx = b.x + lf * s + lr * c;
         const rz = b.z + lf * c - lr * s;
-        rooms.push(place(rx, top, -rz, ry, 2.6, 2.6, 2.6));
+        bk.rooms.push(place(rx, top, -rz, ry, 2.6, 2.6, 2.6));
       }
       // Street-facing sides get shop signs and an awning over the shutters.
       // Each face: [outward sim normal nx, nz, distance from center, wall half-length, local Three ry]
@@ -411,30 +486,46 @@ export class CityScenery {
         // Tangent along wall perpendicular to (nx, nz): (-nz, nx)
         const ax = fx + nx * 0.06 - nz * off, az = fz + nz * 0.06 + nx * off;
         const fRy = localRy + ry;
-        signs[rng.int(0, SHOP_SIGN_COUNT - 1)].push(place(ax, base + 3.15, -az, fRy, w, w / 4.6 + 0.2, 1));
+        bk.signs[rng.int(0, SHOP_SIGN_COUNT - 1)].push(place(ax, base + 3.15, -az, fRy, w, w / 4.6 + 0.2, 1));
         if (rng.chance(0.6)) {
-          awnings.push(place(fx + nx * 0.7, base + 2.55, -(fz + nz * 0.7), fRy, half * 1.8, 0.1, 1.4));
-          awningColors.push(awningPalette[rng.int(0, awningPalette.length - 1)]);
+          bk.awnings.push(place(fx + nx * 0.7, base + 2.55, -(fz + nz * 0.7), fRy, half * 1.8, 0.1, 1.4));
+          bk.awningColors.push(awningPalette[rng.int(0, awningPalette.length - 1)]);
         }
       }
     }
     const box = new THREE.BoxGeometry(1, 1, 1).translate(0, 0.5, 0);
-    instanced(this.group, box, makeFacadeMaterial(saddarFacadeAtlas()), mats, colors, shadow);
-    instanced(this.group, new THREE.CylinderGeometry(0.6, 0.6, 1.3, 10).translate(0, 0.65, 0), new THREE.MeshLambertMaterial(), tanks, tankColors, shadow);
-    instanced(this.group, box, new THREE.MeshLambertMaterial({ color: '#cfcac0' }), rooms, undefined, shadow);
+    const tankGeo = new THREE.CylinderGeometry(0.6, 0.6, 1.3, 10).translate(0, 0.65, 0);
     const plane = new THREE.PlaneGeometry(1, 1);
-    signs.forEach((m, i) => instanced(this.group, plane, new THREE.MeshLambertMaterial({ map: shopSignTexture(i) }), m));
     const awningGeo = new THREE.BoxGeometry(1, 1, 1);
     awningGeo.rotateX(-0.25);
-    instanced(this.group, awningGeo, new THREE.MeshLambertMaterial(), awnings, awningColors);
+    const facadeMat = makeFacadeMaterial(saddarFacadeAtlas());
+    const tankMat = new THREE.MeshLambertMaterial();
+    const roomMat = new THREE.MeshLambertMaterial({ color: '#cfcac0' });
+    const signMats = Array.from({ length: SHOP_SIGN_COUNT }, (_, i) => new THREE.MeshLambertMaterial({ map: shopSignTexture(i) }));
+    const awningMat = new THREE.MeshLambertMaterial();
+    this.ownedGeos.push(box, tankGeo, plane, awningGeo);
+    this.ownedMats.push(facadeMat, tankMat, roomMat, ...signMats, awningMat);
+
+    for (const bk of buckets.values()) {
+      instanced(bk.group, box, facadeMat, bk.mats, bk.colors, shadow);
+      instanced(bk.group, tankGeo, tankMat, bk.tanks, bk.tankColors, shadow);
+      instanced(bk.group, box, roomMat, bk.rooms, undefined, shadow);
+      bk.signs.forEach((m, i) => instanced(bk.group, plane, signMats[i], m));
+      instanced(bk.group, awningGeo, awningMat, bk.awnings, bk.awningColors);
+    }
   }
 
   /** Concrete poles along the kerbs with sagging bundles of wires. */
   private poles(map: CityMap): void {
-    const poles: THREE.Matrix4[] = [];
-    const wire: number[] = [];
+    const poleBuckets = new Map<THREE.Group, { poles: THREE.Matrix4[]; wire: number[] }>();
+    const pBucket = (x: number, z: number) => {
+      const g = this.chunkFor(x, z);
+      let b = poleBuckets.get(g);
+      if (!b) poleBuckets.set(g, (b = { poles: [], wire: [] }));
+      return b;
+    };
     const rng = new Rng(77);
-    const sagLine = (a: V3, b: V3, sag: number) => {
+    const sagLine = (wire: number[], a: V3, b: V3, sag: number) => {
       const n = 5;
       let prev = a;
       for (let i = 1; i <= n; i++) {
@@ -456,16 +547,17 @@ export class CityScenery {
           prev = null;
           continue;
         }
+        const bk = pBucket(p.x, p.z);
         const top: V3 = [p.x, KERB_H + H, -p.z];
-        poles.push(place(p.x, KERB_H, -p.z, -l.heading));
+        bk.poles.push(place(p.x, KERB_H, -p.z, -l.heading));
         if (prev && Math.hypot(top[0] - prev[0], top[2] - prev[2]) < 42) {
-          for (let k = 0; k < 3; k++) sagLine([prev[0], prev[1] - 0.35 * k, prev[2]], [top[0], top[1] - 0.35 * k, top[2]], rng.range(0.4, 0.9));
+          for (let k = 0; k < 3; k++) sagLine(bk.wire, [prev[0], prev[1] - 0.35 * k, prev[2]], [top[0], top[1] - 0.35 * k, top[2]], rng.range(0.4, 0.9));
         }
         // Now and then a wire straight across the street to the far facade.
         if (rng.chance(0.28)) {
           const far = map.linkPoint(l, s + rng.range(-3, 3), -(l.hw + SIDEWALK * 0.7));
           if (!map.isRoad(far.x, far.z)) {
-            sagLine([top[0], top[1] - 0.2, top[2]], [far.x, KERB_H + rng.range(5.5, 7.5), -far.z], rng.range(0.6, 1.3));
+            sagLine(bk.wire, [top[0], top[1] - 0.2, top[2]], [far.x, KERB_H + rng.range(5.5, 7.5), -far.z], rng.range(0.6, 1.3));
           }
         }
         prev = top;
@@ -475,10 +567,18 @@ export class CityScenery {
       new THREE.CylinderGeometry(0.1, 0.16, H, 6).translate(0, H / 2, 0),
       new THREE.BoxGeometry(1.6, 0.12, 0.12).translate(0, H - 0.3, 0),
     ]);
-    if (poleGeo) instanced(this.group, poleGeo, new THREE.MeshLambertMaterial({ color: '#a9a59b' }), poles);
-    const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.Float32BufferAttribute(wire, 3));
-    this.group.add(new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: '#2a2a2a' })));
+    const poleMat = new THREE.MeshLambertMaterial({ color: '#a9a59b' });
+    const wireMat = new THREE.LineBasicMaterial({ color: '#2a2a2a' });
+    if (poleGeo) this.ownedGeos.push(poleGeo);
+    this.ownedMats.push(poleMat, wireMat);
+    for (const [group, bk] of poleBuckets) {
+      if (poleGeo) instanced(group, poleGeo, poleMat, bk.poles);
+      if (bk.wire.length) {
+        const g = new THREE.BufferGeometry();
+        g.setAttribute('position', new THREE.Float32BufferAttribute(bk.wire, 3));
+        group.add(new THREE.LineSegments(g, wireMat));
+      }
+    }
   }
 
   /** Bare dirt construction yards with oriented site boards. */
@@ -557,6 +657,7 @@ export class CityScenery {
     const top = new THREE.Mesh(tops.build(), new THREE.MeshLambertMaterial({ vertexColors: true, map: dirtTexture() }));
     const tex = kerbStripeTexture().clone();
     tex.needsUpdate = true;
+    this.ownedTex.push(tex);
     const side = new THREE.Mesh(sides.build(), new THREE.MeshLambertMaterial({ vertexColors: true, map: tex }));
     for (const m of [top, side]) {
       m.castShadow = shadow;
@@ -567,9 +668,13 @@ export class CityScenery {
 
   /** Neem trees in Jehangir Park, along arterials and around the Empress Market plaza. */
   private trees(map: CityMap, shadow: boolean): void {
-    const trunks: THREE.Matrix4[] = [];
-    const crowns: THREE.Matrix4[] = [];
-    const crownColors: THREE.Color[] = [];
+    const treeBuckets = new Map<THREE.Group, { trunks: THREE.Matrix4[]; crowns: THREE.Matrix4[]; crownColors: THREE.Color[] }>();
+    const tBucket = (x: number, z: number) => {
+      const g = this.chunkFor(x, z);
+      let b = treeBuckets.get(g);
+      if (!b) treeBuckets.set(g, (b = { trunks: [], crowns: [], crownColors: [] }));
+      return b;
+    };
     const placed: Array<[number, number]> = [];
     const rng = new Rng(31);
     const add = (x: number, z: number, minGap = 6) => {
@@ -583,10 +688,11 @@ export class CityScenery {
         if ((x - px) ** 2 + (z - pz) ** 2 < minGap * minGap) return;
       }
       placed.push([x, z]);
+      const bk = tBucket(x, z);
       const s = rng.range(0.8, 1.25);
-      trunks.push(place(x, KERB_H, -z, 0, s, s, s));
-      crowns.push(place(x, KERB_H + 3.6 * s, -z, rng.range(0, 6), s * rng.range(0.9, 1.2), s, s * rng.range(0.9, 1.2)));
-      crownColors.push(new THREE.Color().setHSL(rng.range(0.22, 0.28), 0.35, rng.range(0.3, 0.38)));
+      bk.trunks.push(place(x, KERB_H, -z, 0, s, s, s));
+      bk.crowns.push(place(x, KERB_H + 3.6 * s, -z, rng.range(0, 6), s * rng.range(0.9, 1.2), s, s * rng.range(0.9, 1.2)));
+      bk.crownColors.push(new THREE.Color().setHSL(rng.range(0.22, 0.28), 0.35, rng.range(0.3, 0.38)));
     };
     // Jehangir Park scatter.
     for (const slab of map.slabs) {
@@ -630,8 +736,14 @@ export class CityScenery {
     }
     const trunk = new THREE.CylinderGeometry(0.16, 0.24, 3, 6).translate(0, 1.5, 0);
     const crown = new THREE.IcosahedronGeometry(2.2, 0);
-    instanced(this.group, trunk, new THREE.MeshLambertMaterial({ color: '#6b5440' }), trunks, undefined, shadow);
-    instanced(this.group, crown, new THREE.MeshLambertMaterial({ flatShading: true }), crowns, crownColors, shadow);
+    const trunkMat = new THREE.MeshLambertMaterial({ color: '#6b5440' });
+    const crownMat = new THREE.MeshLambertMaterial({ flatShading: true });
+    this.ownedGeos.push(trunk, crown);
+    this.ownedMats.push(trunkMat, crownMat);
+    for (const [group, bk] of treeBuckets) {
+      instanced(group, trunk, trunkMat, bk.trunks, undefined, shadow);
+      instanced(group, crown, crownMat, bk.crowns, bk.crownColors, shadow);
+    }
   }
 }
 

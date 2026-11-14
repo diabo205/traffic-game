@@ -10,6 +10,7 @@ export class TouchControls {
   private buttonsPad: HTMLDivElement;
   private stickPad: HTMLDivElement;
   private knob: HTMLDivElement;
+  private gasBtn: HTMLButtonElement;
   private mode: 'buttons' | 'joystick' = 'buttons';
   private stickPointer: number | null = null;
   private stickOrigin = 0;
@@ -40,14 +41,21 @@ export class TouchControls {
       this.hold('DRIFT', 'tbtn small drift', (on) => (state.drift = on), 'Handbrake drift'),
     );
     const pedals = el('div', 'pedals');
+    this.gasBtn = this.hold('GAS', 'tbtn pedal gas', (on) => (state.gas = on), 'Accelerate');
     pedals.append(
       this.hold('BRAKE', 'tbtn pedal brake', (on) => (state.brake = on), 'Brake / reverse'),
-      this.hold('GAS', 'tbtn pedal gas', (on) => (state.gas = on), 'Accelerate'),
+      this.gasBtn,
     );
     right.append(aux, pedals);
 
     this.root.append(left, right);
     this.setMode('buttons');
+  }
+
+  setPedalCues(launchReady: boolean, dashReady: boolean, autoGas: boolean): void {
+    this.gasBtn.classList.toggle('launch-ready', launchReady);
+    this.gasBtn.classList.toggle('dash-ready', dashReady);
+    this.gasBtn.classList.toggle('auto-on', autoGas);
   }
 
   setVisible(v: boolean): void {
