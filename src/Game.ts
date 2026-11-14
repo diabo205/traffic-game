@@ -430,6 +430,9 @@ export class Game {
       case 'street':
         this.hud.showBanner(e.name.toUpperCase());
         break;
+      case 'pinned':
+        this.hud.showToast(this.input.lastSource === 'touch' ? 'STUCK? Hold BRAKE to back up' : this.input.lastSource === 'gamepad' ? 'STUCK? Hold LT to back up' : 'STUCK? Hold S / ↓ to back up', false);
+        break;
       case 'kerb':
         this.audio.pothole(e.severity * 0.4);
         break;

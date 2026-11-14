@@ -1,0 +1,13 @@
+accel            t50=3.82 top=74.6 stop=nullm wall=0s wallLoss=null% stuck=0s hp=82 crashes=0 nan=false
+accel-city       t50=3.63 top=77.8 stop=nullm wall=0s wallLoss=null% stuck=0s hp=100 crashes=0 nan=false
+brake            t50=3.82 top=74.6 stop=12.3m wall=0s wallLoss=null% stuck=0s hp=100 crashes=0 nan=false
+coast            t50=3.82 top=71.9 stop=nullm wall=0s wallLoss=null% stuck=0s hp=83 crashes=0 nan=false
+steer-response   t50=3.63 top=68.4 stop=nullm wall=0.53s wallLoss=70% stuck=0s hp=81.5 crashes=1 nan=false
+wall-graze       t50=3.82 top=72.1 stop=nullm wall=0.03s wallLoss=76% stuck=0s hp=75.4 crashes=3 nan=false
+wall-graze-city  t50=3.63 top=51.4 stop=nullm wall=0.93s wallLoss=74% stuck=4.5s hp=89.7 crashes=1 nan=false
+wall-escape      t50=null top=46.3 stop=nullm wall=0.52s wallLoss=66% stuck=0.35s hp=89.8 crashes=1 nan=false
+drift            t50=3.63 top=73.4 stop=nullm wall=0s wallLoss=null% stuck=0s hp=100 crashes=0 nan=false
+launch           t50=2.8 top=66.1 stop=nullm wall=0s wallLoss=null% stuck=0.07s hp=100 crashes=0 nan=false
+reverse-flip     t50=null top=42.9 stop=3.6m wall=0s wallLoss=null% stuck=0.33s hp=100 crashes=0 nan=false
+traffic-run      t50=3.82 top=74.6 stop=nullm wall=0.02s wallLoss=65% stuck=0s hp=0 crashes=9 nan=false
+chaos-mash       t50=null top=34.9 stop=0.8m wall=0.02s wallLoss=83% stuck=0.77s hp=86.2 crashes=2 nan=false

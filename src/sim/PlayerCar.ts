@@ -16,7 +16,7 @@ export const ALTO = {
   reverseAccel: 3.2,
   maxReverse: 5.5,
   rollingDrag: 0.28,
-  aeroDrag: 0.00095,
+  aeroDrag: 0.0006,
   maxSteerLow: 0.6,
   steerSpeedFalloff: 0.065,
   steerRate: 3.2,
@@ -33,12 +33,32 @@ export const MOVES = {
   boostAccel: 9,
   boostTopSpeed: 1.28,
   boostCooldown: 1.4,
+  /** dash has its own, longer cooldown so tapping the gas never beats holding it */
+  dashCooldown: 4,
+  /** dash only fires below this fraction of top speed (a pick-me-up out of corners) */
+  dashMaxSpeed: 0.55,
+  /** how many seconds pinned at a wall with the gas held before World hints to reverse */
+  pinnedHint: 1.2,
   /** quick double-tap of the gas: release then re-press within this (s) */
   dashWindow: 0.28,
   /** hold brake + gas at a standstill at least this long to launch (s) */
   launchCharge: 0.35,
   /** gravity for jumps (m/s^2, a bit heavier than real for snappy airtime) */
   gravity: 17,
+} as const;
+
+/** Wall contact feel. */
+export const WALL = {
+  /** contact remembered for this many ticks (lets steering pivot you free) */
+  memoryTicks: 6,
+  /** hits with |cos(angle to normal)| below this count as glancing (~64° off the wall) */
+  glanceMax: 0.9,
+  /** fraction of the heading error to the wall tangent removed per contact tick */
+  align: 0.35,
+  /** speed kept per contact tick while scraping */
+  scrapeKeep: 0.997,
+  /** minimum speed used for steering yaw while touching a wall (m/s) */
+  pivotSpeed: 3.2,
 } as const;
 
 export type BoostKind = 'launch' | 'dash' | 'drift';
@@ -86,11 +106,16 @@ export class PlayerCar {
   /** set for one tick when a drift ends: its length in seconds */
   driftEnded = 0;
   private launchCharge = 0;
+  private dashCooldown = 0;
+  /** seconds pinned against a wall with the gas held */
+  pinnedTime = 0;
   private sinceRelease = 1e9;
   private prevThrottle = 0;
   private prevBrake = 0;
   /** vertical speed of the ground under the wheels (ramp climb) */
   private groundVy = 0;
+  /** ticks since the world last reported wall contact (counts down) */
+  wallContact = 0;
 
   horn = false;
   dipper = false;
@@ -137,10 +162,14 @@ export class PlayerCar {
     this.handbrake = false;
     this.boostFired = null;
     this.driftEnded = 0;
+    if (this.wallContact > 0) this.wallContact--;
     this.launchCharge = 0;
+    this.dashCooldown = 0;
+    this.pinnedTime = 0;
     this.sinceRelease = 1e9;
     this.prevThrottle = this.prevBrake = 0;
     this.groundVy = 0;
+    this.wallContact = 0;
   }
 
   obb(): Obb {
@@ -182,6 +211,36 @@ export class PlayerCar {
     this.prevBump = this.bump;
   }
 
+  /**
+   * The world resolved a static collision with surface normal (nx, nz) and
+   * already removed the velocity into it. Arcade wall feel: a glancing hit
+   * swings the nose along the wall so the car slides on instead of
+   * re-steering itself into the wall every tick (sticky walls).
+   * Head-on hits keep the bounce; steering then pivots the car free.
+   */
+  scrapeWall(nx: number, nz: number): void {
+    this.wallContact = WALL.memoryTicks;
+    if (this.airborne) return;
+    const fx = Math.sin(this.heading), fz = Math.cos(this.heading);
+    const into = -(fx * nx + fz * nz); // 1 = nose straight into the wall
+    if (into <= 0 || into > WALL.glanceMax) return;
+    // Tangent along the wall closest to where the nose already points.
+    let tx = -nz, tz = nx;
+    if (tx * fx + tz * fz < 0) {
+      tx = -tx;
+      tz = -tz;
+    }
+    const target = Math.atan2(tx, tz);
+    let d = target - this.heading;
+    d = Math.atan2(Math.sin(d), Math.cos(d));
+    // The shallower the hit, the harder it straightens out along the wall.
+    this.heading += d * Math.min(1, WALL.align + (1 - into) * 0.4);
+    // Keep the speed we still have, now pointing along the wall.
+    const { vx, vz } = this.velocity();
+    this.setVelocity(vx, vz);
+    this.speed *= WALL.scrapeKeep;
+  }
+
   private boost(kind: BoostKind, seconds: number): void {
     if (this.boostCooldown > 0) return;
     this.boostTime = Math.max(this.boostTime, seconds);
@@ -205,6 +264,7 @@ export class PlayerCar {
 
     // --- Arcade moves -----------------------------------------------------------
     this.boostCooldown = Math.max(0, this.boostCooldown - dt);
+    this.dashCooldown = Math.max(0, this.dashCooldown - dt);
     this.boostTime = Math.max(0, this.boostTime - dt);
     // Handbrake drift: gas + brake together while moving fast.
     const wasHandbrake = this.handbrake;
@@ -228,8 +288,9 @@ export class PlayerCar {
     // Dash: a quick re-tap of the gas while rolling.
     if (throttle < 0.2 && this.prevThrottle >= 0.2) this.sinceRelease = 0;
     else this.sinceRelease += dt;
-    if (!air && throttle > 0.8 && this.prevThrottle <= 0.8 && this.sinceRelease < MOVES.dashWindow && v > 1 && v < vTop * 0.8 && brake < 0.2) {
+    if (!air && throttle > 0.8 && this.prevThrottle <= 0.8 && this.sinceRelease < MOVES.dashWindow && v > 1 && v < vTop * MOVES.dashMaxSpeed && brake < 0.2 && this.dashCooldown <= 0 && this.boostCooldown <= 0) {
       this.boost('dash', 0.6);
+      this.dashCooldown = MOVES.dashCooldown;
     }
     this.prevThrottle = throttle;
     this.prevBrake = brake;
@@ -253,8 +314,11 @@ export class PlayerCar {
     } else if (v >= -0.2) {
       // Forward gear.
       const ratio = Math.max(v, 0) / top;
-      const drive = ratio < 1 ? 1 - ratio * ratio : -(ratio - 1) * 4; // over the limit -> engine braking
-      a += throttle * ALTO.driveAccel * drive;
+      // Cubic falloff: strong pull through the mid-range so the car actually
+      // reaches the zone limit instead of creeping up to it forever.
+      const drive = ratio < 1 ? 1 - ratio * ratio * ratio : -(ratio - 1) * 4; // over the limit -> engine braking
+      // Part throttle (sticks, triggers) responds a little more eagerly.
+      a += Math.pow(throttle, 0.7) * ALTO.driveAccel * drive;
       if (ratio > 1 && throttle < 0.05) a -= (ratio - 1) * 6;
       if (brake > 0.05) {
         // Arcade stop: brakes bite harder as you slow, so you stop on a dime.
@@ -297,7 +361,10 @@ export class PlayerCar {
     } else {
       const grip = ALTO.maxLateralAccel * this.traction;
       const d = this.drift;
-      yaw = ((nv * Math.tan(this.steerAngle)) / ALTO.wheelBase) * (1 + d * 0.9);
+      // Pinned against a wall: let gas/brake + steer pivot the nose off it.
+      const pinned = this.wallContact > 0 && Math.abs(nv) < WALL.pivotSpeed && (throttle > 0.1 || brake > 0.1);
+      const yawV = pinned ? (nv < -0.2 || (brake > 0.1 && throttle < 0.1) ? -WALL.pivotSpeed : WALL.pivotSpeed) : nv;
+      yaw = ((yawV * Math.tan(this.steerAngle)) / ALTO.wheelBase) * (1 + d * 0.9);
       const maxYaw = grip / Math.max(Math.abs(nv), 1);
       // Loose rear (drift) or low traction: the car rotates more freely than it changes course.
       const loose = Math.max(d, this.traction < 0.6 ? 1 : 0);
@@ -353,6 +420,9 @@ export class PlayerCar {
     const k = 160, c = 11;
     this.bumpVel += (-k * this.bump - c * this.bumpVel) * dt;
     this.bump += this.bumpVel * dt;
+
+    if (this.wallContact > 0 && throttle > 0.5 && brake < 0.2 && Math.abs(this.speed) < 1) this.pinnedTime += dt;
+    else this.pinnedTime = 0;
 
     // Reset per-tick surface modifiers; World re-applies them.
     this.traction = 1;
