@@ -126,7 +126,7 @@ export class CityTraffic {
     if (this.spawnLinks.length === 0) return;
     const rng = this.rng;
     const link = this.map.links[rng.pick(this.spawnLinks)];
-    if (link.len < 12) return;
+    if (link.len < 12 || link.turnaround) return;
     const kind = rng.weighted(WEIGHTS);
     // Hand carts keep to the kerb lane of multi-lane streets.
     if (kind === 'cart' && link.lanes < 2) return;
@@ -198,8 +198,13 @@ export class CityTraffic {
       weights.push(turn === 'straight' ? 3 : 1.4);
     }
     if (options.length === 0) {
-      options.push(link.reverse);
-      weights.push(1);
+      if (link.reverse >= 0) {
+        options.push(link.reverse);
+        weights.push(1);
+      } else if (node.out.length > 0) {
+        options.push(node.out[0]);
+        weights.push(1);
+      }
     }
     let total = 0;
     for (const w of weights) total += w;
@@ -302,21 +307,26 @@ export class CityTraffic {
         const next = m.links[n.nextLink];
         const node = m.nodes[link.to];
         const turn = m.turnBetween(link, next);
-        const vTurn = node.roundabout ? ROUNDABOUT_SPEED : turn === 'straight' ? Infinity : TURN_SPEED;
-        if (vTurn < Infinity) target = Math.min(target, Math.sqrt(vTurn * vTurn + 2 * spec.decel * 0.6 * Math.max(0, remaining - 2)));
-        // Take turns at the junction: wait while traffic from another approach is in it.
-        if (remaining < 14) {
-          const occ = occupants.get(node.id);
-          const busy = occ?.some((from) => from !== link.id && !(turn === 'straight' && from === link.reverse)) ?? false;
-          if (busy && n.waitTime < MAX_WAIT) {
-            stopGap = Math.min(stopGap, remaining - 2.5);
-            if (n.speed < 0.5) n.waitTime += dt;
-          } else if (!busy) n.waitTime = 0;
+        if (!node.bend) {
+          const vTurn = node.roundabout ? ROUNDABOUT_SPEED : turn === 'straight' ? Infinity : TURN_SPEED;
+          if (vTurn < Infinity) target = Math.min(target, Math.sqrt(vTurn * vTurn + 2 * spec.decel * 0.6 * Math.max(0, remaining - 2)));
+          // Take turns at junctions; vehicles circulating inside a roundabout ring don't stop for ring chords.
+          const circulating = node.roundabout && m.nodes[link.from].roundabout && m.nodes[next.to].roundabout;
+          if (remaining < 14 && !circulating) {
+            const occ = occupants.get(node.id);
+            const busy = occ?.some((from) => from !== link.id && !(turn === 'straight' && link.reverse >= 0 && from === link.reverse)) ?? false;
+            if (busy && n.waitTime < MAX_WAIT) {
+              stopGap = Math.min(stopGap, remaining - 2.5);
+              if (n.speed < 0.5) n.waitTime += dt;
+            } else if (!busy) n.waitTime = 0;
+          }
         }
       } else {
         const node = m.nodes[n.path.node];
-        if (node.roundabout) target = Math.min(target, ROUNDABOUT_SPEED);
-        else if (n.path.turn !== 'straight') target = Math.min(target, TURN_SPEED);
+        if (!node.bend) {
+          if (node.roundabout) target = Math.min(target, ROUNDABOUT_SPEED);
+          else if (n.path.turn !== 'straight') target = Math.min(target, TURN_SPEED);
+        }
       }
 
       // ---- Whatever is in front (other NPCs and the player) -------------------
@@ -432,7 +442,7 @@ export class CityTraffic {
         let offT = m.laneOffset(l, n.lane);
         if (n.yieldTime > 0 && n.lane === l.lanes - 1 && l.rampLane !== n.lane) {
           // Squeeze up against the kerb.
-          const room = l.median / 2 + l.lanes * l.laneW - offT - spec.hw - 0.2;
+          const room = l.hw - offT - spec.hw - 0.2;
           offT += Math.max(0, Math.min(1.3, room));
         }
         const before = n.lat;

@@ -3,7 +3,7 @@ import type { Fares } from '../sim/city/Fares';
 
 const TIER = ['#3ddc84', '#ffc23d', '#ff4d4d'];
 /** Pixels per metre in the pre-drawn street layer. */
-const RES = 1;
+const RES = 0.6;
 
 /** Heading-up minimap: streets, route line, passengers and destination. */
 export class Minimap {
@@ -11,7 +11,7 @@ export class Minimap {
   private ctx: CanvasRenderingContext2D | null;
   private layer: HTMLCanvasElement;
   private size = 150;
-  private zoom = 0.75;
+  private zoom = 0.7;
 
   constructor(private readonly map: CityMap) {
     this.el = document.createElement('canvas');
@@ -30,16 +30,58 @@ export class Minimap {
     if (g) {
       g.fillStyle = '#5b5143';
       g.fillRect(0, 0, this.layer.width, this.layer.height);
+
+      // Jehangir Park
+      g.fillStyle = '#738f4e';
+      for (const slab of map.slabs) {
+        if (slab.kind !== 1 || slab.pts.length < 6) continue;
+        g.beginPath();
+        g.moveTo((slab.pts[0] - b.x0) * RES, (b.z1 - slab.pts[1]) * RES);
+        for (let i = 2; i < slab.pts.length; i += 2) {
+          g.lineTo((slab.pts[i] - b.x0) * RES, (b.z1 - slab.pts[i + 1]) * RES);
+        }
+        g.closePath();
+        g.fill();
+      }
+
+      // Roads stroked with round caps so intersections fuse cleanly.
+      g.strokeStyle = '#d9d4c8';
+      g.lineCap = 'round';
+      for (const s of map.roadSegs) {
+        g.lineWidth = s.hw * 2 * RES;
+        g.beginPath();
+        g.moveTo((s.ax - b.x0) * RES, (b.z1 - s.az) * RES);
+        g.lineTo((s.bx - b.x0) * RES, (b.z1 - s.bz) * RES);
+        g.stroke();
+      }
+
       g.fillStyle = '#d9d4c8';
-      for (const r of map.roadRects) g.fillRect((r.x0 - b.x0) * RES, (b.z1 - r.z1) * RES, (r.x1 - r.x0) * RES, (r.z1 - r.z0) * RES);
+      for (const loop of map.roundaboutLoops) {
+        const pts = loop.pts;
+        if (pts.length < 6) continue;
+        g.beginPath();
+        g.moveTo((pts[0] - b.x0) * RES, (b.z1 - pts[1]) * RES);
+        for (let i = 2; i < pts.length; i += 2) g.lineTo((pts[i] - b.x0) * RES, (b.z1 - pts[i + 1]) * RES);
+        g.closePath();
+        g.fill();
+      }
+
       g.fillStyle = '#7f9a55';
       for (const s of map.islands) {
         g.beginPath();
         g.arc((s.x - b.x0) * RES, (b.z1 - s.z) * RES, s.r * RES, 0, Math.PI * 2);
         g.fill();
       }
+
       g.fillStyle = '#c9a25a';
-      for (const l of map.landmarks) g.fillRect((l.rect.x0 - b.x0) * RES, (b.z1 - l.rect.z1) * RES, (l.rect.x1 - l.rect.x0) * RES, (l.rect.z1 - l.rect.z0) * RES);
+      for (const l of map.landmarks) {
+        const o = l.obb;
+        g.save();
+        g.translate((o.x - b.x0) * RES, (b.z1 - o.z) * RES);
+        g.rotate(o.heading);
+        g.fillRect(-o.hw * RES, -o.hl * RES, o.hw * 2 * RES, o.hl * 2 * RES);
+        g.restore();
+      }
     }
   }
 

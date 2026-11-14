@@ -39,7 +39,9 @@ export function makeFacadeMaterial(atlas: THREE.Texture, key = 'saddarFacade', p
           #endif
           fw = modelMatrix * fw;
           vec3 fn = normalize(nm * objectNormal);
-          float along = abs(fn.x) > 0.5 ? fw.z * sign(fn.x) : fw.x * -sign(fn.z);
+          vec2 horiz = vec2(-fn.z, fn.x);
+          float hLen = length(horiz);
+          float along = hLen > 1e-4 ? dot(fw.xz, horiz / hLen) : 0.0;
           vFacade = vec3(along, fw.y, fn.y > 0.5 ? 1.0 : 0.0);
           #ifdef USE_INSTANCING
             vSeed = float(gl_InstanceID);

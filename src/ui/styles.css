@@ -545,6 +545,16 @@ button { font-family: var(--display); cursor: pointer; }
 .ctl p { margin: 2px 0; font-size: 17px; font-weight: 600; color: #34446b; }
 .ctl b { color: var(--navy); font-weight: 800; }
 .ctl.moves { grid-column: 1 / -1; border-left-color: var(--lime-2); }
+.osm-credit {
+  margin-top: auto;
+  padding-top: 16px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  opacity: 0.8;
+  text-align: center;
+}
 
 /* ---- Pause ---- */
 .screen.pause { display: flex; background: rgba(6, 12, 30, 0.45); }

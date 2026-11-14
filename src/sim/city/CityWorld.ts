@@ -6,7 +6,7 @@ import { NPC_SPECS } from '../TrafficManager';
 import { trafficDamage } from '../World';
 import type { GameOverReason, GamePhase, InputFrame, NpcView, Obb, SimEvent } from '../types';
 import { cityMap } from './cityMap';
-import type { CityMap, Rect } from './cityMap';
+import type { CityMap } from './cityMap';
 import { CityTraffic } from './CityTraffic';
 import { Fares } from './Fares';
 import { Props } from './Props';
@@ -40,8 +40,8 @@ const TOW_COST = 300;
 const TOW_TIME = 10;
 
 /**
- * Open-world Saddar: free driving on a street grid with junctions, a
- * roundabout, solid buildings, kerbs and graph-following traffic.
+ * Open-world Saddar: free driving on a street network with junctions,
+ * roundabouts, solid buildings, kerbs and graph-following traffic.
  * Same contract as the route World: fixed-step, deterministic, no DOM/three.
  */
 export class CityWorld {
@@ -75,10 +75,16 @@ export class CityWorld {
     this.fares = new Fares(this.seed, this.map);
     this.props = new Props(this.seed, this.map);
     this.level = new CityLevel(this.fares);
-    // Start on Abdullah Haroon Road, just north of the Empress Market roundabout, heading north.
-    const start = this.map.links.find((l) => l.name === 'Abdullah Haroon Road' && l.dz > 0.5 && this.map.nodes[l.from].roundabout);
+    // Start on Shahrah-e-Liaquat heading NE toward Empress Market Plaza.
+    const em = this.map.landmarks.find((l) => l.kind === 'empress');
+    const emX = em ? em.obb.x : -79;
+    const emZ = em ? em.obb.z : 225;
+    const start =
+      this.map.links.find(
+        (l) => l.name.startsWith('Shahrah-e-Liaquat') && l.dx > 0.5 && l.dz > 0.2 && l.len >= 50 && Math.hypot(l.sx - emX, l.sz - emZ) < 160,
+      ) ?? this.map.links.find((l) => !l.turnaround && l.len >= 40 && l.lanes >= 2);
     if (start) {
-      const p = this.map.linkPoint(start, 8, this.map.laneOffset(start, start.lanes - 1));
+      const p = this.map.linkPoint(start, Math.min(20, start.len * 0.35), this.map.laneOffset(start, start.lanes - 1));
       this.startX = p.x;
       this.startZ = p.z;
       this.startHeading = start.heading;
@@ -210,7 +216,7 @@ export class CityWorld {
     const p = this.player;
     // Two passes resolve corners where two buildings meet.
     for (let pass = 0; pass < 2; pass++) {
-      this.map.forEachSolidNear(p.x, p.z, 6, (r) => this.solid(rectObb(r)));
+      this.map.forEachSolidNear(p.x, p.z, 6, (b) => this.solid(b));
       for (const isl of this.map.islands) this.circle(isl.x, isl.z, isl.r);
     }
   }
@@ -386,6 +392,3 @@ export class CityWorld {
   }
 }
 
-function rectObb(r: Rect): Obb {
-  return { x: (r.x0 + r.x1) / 2, z: (r.z0 + r.z1) / 2, hw: (r.x1 - r.x0) / 2, hl: (r.z1 - r.z0) / 2, heading: 0 };
-}

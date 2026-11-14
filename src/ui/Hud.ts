@@ -242,7 +242,9 @@ export class Hud {
         <p><b>DRIFT</b> gas + brake while turning — power out for a boost</p>
         <p><b>LAUNCH</b> hold brake + gas when stopped, let go of the brake</p>
         <p><b>DASH</b> tap the gas twice quickly · <b>HORN</b> clears the lane</p></div>`;
-    this.settingsScreen.append(sBack, sHead, tabs, this.paneSound, this.paneControls);
+    const osmCredit = div('osm-credit');
+    osmCredit.textContent = 'Map data © OpenStreetMap contributors';
+    this.settingsScreen.append(sBack, sHead, tabs, this.paneSound, this.paneControls, osmCredit);
 
     // ---- Pause --------------------------------------------------------------------------------------
     this.pauseScreen = div('screen pause hidden');

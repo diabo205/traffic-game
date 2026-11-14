@@ -1,9 +1,8 @@
-import { obbOverlap } from '../math';
+import { obbOverlap, pointObbDistance } from '../math';
 import { ALTO } from '../PlayerCar';
 import type { PlayerCar } from '../PlayerCar';
 import { Rng } from '../rng';
 import type { SimEvent } from '../types';
-import { halfWidth } from './cityMap';
 import type { CityMap } from './cityMap';
 
 /**
@@ -68,11 +67,12 @@ export class Props {
     this.rng = new Rng(seed ^ 0x9e0b);
     // Placement is fixed (not seed dependent) so the street looks the same for everyone.
     const pr = new Rng(0x3f1c);
-    const add = (kind: PropKind, x: number, z: number, heading: number) => {
-      // Keep off buildings.
+    const add = (kind: PropKind, x: number, z: number, heading: number, allowRoad = false) => {
+      if (!allowRoad && (map.isRoad(x, z) || map.nearRoad(x, z, 0.8))) return;
+      // Keep off oriented buildings & landmarks.
       let blocked = false;
-      map.forEachSolidNear(x, z, 2, (r) => {
-        if (x > r.x0 - 0.6 && x < r.x1 + 0.6 && z > r.z0 - 0.6 && z < r.z1 + 0.6) blocked = true;
+      map.forEachSolidNear(x, z, 3, (b) => {
+        if (pointObbDistance(x, z, b) < 0.7) blocked = true;
       });
       if (blocked) return;
       this.props.push({
@@ -97,9 +97,9 @@ export class Props {
 
     // Pavement clutter in front of the shops.
     for (const l of map.links) {
-      if (l.len < 30) continue;
-      const off = halfWidth(l.cls) + 2.9;
-      for (let s = 14 + pr.range(0, 8); s < l.len - 10; s += pr.range(16, 30)) {
+      if (l.turnaround || l.len < 30) continue;
+      const off = l.hw + 2.9;
+      for (let s = 14 + pr.range(0, 8); s < l.len - 10; s += pr.range(20, 38)) {
         const p = map.linkPoint(l, s, off);
         const roll = pr.next();
         const along = l.heading;
@@ -123,15 +123,19 @@ export class Props {
       if (l.rampLane < 0) continue;
       for (let k = 0; k < 3; k++) {
         const p = map.linkPoint(l, l.rampS0 - 5 - k * 4, map.laneOffset(l, l.rampLane) + (k % 2 ? 0.8 : -0.8));
-        add('cone', p.x, p.z, 0);
+        add('cone', p.x, p.z, 0, true);
       }
     }
-    // The construction yard: cones, drums and crates scattered about.
+    // The oriented construction yards: cones, drums and crates scattered about.
     for (const y of map.yards) {
+      const ys = Math.sin(y.heading), yc = Math.cos(y.heading);
       for (let k = 0; k < 26; k++) {
-        const x = pr.range(y.x0 + 3, y.x1 - 3), z = pr.range(y.z0 + 3, y.z1 - 3);
+        const lf = pr.range(-(y.hl - 3), y.hl - 3);
+        const lr = pr.range(-(y.hw - 3), y.hw - 3);
+        const x = y.x + lf * ys + lr * yc;
+        const z = y.z + lf * yc - lr * ys;
         if (map.rampHeight(x, z) > 0) continue;
-        add(pr.pick(['cone', 'cone', 'drum', 'crate'] as const), x, z, pr.range(0, 6));
+        add(pr.pick(['cone', 'cone', 'drum', 'crate'] as const), x, z, y.heading + pr.range(0, 6));
       }
     }
   }
@@ -200,19 +204,37 @@ export class Props {
 
   private fly(p: Prop, dt: number): void {
     p.vy -= GRAVITY * dt;
-    const nx = p.x + p.vx * dt, nz = p.z + p.vz * dt;
-    // Bounce off buildings.
-    let hitX = false, hitZ = false;
-    this.map.forEachSolidNear(nx, nz, 1, (r) => {
-      if (nx > r.x0 && nx < r.x1 && nz > r.z0 && nz < r.z1) {
-        if (p.x <= r.x0 || p.x >= r.x1) hitX = true;
-        else hitZ = true;
+    let nx = p.x + p.vx * dt, nz = p.z + p.vz * dt;
+    // Bounce off oriented buildings & landmarks.
+    this.map.forEachSolidNear(nx, nz, 1.5, (b) => {
+      const s = Math.sin(b.heading), c = Math.cos(b.heading);
+      const dx = nx - b.x, dz = nz - b.z;
+      const lf = dx * s + dz * c;
+      const lr = dx * c - dz * s;
+      if (Math.abs(lf) < b.hl && Math.abs(lr) < b.hw) {
+        const pf = b.hl - Math.abs(lf);
+        const pr = b.hw - Math.abs(lr);
+        let bnx: number, bnz: number;
+        if (pr < pf) {
+          const sg = lr >= 0 ? 1 : -1;
+          bnx = sg * c;
+          bnz = sg * -s;
+        } else {
+          const sg = lf >= 0 ? 1 : -1;
+          bnx = sg * s;
+          bnz = sg * c;
+        }
+        const rv = p.vx * bnx + p.vz * bnz;
+        if (rv < 0) {
+          p.vx -= 1.35 * rv * bnx;
+          p.vz -= 1.35 * rv * bnz;
+        }
+        nx = p.x;
+        nz = p.z;
       }
     });
-    if (hitX) p.vx *= -0.35;
-    else p.x = nx;
-    if (hitZ) p.vz *= -0.35;
-    else p.z = nz;
+    p.x = nx;
+    p.z = nz;
     p.y += p.vy * dt;
     p.heading += p.spin * dt;
     p.tumble += p.tumbleRate * dt;

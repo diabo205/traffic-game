@@ -1,7 +1,6 @@
 import type { PlayerCar } from '../PlayerCar';
 import { Rng } from '../rng';
 import type { SimEvent } from '../types';
-import { halfWidth } from './cityMap';
 import type { CityMap } from './cityMap';
 
 /**
@@ -51,27 +50,10 @@ export interface Fare {
   alight: number;
 }
 
-const PLACE_NAMES = [
-  'Empress Market',
-  'Bohri Bazaar',
-  'Zainab Market',
-  'Regal Chowk',
-  "St. Patrick's Cathedral",
-  'Saddar Dawakhana',
-  'Paradise Cinema',
-  'Cantt Station Bus Stop',
-  'Burns Road Food Street',
-  'Lucky Star Hotel',
-  'Jahangir Park',
-  'Sindh Secretariat',
-  'Capri Cinema',
-  'Pakistan Chowk',
-];
-
 const WAITING = 6;
 const SPAWN_MIN = 35;
-const SPAWN_MAX = 170;
-const DESPAWN = 240;
+const SPAWN_MAX = 185;
+const DESPAWN = 260;
 export const SHIFT_START = 90;
 const BOARD_TIME = 0.7;
 const ALIGHT_TIME = 0.4;
@@ -104,40 +86,41 @@ export class Fares {
   constructor(seed: number, private readonly map: CityMap) {
     this.rng = new Rng(seed ^ 0x7a71);
     for (const l of map.links) {
-      if (l.len < 26) continue;
-      const off = halfWidth(l.cls) + 1.4;
-      for (let s = 10; s < l.len - 9; s += 24) {
+      if (l.turnaround || l.len < 24) continue;
+      const off = l.hw + 1.4;
+      for (let s = 10; s < l.len - 8; s += 22) {
         const p = map.linkPoint(l, s, off);
+        if (map.isRoad(p.x, p.z) || map.nearRoad(p.x, p.z, 0.7)) continue;
         this.spots.push({ x: p.x, z: p.z, link: l.id, s });
       }
     }
-    // Named places, spread out across the map (fixed, not seed dependent).
-    const pr = new Rng(0x91ace);
-    const order = this.spots.map((_, i) => i);
-    for (let i = order.length - 1; i > 0; i--) {
-      const j = pr.int(0, i);
-      [order[i], order[j]] = [order[j], order[i]];
-    }
-    for (const i of order) {
-      if (this.places.length >= PLACE_NAMES.length) break;
-      const sp = this.spots[i];
-      if (this.places.some((p) => Math.hypot(p.x - sp.x, p.z - sp.z) < 95)) continue;
-      this.places.push({ ...sp, name: PLACE_NAMES[this.places.length] });
-    }
-    // Empress Market's stop is right outside it.
+
+    // Snap each real Saddar POI to the nearest distinct kerbside road spot.
+    const usedSpot = new Set<number>();
     const em = map.landmarks.find((l) => l.kind === 'empress');
-    if (em) {
-      const cz = (em.rect.z0 + em.rect.z1) / 2;
-      let best = 0;
+    for (const poi of map.pois) {
+      let tx = poi.x;
+      let tz = poi.z;
+      // Put Empress Market's drop-off right outside the front plaza facade on Shahrah-e-Liaquat.
+      if (em && poi.name === 'Empress Market') {
+        tx = em.obb.x + Math.cos(em.obb.heading) * 60;
+        tz = em.obb.z - Math.sin(em.obb.heading) * 60;
+      }
+      let best = -1;
       let bestD = Infinity;
-      this.spots.forEach((s, i) => {
-        const d = Math.hypot(s.x - (em.rect.x1 + 8), s.z - cz);
+      for (let i = 0; i < this.spots.length; i++) {
+        if (usedSpot.has(i)) continue;
+        const sp = this.spots[i];
+        const d = Math.hypot(sp.x - tx, sp.z - tz);
         if (d < bestD) {
           bestD = d;
           best = i;
         }
-      });
-      this.places[0] = { ...this.spots[best], name: PLACE_NAMES[0] };
+      }
+      if (best >= 0) {
+        usedSpot.add(best);
+        this.places.push({ ...this.spots[best], name: poi.name });
+      }
     }
   }
 
@@ -200,7 +183,7 @@ export class Fares {
   private board(w: Passenger, p: PlayerCar, events: SimEvent[]): void {
     const place = this.places[w.dest];
     const dist = this.routeLength(p.x, p.z, p.heading, place);
-    const limit = Math.round(dist / 8.5 + 9);
+    const limit = Math.round(dist / 8.5 + 10);
     this.fare = { dest: w.dest, variant: w.variant, limit, timeLeft: limit, distance: dist, alight: 0 };
     events.push({ type: 'pickup', name: place.name, time: limit, distance: Math.round(dist) });
     this.navigate(p);
@@ -211,7 +194,7 @@ export class Fares {
     if (!f) return;
     const frac = f.timeLeft / f.limit;
     const base = Math.round((60 + f.distance * 0.5) / 10) * 10;
-    const tip = frac > 0.5 ? Math.round(base * 0.5 / 10) * 10 : frac > 0.25 ? Math.round(base * 0.2 / 10) * 10 : 0;
+    const tip = frac > 0.5 ? Math.round((base * 0.5) / 10) * 10 : frac > 0.25 ? Math.round((base * 0.2) / 10) * 10 : 0;
     const bonus = Math.round(5 + 12 * frac);
     this.money += base + tip;
     this.shiftEarnings += base + tip;
@@ -228,7 +211,7 @@ export class Fares {
       const w = this.waiting[i];
       if (Math.hypot(w.x - p.x, w.z - p.z) > DESPAWN) this.waiting.splice(i, 1);
     }
-    if (this.waiting.length >= WAITING) return;
+    if (this.waiting.length >= WAITING || this.spots.length === 0 || this.places.length === 0) return;
     const rng = this.rng;
     const si = rng.int(0, this.spots.length - 1);
     const sp = this.spots[si];
@@ -236,7 +219,9 @@ export class Fares {
     if (d < SPAWN_MIN || d > SPAWN_MAX) return;
     if (this.waiting.some((w) => Math.hypot(w.x - sp.x, w.z - sp.z) < 40)) return;
     let dest = rng.int(0, this.places.length - 1);
-    for (let k = 0; k < 4 && Math.hypot(this.places[dest].x - sp.x, this.places[dest].z - sp.z) < 90; k++) dest = rng.int(0, this.places.length - 1);
+    for (let k = 0; k < 4 && Math.hypot(this.places[dest].x - sp.x, this.places[dest].z - sp.z) < 90; k++) {
+      dest = rng.int(0, this.places.length - 1);
+    }
     const pl = this.places[dest];
     const crow = Math.hypot(pl.x - sp.x, pl.z - sp.z);
     if (crow < 70) return;
@@ -247,12 +232,12 @@ export class Fares {
       spot: si,
       dest,
       variant: rng.int(0, 7),
-      tier: crow < 180 ? 0 : crow < 320 ? 1 : 2,
+      tier: crow < 260 ? 0 : crow < 520 ? 1 : 2,
       board: 0,
     });
   }
 
-  // ---- Route guidance -------------------------------------------------------
+  // ---- Route guidance -----------------------------------------------------
 
   /** Shortest route over the road graph to a place; fills the nav fields. */
   private navigate(p: PlayerCar): void {
@@ -304,44 +289,94 @@ export class Fares {
     }
   }
 
-  /** Dijkstra from where the car is heading to either end of the target's street. */
-  private shortest(x: number, z: number, heading: number, target: Spot): { dist: number; nodes: number[] } | null {
+  /** Binary-heap Dijkstra from where the car is heading to the target's street. */
+  shortest(x: number, z: number, heading: number, target: Spot): { dist: number; nodes: number[] } | null {
     const m = this.map;
     const n = m.nodes.length;
     const dist = new Array<number>(n).fill(Infinity);
     const prev = new Array<number>(n).fill(-1);
     const done = new Array<boolean>(n).fill(false);
+    const heapN: number[] = [];
+    const heapD: number[] = [];
+    const push = (id: number, d: number) => {
+      let i = heapN.length;
+      heapN.push(id);
+      heapD.push(d);
+      while (i > 0) {
+        const p = (i - 1) >> 1;
+        if (heapD[p] <= d) break;
+        heapN[i] = heapN[p];
+        heapD[i] = heapD[p];
+        i = p;
+      }
+      heapN[i] = id;
+      heapD[i] = d;
+    };
+    const pop = (): number => {
+      const top = heapN[0];
+      const ln = heapN.pop()!;
+      const ld = heapD.pop()!;
+      if (heapN.length > 0) {
+        let i = 0;
+        const len = heapN.length;
+        for (;;) {
+          let best = i;
+          const l = i * 2 + 1;
+          const r = l + 1;
+          if (l < len && heapD[l] < ld) best = l;
+          if (r < len && heapD[r] < (best === i ? ld : heapD[l])) best = r;
+          if (best === i) break;
+          heapN[i] = heapN[best];
+          heapD[i] = heapD[best];
+          i = best;
+        }
+        heapN[i] = ln;
+        heapD[i] = ld;
+      }
+      return top;
+    };
+
     const here = m.linkAt(x, z, heading);
     if (here) {
       // Ahead to the next junction (or back, at a cost, for a U-turn).
       const s = (x - here.sx) * here.dx + (z - here.sz) * here.dz;
       dist[here.to] = Math.max(0, here.len - s);
-      dist[here.from] = Math.max(0, s) + 25;
+      push(here.to, dist[here.to]);
+      dist[here.from] = Math.max(0, s) + (here.oneway ? 55 : 25);
+      push(here.from, dist[here.from]);
     } else {
-      m.nodes.forEach((nd, i) => {
-        dist[i] = Math.hypot(nd.x - x, nd.z - z) * 1.3;
-      });
+      for (let i = 0; i < n; i++) {
+        const nd = m.nodes[i];
+        const d = Math.hypot(nd.x - x, nd.z - z) * 1.3;
+        dist[i] = d;
+        push(i, d);
+      }
     }
-    for (;;) {
-      let u = -1;
-      for (let i = 0; i < n; i++) if (!done[i] && (u < 0 || dist[i] < dist[u])) u = i;
-      if (u < 0 || dist[u] === Infinity) break;
+
+    const tl = m.links[target.link];
+    while (heapN.length > 0) {
+      const u = pop();
+      if (done[u]) continue;
       done[u] = true;
+      // Early stop once both endpoints of target link have settled.
+      if (done[tl.from] && (tl.oneway || done[tl.to])) break;
+      const base = dist[u];
       for (const id of m.nodes[u].out) {
         const l = m.links[id];
         const node = m.nodes[l.to];
-        const d = dist[u] + l.len + (Math.abs(l.dx) > 0.5 ? node.hx : node.hz) * 2;
+        const d = base + l.len + node.r * 2;
         if (d < dist[l.to]) {
           dist[l.to] = d;
           prev[l.to] = u;
+          push(l.to, d);
         }
       }
     }
-    const tl = m.links[target.link];
+
     const viaFrom = dist[tl.from] + target.s;
-    const viaTo = dist[tl.to] + (tl.len - target.s);
-    // Already on the target's street, heading the right way.
-    if (here && (here.id === tl.id || here.id === tl.reverse)) {
+    const viaTo = tl.oneway ? Infinity : dist[tl.to] + (tl.len - target.s);
+    // Already on the target's street, heading along it.
+    if (here && (here.id === tl.id || (tl.reverse >= 0 && here.id === tl.reverse))) {
       const direct = Math.hypot(target.x - x, target.z - z);
       if (direct < Math.min(viaFrom, viaTo)) return { dist: direct, nodes: [] };
     }
