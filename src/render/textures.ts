@@ -178,6 +178,72 @@ export function truckArtTexture(variant: number): THREE.Texture {
   });
 }
 
+/** Karachi route names painted on minibus windscreens. */
+const ROUTE_NAMES = ['گلستان', 'کورنگی', 'لیاقت آباد', 'صدر', 'ملیر', 'لانڈھی', 'نارتھ کراچی', 'کیماڑی'];
+
+/**
+ * Painted upper half of a minibus windscreen: framed truck-art panel with
+ * peacocks, florals and the route name in white Urdu.
+ */
+export function windscreenArtTexture(variant: number): THREE.Texture {
+  return cached(`wsart${variant % 8}`, () => {
+    const [c, ctx] = canvas(512, 256);
+    const rng = new Rng(300 + variant);
+    const pal = ART_PALETTES[variant % ART_PALETTES.length];
+    // Dark glass showing through the middle.
+    ctx.fillStyle = '#1d2a33';
+    ctx.fillRect(0, 0, 512, 256);
+    // Painted frame: thick red border with a yellow inner line.
+    ctx.fillStyle = '#d62828';
+    ctx.fillRect(0, 0, 512, 40);
+    ctx.fillRect(0, 0, 34, 256);
+    ctx.fillRect(478, 0, 34, 256);
+    ctx.fillStyle = '#ffd60a';
+    ctx.fillRect(34, 40, 444, 5);
+    ctx.fillRect(34, 40, 5, 216);
+    ctx.fillRect(473, 40, 5, 216);
+    for (let x = 6; x < 512; x += 18) {
+      ctx.fillStyle = pal[(x / 18) % pal.length | 0];
+      ctx.beginPath();
+      ctx.arc(x, 20, 6, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // Peacock fans in the upper corners.
+    for (const [cx, dir] of [[110, 1], [402, -1]] as const) {
+      for (let k = 0; k < 7; k++) {
+        const a = Math.PI * (0.15 + k * 0.1) * dir + (dir < 0 ? Math.PI : 0);
+        ctx.fillStyle = pal[k % pal.length];
+        ctx.beginPath();
+        ctx.ellipse(cx + Math.cos(a) * 34, 88 - Math.abs(Math.sin(a)) * 26, 22, 9, a, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.fillStyle = '#0a9396';
+      ctx.beginPath();
+      ctx.ellipse(cx, 104, 18, 11, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // Central floral medallion.
+    for (let p = 0; p < 10; p++) {
+      const a = (p / 10) * Math.PI * 2;
+      ctx.fillStyle = rng.pick(pal);
+      ctx.beginPath();
+      ctx.ellipse(256 + Math.cos(a) * 20, 84 + Math.sin(a) * 20, 16, 7, a, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // Route name.
+    ctx.fillStyle = '#ffffff';
+    ctx.strokeStyle = '#000000';
+    ctx.lineWidth = 5;
+    ctx.font = 'bold 64px "Noto Nastaliq Urdu", "Jameel Noori Nastaleeq", serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    const name = ROUTE_NAMES[variant % ROUTE_NAMES.length];
+    ctx.strokeText(name, 256, 178);
+    ctx.fillText(name, 256, 178);
+    return finish(c);
+  });
+}
+
 /** Front destination board for minibuses. */
 export function routeBoardTexture(route: string): THREE.Texture {
   return cached(`route${route}`, () => {

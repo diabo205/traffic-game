@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import type { NpcKind } from '../sim/types';
-import { routeBoardTexture, truckArtTexture } from './textures';
+import { routeBoardTexture, truckArtTexture, windscreenArtTexture } from './textures';
 
 /**
  * Builds low-poly procedural vehicles.
@@ -27,6 +27,19 @@ export interface VehicleVisual {
   setHazard(on: boolean): void;
   /** 0 = off, 1 = normal, 2 = flash (dipper) */
   setHeadlights(level: number): void;
+}
+
+/** glTF UVs expect flipY=false; canvas textures default to true. Cached clone. */
+const gltfTex = new Map<string, THREE.Texture>();
+function gltfTexture(t: THREE.Texture): THREE.Texture {
+  let c = gltfTex.get(t.uuid);
+  if (!c) {
+    c = t.clone();
+    c.flipY = false;
+    c.needsUpdate = true;
+    gltfTex.set(t.uuid, c);
+  }
+  return c;
 }
 
 const matCache = new Map<string, THREE.Material>();
@@ -258,7 +271,7 @@ export class VehicleFactory {
     });
     const loader = new GLTFLoader();
     await Promise.all(
-      ['alto', 'rickshaw'].map(async (name) => {
+      ['alto', 'rickshaw', 'minibus'].map(async (name) => {
         try {
           const gltf = await loader.loadAsync(`${import.meta.env.BASE_URL}models/${name}.glb`);
           this.models.set(name, gltf.scene);
@@ -292,7 +305,7 @@ export class VehicleFactory {
       case 'alto': return this.models.has('alto') ? this.fromModel('alto', 0.28) : this.alto();
       case 'car': return this.car(variant);
       case 'bike': return this.bike(variant);
-      case 'minibus': return this.minibus(variant);
+      case 'minibus': return this.models.has('minibus') ? this.minibusModel(variant) : this.minibus(variant);
       case 'rickshaw': return this.models.has('rickshaw') ? this.rickshawModel(variant) : this.rickshaw(variant);
       case 'cart': return this.cart(variant);
       case 'truck': return this.truck(variant);
@@ -314,7 +327,7 @@ export class VehicleFactory {
    * Node names carry meaning: head_, brake_ and hazard_ nodes are lights; wheel_ nodes spin.
    * glTF PBR materials become smooth Lambert to match the scene's lighting.
    */
-  private fromModel(name: string, wheelRadius: number, paint?: string): Proto {
+  private fromModel(name: string, wheelRadius: number, paint?: string, maps: Record<string, THREE.Texture> = {}): Proto {
     const { root, body } = this.shell();
     const src = this.models.get(name);
     const wheels: THREE.Object3D[] = [];
@@ -328,8 +341,9 @@ export class VehicleFactory {
       const m = o.material as THREE.MeshStandardMaterial;
       let lm = mats.get(m.name);
       if (!lm) {
-        const color = paint && m.name === 'paint' ? new THREE.Color(paint) : m.color;
-        lm = new THREE.MeshLambertMaterial({ color, name: m.name });
+        const map = maps[m.name] ? gltfTexture(maps[m.name]) : null;
+        const color = map ? new THREE.Color('#ffffff') : paint && m.name === 'paint' ? new THREE.Color(paint) : m.color;
+        lm = new THREE.MeshLambertMaterial({ color, map, name: m.name });
         mats.set(m.name, lm);
       }
       o.material = lm;
@@ -362,6 +376,25 @@ export class VehicleFactory {
       lights.beam = beam;
     }
     return { root, body, wheels, wheelRadius, lights };
+  }
+
+  /** Karachi route minibus from Blender: truck art per variant, people on the doors and roof. */
+  private minibusModel(variant: number): Proto {
+    const BASE = ['#1f4fa8', '#e9e2cf', '#1f7a4d', '#b3261e', '#1565c0', '#6a1b9a'];
+    const p = this.fromModel('minibus', 0.42, BASE[variant % BASE.length], {
+      art_side: truckArtTexture(variant),
+      art_top: truckArtTexture(variant + 3),
+      art_rear: truckArtTexture(variant + 5),
+      art_screen: windscreenArtTexture(variant),
+    });
+    const shirt = (k: number) => SHIRT_COLORS[(variant + k) % SHIRT_COLORS.length];
+    // Hanging off the kerb-side doors (model doors at y 1.62 / -2.62 -> three z).
+    rider(p.body, shirt(1), -1.22, 0.95, -1.62, false);
+    if (variant % 2 === 0) rider(p.body, shirt(2), -1.22, 0.95, 2.62, false);
+    // Riding on the roof rack.
+    const roof: Array<[number, number]> = [[-0.4, -0.2], [0.35, -0.9], [-0.3, 1.0]];
+    for (let k = 0; k < variant % 4; k++) rider(p.body, shirt(3 + k), roof[k][0], 2.96, roof[k][1], false);
+    return p;
   }
 
   /** Sazgar auto-rickshaw from Blender, in Karachi's common liveries, with a driver. */

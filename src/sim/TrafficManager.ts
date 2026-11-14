@@ -26,7 +26,8 @@ export const NPC_SPECS: Readonly<Record<NpcKind, KindSpec>> = {
     accel: 3.2, decel: 7, latSpeed: 2.2, damage: 1.1,
   },
   minibus: {
-    hw: 1.22, hl: 4.4, mass: 6500,
+    // Karachi coaster-type minibus: ~7.4 m x 2.2 m.
+    hw: 1.12, hl: 3.75, mass: 6000,
     cruise: [[15, 19], [23, 27], [19, 23]],
     accel: 1.9, decel: 6.5, latSpeed: 1.2, damage: 2.6,
   },

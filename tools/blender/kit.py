@@ -137,3 +137,28 @@ def export(out):
 
 def default_out(script_file, name):
     return os.path.join(os.path.dirname(script_file), "..", "..", "public", "models", f"{name}.glb")
+
+
+def art_plane(name, centre, width, height, facing, material, lift=0.004):
+    """Flat panel with a full 0..1 UV (u to the viewer's right, v up as seen
+    from outside), for texture-mapped art. facing: '+x', '-x', '+y', '-y'."""
+    from mathutils import Vector
+    n = {"+x": Vector((1, 0, 0)), "-x": Vector((-1, 0, 0)), "+y": Vector((0, 1, 0)), "-y": Vector((0, -1, 0))}[facing]
+    up = Vector((0, 0, 1))
+    right = (-n).cross(up)
+    c = Vector(centre) + n * lift
+    hw, hh = width / 2, height / 2
+    corners = [c - right * hw - up * hh, c + right * hw - up * hh, c + right * hw + up * hh, c - right * hw + up * hh]
+    bm = bmesh.new()
+    vs = [bm.verts.new(p) for p in corners]
+    f = bm.faces.new(vs)
+    uv = bm.loops.layers.uv.new("UVMap")
+    for loop, (u, v) in zip(f.loops, ((0, 0), (1, 0), (1, 1), (0, 1))):
+        loop[uv].uv = (u, v)
+    me = bpy.data.meshes.new(name)
+    bm.to_mesh(me)
+    bm.free()
+    o = bpy.data.objects.new(name, me)
+    bpy.context.collection.objects.link(o)
+    me.materials.append(material)
+    return o
