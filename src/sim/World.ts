@@ -40,7 +40,7 @@ export class World {
     this.traffic = new TrafficManager(this.seed);
     const road = sampleRoad(startZ);
     // Start in the middle lane.
-    this.player.reset(road.left + road.laneWidth * 1.5, startZ);
+    this.player.reset(road.left + road.laneWidth * 1.5, startZ, 0, elevationAt(startZ));
     this.traffic.reset(startZ);
     if (startZ > 0) {
       this.level.zoneIndex = road.zoneIndex;
@@ -69,7 +69,8 @@ export class World {
 
   /** 0..1 camera speed-rush on the expressway. */
   speedRush(): number {
-    return ZONES[sampleRoad(this.player.z).zoneIndex].elevated ? clamp((this.player.speed - 20) / 14, 0, 1) : 0;
+    const rush = ZONES[sampleRoad(this.player.z).zoneIndex].elevated ? clamp((this.player.speed - 20) / 14, 0, 1) : 0;
+    return Math.max(rush, this.player.boostTime > 0 ? 1 : 0);
   }
 
   start(): void {
@@ -112,6 +113,9 @@ export class World {
 
     this.applySurface();
     p.update(input, road.topSpeed, DT, running);
+    if (p.boostFired) this.events.push({ type: 'boost', kind: p.boostFired });
+    if (p.driftEnded > 1) this.events.push({ type: 'drift', seconds: p.driftEnded });
+    p.settle(elevationAt(p.z), DT);
     this.constrainToRoad();
     this.hazardContacts(input);
     this.traffic.update(DT, p, this.hazards, this.tick);

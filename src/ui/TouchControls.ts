@@ -37,6 +37,7 @@ export class TouchControls {
     aux.append(
       this.hold('📯', 'tbtn small horn', (on) => (state.horn = on), 'Horn'),
       this.hold('💡', 'tbtn small dipper', (on) => (state.dipper = on), 'Dipper'),
+      this.hold('DRIFT', 'tbtn small drift', (on) => (state.drift = on), 'Handbrake drift'),
     );
     const pedals = el('div', 'pedals');
     pedals.append(

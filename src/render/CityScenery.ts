@@ -5,7 +5,7 @@ import type { CityLink, CityMap, Rect } from '../sim/city/cityMap';
 import { Rng } from '../sim/rng';
 import { makeFacadeMaterial } from './facadeMaterial';
 import { buildEmpressMarketAt } from './Landmarks';
-import { asphaltTexture, dirtTexture, kerbStripeTexture, saddarFacadeAtlas, SHOP_SIGN_COUNT, shopSignTexture } from './textures';
+import { asphaltTexture, dirtTexture, kerbStripeTexture, saddarFacadeAtlas, SHOP_SIGN_COUNT, shopSignTexture, signTexture } from './textures';
 
 type V3 = readonly [number, number, number];
 
@@ -95,6 +95,8 @@ export class CityScenery {
     this.buildings(map, shadow);
     this.poles(map);
     this.trees(map, shadow);
+    this.yards(map);
+    this.ramps(map, shadow);
     for (const l of map.landmarks) {
       if (l.kind === 'empress') buildEmpressMarketAt(this.group, shadow, l.face, -(l.rect.z0 + l.rect.z1) / 2, l.rect.z1 - l.rect.z0);
     }
@@ -341,6 +343,70 @@ export class CityScenery {
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute(wire, 3));
     this.group.add(new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: '#2a2a2a' })));
+  }
+
+  /** Bare dirt construction yards with a site board. */
+  private yards(map: CityMap): void {
+    const q = new Quads();
+    for (const y of map.yards) q.flat(y, KERB_H + 0.012, 1 / 4);
+    if (q.empty) return;
+    const m = new THREE.Mesh(q.build(), new THREE.MeshLambertMaterial({ map: dirtTexture(), color: '#d9bf8f', polygonOffset: true, polygonOffsetFactor: -1 }));
+    m.receiveShadow = true;
+    this.group.add(m);
+    for (const y of map.yards) {
+      const board = new THREE.Mesh(new THREE.PlaneGeometry(5, 1.9), new THREE.MeshLambertMaterial({ map: signTexture(['KMC ROAD WORKS', 'KAAM JAARI HAI'], '#f9a825', '#1b1b1b', 512, 192), side: THREE.DoubleSide }));
+      board.position.set((y.x0 + y.x1) / 2, KERB_H + 3.2, -(y.z0 + 1.2));
+      const postGeo = new THREE.CylinderGeometry(0.07, 0.07, 3.2, 6);
+      const postMat = new THREE.MeshLambertMaterial({ color: '#555' });
+      for (const dx of [-2.2, 2.2]) {
+        const post = new THREE.Mesh(postGeo, postMat);
+        post.position.set(board.position.x + dx, KERB_H + 1.6, board.position.z);
+        this.group.add(post);
+      }
+      this.group.add(board);
+    }
+  }
+
+  /** Wedge ramps: steel kickers with hazard stripes on the street, packed dirt in the yard. */
+  private ramps(map: CityMap, shadow: boolean): void {
+    const tops = new Quads();
+    const sides = new Quads();
+    const steel = new THREE.Color('#b3ada2');
+    const dirt = new THREE.Color('#b08a5a');
+    const inYard = (x: number, z: number) => map.yards.some((y) => x > y.x0 && x < y.x1 && z > y.z0 && z < y.z1);
+    for (const r of map.ramps) {
+      const base = map.isRoad(r.x, r.z) ? 0 : KERB_H;
+      const yard = inYard(r.x, r.z);
+      const s = Math.sin(r.heading), c = Math.cos(r.heading);
+      const pt = (f: number, l: number, up: boolean): V3 => {
+        const x = r.x + f * s + l * c, z = r.z + f * c - l * s;
+        return [x, base + (up ? (r.h * (f + r.hl)) / (2 * r.hl) : 0) + 0.005, -z];
+      };
+      const fwd: V3 = [s, 0, -c];
+      const right: V3 = [c, 0, s];
+      // Sloping top.
+      const len = Math.hypot(2 * r.hl, r.h);
+      tops.quad(pt(-r.hl, -r.hw, true), pt(-r.hl, r.hw, true), pt(r.hl, r.hw, true), pt(r.hl, -r.hw, true), [0, 0, 1, 0, 1, len, 0, len], UP, yard ? dirt : steel);
+      // Tall end and the two triangular sides.
+      const hiL = pt(r.hl, -r.hw, true), hiR = pt(r.hl, r.hw, true), loL = pt(r.hl, -r.hw, false), loR = pt(r.hl, r.hw, false);
+      // Dirt ramps sample a plain patch of the stripe texture (no hazard paint).
+      const plain = [0.2, 0.5, 0.2, 0.5, 0.2, 0.5, 0.2, 0.5];
+      sides.quad(loL, loR, hiR, hiL, yard ? plain : [0, 0, r.hw * 2, 0, r.hw * 2, 1, 0, 1], fwd, yard ? dirt.clone().multiplyScalar(0.55) : undefined);
+      for (const side of [-1, 1]) {
+        const a = pt(-r.hl, side * r.hw, false), b = pt(r.hl, side * r.hw, false), t = pt(r.hl, side * r.hw, true);
+        sides.quad(a, b, t, t, yard ? plain : [0, 0, r.hl * 2, 0, r.hl * 2, 1, r.hl * 2, 1], side > 0 ? right : [-right[0], 0, -right[2]], yard ? dirt.clone().multiplyScalar(0.55) : undefined);
+      }
+    }
+    if (tops.empty) return;
+    const top = new THREE.Mesh(tops.build(), new THREE.MeshLambertMaterial({ vertexColors: true, map: dirtTexture() }));
+    const tex = kerbStripeTexture().clone();
+    tex.needsUpdate = true;
+    const side = new THREE.Mesh(sides.build(), new THREE.MeshLambertMaterial({ vertexColors: true, map: tex }));
+    for (const m of [top, side]) {
+      m.castShadow = shadow;
+      m.receiveShadow = true;
+      this.group.add(m);
+    }
   }
 
   /** Neem trees on the medians and round the Empress Market plaza. */

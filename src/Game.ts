@@ -308,6 +308,20 @@ export class Game {
         this.hud.showToast(`Repairs −Rs ${e.cost} · −10s`, false);
         this.renderer.chase.reset();
         break;
+      case 'boost':
+        this.audio.whoosh();
+        this.hud.showToast(e.kind === 'drift' ? 'DRIFT BOOST!' : e.kind === 'launch' ? 'LAUNCH!' : 'DASH!');
+        break;
+      case 'drift':
+        this.hud.showToast(`DRIFT ${e.seconds.toFixed(1)}s`);
+        break;
+      case 'land':
+        this.audio.pothole(Math.min(1, e.impact / 10));
+        if (e.air > 0.5) this.hud.showToast(`AIR ${e.air.toFixed(1)}s!`);
+        break;
+      case 'smash':
+        this.audio.smash(e.kind, e.impact / 15);
+        break;
       case 'street':
         this.hud.showBanner(e.name.toUpperCase());
         break;

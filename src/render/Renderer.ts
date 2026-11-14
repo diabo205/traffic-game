@@ -8,6 +8,7 @@ import { CityScenery } from './CityScenery';
 import { Effects } from './Effects';
 import { Environment } from './Environment';
 import { FareVisuals } from './FareVisuals';
+import { PropVisuals } from './PropVisuals';
 import { TyreFx } from './TyreFx';
 import { VehicleFactory } from './VehicleFactory';
 import type { VehicleVisual, VisualKind } from './VehicleFactory';
@@ -34,6 +35,8 @@ export class Renderer {
   private env: Scenery | null = null;
   private envKey = '';
   private fares: FareVisuals | null = null;
+  private props: PropVisuals | null = null;
+  private flame: THREE.Mesh;
   private effects = new Effects();
   private birds = new Birds();
   private tyres = new TyreFx();
@@ -58,6 +61,10 @@ export class Renderer {
     container.appendChild(this.gl.domElement);
 
     this.chase = new ChaseCamera(1);
+    const flameGeo = new THREE.ConeGeometry(0.11, 0.7, 8).rotateX(Math.PI / 2).translate(0, 0, 0.35);
+    this.flame = new THREE.Mesh(flameGeo, new THREE.MeshBasicMaterial({ color: '#7fd3ff', transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false }));
+    this.flame.position.set(-0.42, 0.3, 1.72);
+    this.flame.visible = false;
 
     // Pale, dusty Karachi afternoon: hazy white-blue sky, harsh high sun.
     this.scene.background = HORIZON.clone();
@@ -106,14 +113,20 @@ export class Renderer {
       this.envKey = key;
     }
     if (this.fares) this.scene.remove(this.fares.group);
+    if (this.props) this.scene.remove(this.props.group);
     this.fares = null;
+    this.props = null;
     if (world.mode === 'city') {
       this.fares = new FareVisuals();
       this.scene.add(this.fares.group);
+      this.props = new PropVisuals(world.props, !this.lowSpec);
+      this.scene.add(this.props.group);
     }
     if (!this.player) {
       this.player = this.factory.create('alto', 0);
       this.scene.add(this.player.root);
+      // Exhaust flame for boosts (tailpipe under the rear bumper, driver's side).
+      this.player.body.add(this.flame);
     }
     for (const [id, v] of this.npcVisuals) this.release(v, id);
     this.npcVisuals.clear();
@@ -138,6 +151,17 @@ export class Renderer {
       case 'towed':
         this.tyres.clear();
         this.chase.reset();
+        break;
+      case 'smash':
+        this.effects.dust(e.x, world.groundY(e.x, e.z), -e.z, Math.min(1, e.impact / 15));
+        this.chase.addTrauma(0.06 + Math.min(0.18, e.impact / 80));
+        break;
+      case 'land':
+        this.effects.dust(p.x, y, -p.z, Math.min(1, e.impact / 8));
+        this.chase.addTrauma(0.15 + Math.min(0.5, e.impact / 18));
+        break;
+      case 'boost':
+        this.chase.addTrauma(0.12);
         break;
       case 'kerb':
         this.chase.addTrauma(0.08 + e.severity * 0.2);
@@ -203,8 +227,8 @@ export class Renderer {
     const px = lerp(p.prevX, p.x);
     const pz = lerp(p.prevZ, p.z);
     const heading = lerp(p.prevHeading, p.heading);
-    const elev = world.groundY(px, pz);
-    const slope = this.slope(world, px, pz, heading);
+    const elev = lerp(p.prevY, p.y);
+    const slope = p.airborne ? 0 : this.slope(world, px, pz, heading);
     if (this.player) {
       const v = this.player;
       v.root.position.set(px, elev, -pz);
@@ -268,7 +292,17 @@ export class Renderer {
     this.birds.update(dt, pz, elev, this.time);
     this.sun.target.position.set(px, elev, -pz - 15);
     this.env?.update(this.time, px, pz);
-    if (world.mode === 'city') this.fares?.update(world.fares, px, pz, this.time);
+    if (world.mode === 'city') {
+      this.fares?.update(world.fares, px, pz, this.time);
+      this.props?.update(world.props);
+    }
+    // Boost flame flicker.
+    this.flame.visible = p.boostTime > 0;
+    if (this.flame.visible) {
+      const f = 0.75 + Math.random() * 0.5;
+      this.flame.scale.set(f, f, (0.8 + Math.random() * 0.7) * Math.min(1, p.boostTime * 3 + 0.3));
+      (this.flame.material as THREE.MeshBasicMaterial).color.set(Math.random() < 0.5 ? '#7fd3ff' : '#ffb347');
+    }
     this.effects.update(dt);
 
     this.gl.render(this.scene, this.chase.camera);

@@ -122,11 +122,11 @@ export class Hud {
         <h1>Saddar · Lyari Expressway · Clifton</h1>
         <p class="lede"><b>Free roam:</b> drive the streets of Saddar wherever you like — junctions, the Empress Market roundabout, back alleys and pavements. <b>Route run:</b> race your 660cc Alto across Karachi before the checkpoint timer runs out. Either way, keep the car in one piece.</p>
         <div class="controls-grid">
-          <div class="kb"><b>Keyboard</b><br>W/↑ gas · S/↓ brake/reverse<br>A D / ← → steer<br>Space horn · F/Shift dipper</div>
-          <div class="gp"><b>Gamepad</b><br>RT gas · LT brake<br>Left stick steer<br>A horn · X dipper</div>
-          <div class="tc"><b>Touch</b><br>◀ ▶ or joystick to steer<br>GAS / BRAKE pedals<br>📯 horn · 💡 dipper</div>
+          <div class="kb"><b>Keyboard</b><br>W/↑ gas · S/↓ brake/reverse<br>A D / ← → steer · E drift<br>Space horn · F/Shift dipper</div>
+          <div class="gp"><b>Gamepad</b><br>RT gas · LT brake<br>Left stick steer · B drift<br>A horn · X dipper</div>
+          <div class="tc"><b>Touch</b><br>◀ ▶ or joystick to steer<br>GAS / BRAKE pedals · DRIFT<br>📯 horn · 💡 dipper</div>
         </div>
-        <p class="tip">Tip: brake before a pothole and it won't damage the car. Flash your dipper and slow cars move over.</p>
+        <p class="tip"><b>Drift:</b> gas + brake together while turning, and power out for a boost. <b>Boost:</b> tap the gas twice quickly, or hold brake + gas when stopped and let the brake go. Hit the ramps for air, and anything on the pavement goes flying.</p>
       </div>`;
     this.cityBtn = button('FREE ROAM · SADDAR', 'big-btn', 'Free roam in Saddar');
     this.startBtn = button('ROUTE RUN', 'big-btn alt', 'Route run to Clifton');

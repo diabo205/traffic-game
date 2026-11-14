@@ -83,5 +83,10 @@ export type SimEvent =
   | { type: 'dropoff'; name: string; pay: number; tip: number; bonus: number; rating: number }
   | { type: 'fareFailed'; name: string; reason: 'time' | 'shift' | 'towed' }
   | { type: 'towed'; cost: number }
+  | { type: 'boost'; kind: 'launch' | 'dash' | 'drift' }
+  | { type: 'drift'; seconds: number }
+  | { type: 'jump' }
+  | { type: 'land'; impact: number; air: number }
+  | { type: 'smash'; kind: string; x: number; z: number; impact: number }
   | { type: 'gameover'; reason: Exclude<GameOverReason, null> }
   | { type: 'complete' };

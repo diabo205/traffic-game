@@ -8,11 +8,16 @@ import { cityMap } from './cityMap';
 import type { CityMap, Rect } from './cityMap';
 import { CityTraffic } from './CityTraffic';
 import { Fares } from './Fares';
+import { Props } from './Props';
 
 const RESTITUTION = 0.25;
 const HIT_COOLDOWN = 36;
 /** City top speed for the Alto (m/s, ~100 km/h). */
 const CITY_TOP_SPEED = 27.8;
+/** Rough NPC roof heights, for jumping over traffic. */
+const NPC_HEIGHT: Readonly<Record<string, number>> = { bike: 1.3, minibus: 2.9, rickshaw: 1.9, cart: 1.3, car: 1.5, truck: 3.2 };
+/** Taller steps than this are walls (the side or back of a ramp). */
+const MAX_STEP = 0.35;
 
 /** Run state with the same shape the HUD reads from the route LevelManager. */
 class CityLevel {
@@ -44,6 +49,7 @@ export class CityWorld {
   readonly player = new PlayerCar();
   readonly traffic: CityTraffic;
   readonly fares: Fares;
+  readonly props: Props;
   readonly level: CityLevel;
   private startX = 0;
   private startZ = 0;
@@ -61,6 +67,7 @@ export class CityWorld {
     this.map = cityMap();
     this.traffic = new CityTraffic(this.seed, this.map);
     this.fares = new Fares(this.seed, this.map);
+    this.props = new Props(this.seed, this.map);
     this.level = new CityLevel(this.fares);
     // Start on Abdullah Haroon Road, just north of the Empress Market roundabout, heading north.
     const start = this.map.links.find((l) => l.name === 'Abdullah Haroon Road' && l.dz > 0.5 && this.map.nodes[l.from].roundabout);
@@ -92,7 +99,8 @@ export class CityWorld {
   }
 
   speedRush(): number {
-    return clamp((this.player.speed - 18) / 12, 0, 1) * 0.6;
+    const p = this.player;
+    return Math.max(clamp((p.speed - 18) / 12, 0, 1) * 0.6, p.boostTime > 0 ? 1 : 0);
   }
 
   start(): void {
@@ -133,8 +141,13 @@ export class CityWorld {
     }
     const running = this.level.phase === 'running';
     p.update(input, CITY_TOP_SPEED, 1 / 60, running);
+    if (p.boostFired) this.events.push({ type: 'boost', kind: p.boostFired });
+    if (p.driftEnded > 1) this.events.push({ type: 'drift', seconds: p.driftEnded });
     this.staticCollisions();
-    this.kerbs();
+    this.vertical();
+    if (!p.airborne) this.kerbs();
+    const smashDamage = this.props.update(1 / 60, p, this.events);
+    if (smashDamage > 0) this.damage(smashDamage);
     this.traffic.update(1 / 60, p);
     this.trafficCollisions();
     this.streetName();
@@ -156,7 +169,7 @@ export class CityWorld {
     const cost = Math.min(f.money, TOW_COST);
     f.money -= cost;
     if (f.onShift) f.shiftTime = Math.max(1, f.shiftTime - TOW_TIME);
-    this.player.reset(this.startX, this.startZ, this.startHeading);
+    this.player.reset(this.startX, this.startZ, this.startHeading, this.map.groundY(this.startX, this.startZ));
     this.player.freeRoam = true;
     this.onRoad = true;
     this.events.push({ type: 'towed', cost });
@@ -216,6 +229,35 @@ export class CityWorld {
     }
   }
 
+  /** Ramps: climb, take off, fly, land. The sides and backs of ramps are walls. */
+  private vertical(): void {
+    const p = this.player;
+    let g = this.map.groundY(p.x, p.z);
+    if (g > p.y + MAX_STEP) {
+      // Drove into the tall side of a ramp: stop as if it were a wall.
+      p.x = p.prevX;
+      p.z = p.prevZ;
+      const impact = Math.abs(p.speed);
+      p.speed *= -0.25;
+      if (impact > 3 && this.tick - this.lastWallHitTick > HIT_COOLDOWN) {
+        this.lastWallHitTick = this.tick;
+        const dmg = Math.min(20, (impact - 3) * 1.2);
+        this.damage(dmg);
+        this.level.stats.crashes++;
+        this.events.push({ type: 'crash', impact, damage: dmg, x: p.x, z: p.z });
+      }
+      g = this.map.groundY(p.x, p.z);
+    }
+    const wasAir = p.airborne;
+    const impact = p.settle(g, 1 / 60);
+    if (!wasAir && p.airborne && p.vy > 1) this.events.push({ type: 'jump' });
+    if (impact > 0 && p.airTime > 0.15) {
+      this.events.push({ type: 'land', impact, air: p.airTime });
+      // Only a really big drop hurts the Alto.
+      if (impact > 11) this.damage((impact - 11) * 2);
+    }
+  }
+
   /** Mounting / dropping off a kerb jolts the car. */
   private kerbs(): void {
     const p = this.player;
@@ -239,6 +281,8 @@ export class CityWorld {
     const p = this.player;
     for (const n of this.traffic.npcs) {
       if (Math.abs(n.z - p.z) > 10 || Math.abs(n.x - p.x) > 10) continue;
+      // Sailing over it.
+      if (p.y > (NPC_HEIGHT[n.kind] ?? 1.5)) continue;
       const box = CityTraffic.obb(n);
       const mtv = obbOverlap(p.obb(), box);
       if (!mtv) continue;
@@ -258,10 +302,14 @@ export class CityWorld {
       if (rel >= 0) continue;
       const j = -(1 + RESTITUTION) * rel;
       p.setVelocity(vx + mtv.nx * j * mr, vz + mtv.nz * j * mr);
-      // The NPC gets shoved and loses speed along the hit.
+      // The NPC gets shoved (light ones fly sideways and spin) and loses speed.
       const shove = j * (1 - mr);
-      n.kx -= mtv.nx * shove * 0.35;
-      n.kz -= mtv.nz * shove * 0.35;
+      n.kvx -= mtv.nx * shove * 0.9;
+      n.kvz -= mtv.nz * shove * 0.9;
+      // Spin from where it was hit: off-centre hits twist it.
+      const rx = (p.x - n.x), rz = (p.z - n.z);
+      const torque = (rx * -mtv.nz + rz * mtv.nx) * shove;
+      n.kSpin += clamp(torque * 0.35 * (1 - mr) * (1 - mr) * 4, -4, 4);
       n.speed = Math.max(0, n.speed - shove * 0.8);
 
       const impact = -rel;

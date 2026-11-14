@@ -130,6 +130,20 @@ export interface CityLink {
   name: string;
   /** the opposite direction of the same street */
   reverse: number;
+  /** lane blocked by a ramp (-1 none) and the stretch it covers */
+  rampLane: number;
+  rampS0: number;
+  rampS1: number;
+}
+
+/** A wedge you can drive up and jump off. Rises along its heading from 0 to h. */
+export interface Ramp {
+  x: number;
+  z: number;
+  heading: number;
+  hw: number;
+  hl: number;
+  h: number;
 }
 
 export interface Building {
@@ -183,6 +197,9 @@ export class CityMap {
   readonly buildings: Building[] = [];
   readonly landmarks: Landmark[] = [];
   readonly islands: Island[] = [];
+  readonly ramps: Ramp[] = [];
+  /** open dirt construction yards (no buildings) */
+  readonly yards: Rect[] = [];
   /** solid colliders (buildings, landmarks, outer walls), axis-aligned */
   readonly solids: Rect[] = [];
   readonly bounds: Rect;
@@ -190,6 +207,7 @@ export class CityMap {
   private roadGrid = new Map<number, number[]>();
   private medianGrid = new Map<number, number[]>();
   private solidGrid = new Map<number, number[]>();
+  private rampGrid = new Map<number, number[]>();
   private paths = new Map<string, JunctionPath>();
 
   constructor() {
@@ -252,6 +270,9 @@ export class CityMap {
           cls: def.cls,
           name: def.name,
           reverse: -1,
+          rampLane: -1,
+          rampS0: 0,
+          rampS1: 0,
         };
       };
       const ab = mk(a, b);
@@ -311,6 +332,7 @@ export class CityMap {
     for (const [r, c] of NO_ROW_SEGMENT) unite(r * cellsX + c + 1, (r + 1) * cellsX + c + 1);
 
     const empressCell = { cx: 3, cz: 1 }; // between Zaibunnisa / Abdullah Haroon, Shahrah-e-Iraq / Kutchery
+    const yardCell = { cx: 6, cz: 4 }; // between Raja Ghazanfar Ali / Sarwar Shaheed, Club / Strachen
     for (let iz = 0; iz < cellsZ; iz++) {
       for (let ix = 0; ix < cellsX; ix++) {
         const cell: Rect = {
@@ -343,6 +365,10 @@ export class CityMap {
           this.empress(lot, rng);
           continue;
         }
+        if (ix === yardCell.cx && iz === yardCell.cz) {
+          this.yard(lot);
+          continue;
+        }
         const outer = outerX(ix) || outerX(ix + 1) || outerZ(iz) || outerZ(iz + 1);
         for (const l of lots) this.fillLot(l, rng, outer, ROWS[Math.min(iz, ROWS.length - 1)].cls === 'arterial' || ROWS[Math.max(0, iz - 1)].cls === 'arterial');
       }
@@ -373,6 +399,13 @@ export class CityMap {
     for (const b of this.buildings) this.solids.push({ x0: b.x - b.hw, x1: b.x + b.hw, z0: b.z - b.hl, z1: b.z + b.hl });
     for (const l of this.landmarks) this.solids.push(l.rect);
 
+    this.streetRamps();
+    const rampBoxes = this.ramps.map((r) => {
+      const ex = Math.abs(Math.sin(r.heading)) * r.hl + Math.abs(Math.cos(r.heading)) * r.hw;
+      const ez = Math.abs(Math.cos(r.heading)) * r.hl + Math.abs(Math.sin(r.heading)) * r.hw;
+      return { x0: r.x - ex, x1: r.x + ex, z0: r.z - ez, z1: r.z + ez };
+    });
+    this.index(rampBoxes, this.rampGrid);
     this.index(this.roadRects, this.roadGrid);
     this.index(this.medians, this.medianGrid);
     this.index(this.solids, this.solidGrid);
@@ -389,6 +422,39 @@ export class CityMap {
     this.landmarks.push({ kind: 'empress', face, rect: { x0: face - depth, x1: face, z0: zc - len / 2, z1: zc + len / 2 } });
     // Stalls and shops on the far side of the plaza.
     this.fillLot({ x0: lot.x0, x1: face - depth - 12, z0: lot.z0, z1: lot.z1 }, rng, false, false);
+  }
+
+  /** A dirt construction yard with jumps instead of buildings. */
+  private yard(lot: Rect): void {
+    this.yards.push(lot);
+    const cx = (lot.x0 + lot.x1) / 2, cz = (lot.z0 + lot.z1) / 2;
+    const w = lot.x1 - lot.x0, d = lot.z1 - lot.z0;
+    this.ramps.push(
+      { x: cx - w * 0.22, z: cz - d * 0.18, heading: 0, hw: 2.3, hl: 4.2, h: 1.9 },
+      { x: cx + w * 0.2, z: cz + d * 0.12, heading: Math.PI, hw: 2.3, hl: 4.2, h: 1.9 },
+      { x: cx + w * 0.18, z: cz - d * 0.3, heading: -Math.PI / 2, hw: 2, hl: 3.2, h: 1.2 },
+      { x: cx - w * 0.2, z: cz + d * 0.32, heading: Math.PI / 2, hw: 2, hl: 3.2, h: 1.2 },
+    );
+  }
+
+  /** Kicker ramps left in the kerb lane of a few main roads (road works). */
+  private streetRamps(): void {
+    const rng = new Rng(0x4a3e);
+    const used = new Set<number>();
+    for (const l of this.links) {
+      if (this.ramps.length >= 10) break;
+      if (l.cls === 'side' || l.lanes < 2 || l.len < 70 || used.has(l.id) || used.has(l.reverse)) continue;
+      if (!rng.chance(0.33)) continue;
+      const lane = l.lanes - 1;
+      const s = l.len * rng.range(0.45, 0.6);
+      const hl = 3;
+      const p = this.linkPoint(l, s, this.laneOffset(l, lane));
+      this.ramps.push({ x: p.x, z: p.z, heading: l.heading, hw: l.laneW / 2 - 0.2, hl, h: 1.25 });
+      l.rampLane = lane;
+      l.rampS0 = s - hl;
+      l.rampS1 = s + hl;
+      used.add(l.id);
+    }
   }
 
   /** Fill a lot with back-to-back buildings, with the odd drivable alley. */
@@ -471,9 +537,26 @@ export class CityMap {
     return false;
   }
 
-  /** Surface height: 0 on asphalt, kerb height on pavements / medians. */
+  /** Surface height: 0 on asphalt, kerb height on pavements / medians, plus any ramp. */
   groundY(x: number, z: number): number {
-    return this.isRoad(x, z) ? 0 : KERB_H;
+    return (this.isRoad(x, z) ? 0 : KERB_H) + this.rampHeight(x, z);
+  }
+
+  /** Height a ramp adds at (x, z), 0 if none. */
+  rampHeight(x: number, z: number): number {
+    const list = this.rampGrid.get(cellKey(Math.floor(x / GRID), Math.floor(z / GRID)));
+    if (!list) return 0;
+    let h = 0;
+    for (const i of list) {
+      const r = this.ramps[i];
+      const dx = x - r.x, dz = z - r.z;
+      const s = Math.sin(r.heading), c = Math.cos(r.heading);
+      const along = dx * s + dz * c;
+      const lat = dx * c - dz * s;
+      if (Math.abs(along) > r.hl || Math.abs(lat) > r.hw) continue;
+      h = Math.max(h, (r.h * (along + r.hl)) / (2 * r.hl));
+    }
+    return h;
   }
 
   /** Solid colliders whose cell overlaps the circle (stable, may repeat). */

@@ -15,11 +15,13 @@ export class TouchInputState {
   joystick = 0;
   gas = false;
   brake = false;
+  /** handbrake drift button: gas + brake together */
+  drift = false;
   horn = false;
   dipper = false;
 
   clear(): void {
-    this.left = this.right = this.gas = this.brake = this.horn = this.dipper = false;
+    this.left = this.right = this.gas = this.brake = this.horn = this.dipper = this.drift = false;
     this.joystick = 0;
   }
 }
@@ -68,7 +70,7 @@ export class InputManager {
   }
 
   private isGameKey(code: string): boolean {
-    return /^(Arrow|Space)/.test(code) || code === 'KeyW' || code === 'KeyA' || code === 'KeyS' || code === 'KeyD';
+    return /^(Arrow|Space)/.test(code) || code === 'KeyW' || code === 'KeyA' || code === 'KeyS' || code === 'KeyD' || code === 'KeyE';
   }
 
   /** Enter / gamepad A or Start: start or restart. */
@@ -100,8 +102,10 @@ export class InputManager {
     const t = this.touch;
 
     // Keyboard.
-    const kThrottle = k.has('KeyW') || k.has('ArrowUp') ? 1 : 0;
-    const kBrake = k.has('KeyS') || k.has('ArrowDown') ? 1 : 0;
+    // E = handbrake drift: presses gas and brake together (the sim's drift combo).
+    const kDrift = k.has('KeyE');
+    const kThrottle = k.has('KeyW') || k.has('ArrowUp') || kDrift ? 1 : 0;
+    const kBrake = k.has('KeyS') || k.has('ArrowDown') || kDrift ? 1 : 0;
     const kLeft = k.has('KeyA') || k.has('ArrowLeft');
     const kRight = k.has('KeyD') || k.has('ArrowRight');
     const kHorn = k.has('Space');
@@ -121,6 +125,11 @@ export class InputManager {
       const b = (i: number) => pad.buttons[i];
       gThrottle = deadZone(b(7)?.value ?? 0);
       gBrake = deadZone(b(6)?.value ?? 0);
+      // East / B = handbrake drift (gas + brake together).
+      if (b(1)?.pressed) {
+        gThrottle = 1;
+        gBrake = 1;
+      }
       gSteer = deadZone(pad.axes[0] ?? 0);
       // D-pad as a fallback steer.
       if (b(14)?.pressed) gSteer -= 1;
@@ -136,12 +145,12 @@ export class InputManager {
       this.prevPadMute = mute;
     }
 
-    if (t.gas || t.brake || t.left || t.right || t.joystick || t.horn || t.dipper) this.lastSource = 'touch';
+    if (t.gas || t.brake || t.drift || t.left || t.right || t.joystick || t.horn || t.dipper) this.lastSource = 'touch';
 
     const steer = Math.max(-1, Math.min(1, this.digitalSteer + t.joystick + gSteer));
     return {
-      throttle: Math.max(kThrottle, t.gas ? 1 : 0, gThrottle),
-      brake: Math.max(kBrake, t.brake ? 1 : 0, gBrake),
+      throttle: Math.max(kThrottle, t.gas || t.drift ? 1 : 0, gThrottle),
+      brake: Math.max(kBrake, t.brake || t.drift ? 1 : 0, gBrake),
       steer,
       horn: kHorn || t.horn || gHorn,
       dipper: kDipper || t.dipper || gDipper,

@@ -288,4 +288,42 @@ export class SoundEngine {
       o.stop(t + i * 0.12 + 0.6);
     });
   }
+
+  /** Boost: a rising whoosh plus a low turbo thump. */
+  whoosh(): void {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    const t = ctx.currentTime;
+    const src = ctx.createBufferSource();
+    src.buffer = this.noise;
+    const f = ctx.createBiquadFilter();
+    f.type = 'bandpass';
+    f.Q.value = 1.4;
+    f.frequency.setValueAtTime(400, t);
+    f.frequency.exponentialRampToValueAtTime(2600, t + 0.45);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.001, t);
+    g.gain.exponentialRampToValueAtTime(0.45, t + 0.08);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.6);
+    src.connect(f).connect(g).connect(this.master);
+    src.start(t, Math.random() * 1.5);
+    src.stop(t + 0.65);
+    this.thump(110, 0.25, 0.35);
+  }
+
+  /** Something knocked flying: wood / plastic clatter, or a hollow drum bonk. */
+  smash(kind: string, intensity: number): void {
+    const i = Math.min(1, intensity);
+    if (kind === 'drum') {
+      this.thump(140, 0.35, 0.5 + i * 0.3);
+      this.burst(0.2, 900, 4, 0.2, 'bandpass');
+    } else if (kind === 'cone' || kind === 'chair') {
+      this.burst(0.12, 1600, 3, 0.25 + i * 0.2, 'bandpass');
+      this.thump(220, 0.08, 0.2);
+    } else {
+      this.thump(95, 0.22, 0.45 + i * 0.3);
+      this.burst(0.3, 1200, 1.2, 0.35 + i * 0.3);
+      this.burst(0.18, 2600, 6, 0.2, 'bandpass');
+    }
+  }
 }

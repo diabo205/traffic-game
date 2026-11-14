@@ -62,6 +62,12 @@ export interface CityNpc {
   /** knock-back from collisions, decays to zero */
   kx: number;
   kz: number;
+  /** knock-back velocity and spin from being shoved */
+  kvx: number;
+  kvz: number;
+  kSpin: number;
+  /** heading offset from being spun round (decays) */
+  kHead: number;
 
   /** renderer compatibility with route NPCs */
   dir: 1;
@@ -121,7 +127,8 @@ export class CityTraffic {
     const kind = rng.weighted(WEIGHTS);
     // Hand carts keep to the kerb lane of multi-lane streets.
     if (kind === 'cart' && link.lanes < 2) return;
-    const lane = kind === 'cart' ? link.lanes - 1 : rng.int(0, link.lanes - 1);
+    let lane = kind === 'cart' ? link.lanes - 1 : rng.int(0, link.lanes - 1);
+    if (lane === link.rampLane) lane = 0;
     const s = rng.range(4, link.len - 4);
     const off = this.map.laneOffset(link, lane);
     const p = this.map.linkPoint(link, s, off);
@@ -150,6 +157,10 @@ export class CityTraffic {
       heading: link.heading,
       kx: 0,
       kz: 0,
+      kvx: 0,
+      kvz: 0,
+      kSpin: 0,
+      kHead: 0,
       dir: 1,
       latVel: 0,
       brakeLights: false,
@@ -199,6 +210,8 @@ export class CityTraffic {
     const out = m.links[pick];
     n.nextLink = pick;
     n.nextLane = n.kind === 'cart' ? out.lanes - 1 : Math.min(n.lane, out.lanes - 1);
+    // Keep out of a lane with a ramp in it.
+    if (n.nextLane === out.rampLane) n.nextLane = 0;
   }
 
   private cruise(n: CityNpc, link: CityLink): number {
@@ -291,7 +304,11 @@ export class CityTraffic {
         const os = NPC_SPECS[o.kind];
         consider(o.id, o.x, o.z, os.hw, os.hl);
       }
-      consider(0, px, pz, ALTO.halfWidth, ALTO.halfLength);
+      if (player.y < 1.6) consider(0, px, pz, ALTO.halfWidth, ALTO.halfLength);
+      // Ramps left in the road are obstacles too.
+      for (const r of m.ramps) {
+        if (Math.abs(r.x - n.x) < 40 && Math.abs(r.z - n.z) < 40) consider(-2, r.x, r.z, r.hw, r.hl);
+      }
       n.blocker = blocker;
       if (creep) target = Math.min(target, 3);
 
@@ -305,7 +322,8 @@ export class CityTraffic {
 
       // ---- Lane change around a slow vehicle -----------------------------------
       if (!n.path && n.blockedTime > 1.2 && link.lanes > 1 && n.kind !== 'cart' && link.len - n.s > 20) {
-        const want = n.lane === 0 ? 1 : n.lane - 1;
+        let want = n.lane === 0 ? 1 : n.lane - 1;
+        if (want === link.rampLane && n.s < link.rampS1 + 3) want = n.lane;
         const off = m.laneOffset(link, want);
         const p = m.linkPoint(link, n.s, off);
         let clear = true;
@@ -317,7 +335,7 @@ export class CityTraffic {
           }
         }
         if (Math.hypot(px - p.x, pz - p.z) < 8) clear = false;
-        if (clear) {
+        if (clear && want !== n.lane) {
           n.lane = want;
           n.blockedTime = 0;
           n.nextLane = Math.min(n.lane, m.links[n.nextLink].lanes - 1);
@@ -373,12 +391,23 @@ export class CityTraffic {
         heading = l.heading - Math.atan2(latRate, Math.max(n.speed, 1.5));
         n.latVel = -latRate;
       }
-      // Knock-back from hits fades out.
-      const decay = Math.exp(-dt * 1.6);
-      n.kx *= decay;
-      n.kz *= decay;
+      // Shoves: slide off with friction, spin, then drift back into lane.
+      n.kx += n.kvx * dt;
+      n.kz += n.kvz * dt;
+      const fr = Math.exp(-dt * 3.2);
+      n.kvx *= fr;
+      n.kvz *= fr;
+      n.kHead += n.kSpin * dt;
+      n.kSpin *= Math.exp(-dt * 2.5);
+      const back = Math.exp(-dt * 0.9);
+      n.kx *= back;
+      n.kz *= back;
+      n.kHead *= Math.exp(-dt * 1.1);
       n.x = x + n.kx;
       n.z = z + n.kz;
+      heading += n.kHead;
+      // A shoved vehicle stops to collect itself.
+      if (Math.hypot(n.kvx, n.kvz) > 1 || Math.abs(n.kSpin) > 0.6) n.speed *= Math.exp(-dt * 3);
       // Keep heading continuous with the previous tick (no 2*pi jumps for interpolation).
       let dh = heading - n.prevHeading;
       dh = Math.atan2(Math.sin(dh), Math.cos(dh));
