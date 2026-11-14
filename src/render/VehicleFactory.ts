@@ -273,7 +273,7 @@ export class VehicleFactory {
     await Promise.all(
       ['alto', 'rickshaw', 'minibus'].map(async (name) => {
         try {
-          const gltf = await loader.loadAsync(`${import.meta.env.BASE_URL}models/${name}.glb`);
+          const gltf = await loader.loadAsync(`${import.meta.env.BASE_URL}models/${name}.${(import.meta.env.VITE_MODEL_EXT as string | undefined) ?? 'glb'}`);
           this.models.set(name, gltf.scene);
         } catch (err) {
           console.warn(`model ${name}.glb unavailable, using procedural mesh`, err);
