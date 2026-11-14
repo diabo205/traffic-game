@@ -39,6 +39,8 @@ export class PlayerCar {
   roll = 0;
   /** body pitch (rad), positive = nose up */
   pitch = 0;
+  rollVel = 0;
+  pitchVel = 0;
   /** suspension displacement for jolts (m, negative = compressed) */
   bump = 0;
   bumpVel = 0;
@@ -74,6 +76,7 @@ export class PlayerCar {
     this.steerAngle = 0;
     this.yawRate = 0;
     this.roll = this.pitch = this.bump = this.bumpVel = 0;
+    this.rollVel = this.pitchVel = 0;
     this.prevRoll = this.prevPitch = this.prevBump = 0;
     this.integrity = 100;
     this.horn = this.dipper = this.braking = this.reversing = false;
@@ -204,11 +207,16 @@ export class PlayerCar {
     this.z += Math.cos(this.travel) * nv * dt;
 
     // --- Body motion (visual, but deterministic) ----------------------------
+    // Under-damped springs so the body leans into a turn, settles with a
+    // little wobble, squats on the gas and dives under braking.
     const latAccel = nv * yaw;
-    const rollTarget = clamp(-latAccel * 0.012, -0.13, 0.13);
-    this.roll += (rollTarget - this.roll) * Math.min(1, dt * 7);
-    const pitchTarget = clamp(-a * 0.007, -0.06, 0.05);
-    this.pitch += (pitchTarget - this.pitch) * Math.min(1, dt * 6);
+    const rollTarget = clamp(-latAccel * 0.0115, -0.12, 0.12);
+    this.rollVel += (90 * (rollTarget - this.roll) - 10 * this.rollVel) * dt;
+    this.roll += this.rollVel * dt;
+    // Nose up (squat) when accelerating, nose down (dive) when braking.
+    const pitchTarget = clamp(a * 0.0075, -0.075, 0.045);
+    this.pitchVel += (75 * (pitchTarget - this.pitch) - 10 * this.pitchVel) * dt;
+    this.pitch += this.pitchVel * dt;
 
     // Suspension spring for jolts.
     const k = 160, c = 11;

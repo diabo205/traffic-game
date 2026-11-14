@@ -8,6 +8,7 @@ import { CityScenery } from './CityScenery';
 import { Effects } from './Effects';
 import { Environment } from './Environment';
 import { FareVisuals } from './FareVisuals';
+import { TyreFx } from './TyreFx';
 import { VehicleFactory } from './VehicleFactory';
 import type { VehicleVisual, VisualKind } from './VehicleFactory';
 
@@ -35,6 +36,7 @@ export class Renderer {
   private fares: FareVisuals | null = null;
   private effects = new Effects();
   private birds = new Birds();
+  private tyres = new TyreFx();
   private player: VehicleVisual | null = null;
   private npcVisuals = new Map<number, VehicleVisual>();
   private pool = new Map<string, VehicleVisual[]>();
@@ -77,6 +79,7 @@ export class Renderer {
     this.sun.shadow.bias = -0.0008;
     this.scene.add(this.sun, this.sun.target);
     this.scene.add(this.effects.points);
+    this.scene.add(this.tyres.group);
     this.scene.add(this.birds.mesh);
 
     this.resize();
@@ -115,6 +118,10 @@ export class Renderer {
     for (const [id, v] of this.npcVisuals) this.release(v, id);
     this.npcVisuals.clear();
     this.chase.reset();
+    this.tyres.clear();
+    // Compile every shader now, so nothing pops in (or hitches) the first
+    // time it is drawn: a new road material, the first skid, the first puff.
+    this.gl.compile(this.scene, this.chase.camera);
   }
 
   resize(): void {
@@ -128,6 +135,10 @@ export class Renderer {
     const p = world.player;
     const y = world.groundY(p.x, p.z);
     switch (e.type) {
+      case 'towed':
+        this.tyres.clear();
+        this.chase.reset();
+        break;
       case 'kerb':
         this.chase.addTrauma(0.08 + e.severity * 0.2);
         break;
@@ -242,9 +253,16 @@ export class Renderer {
     }
 
     // ---- Camera / world -----------------------------------------------------
-    const kick = world.speedRush();
+    const ground = (x: number, z: number) => world.groundY(x, z);
+    const slide = this.tyres.update(dt, p, px, pz, heading, ground, this.chase.pixelScale(this.gl.domElement.height));
     this.tmp.set(px, elev, -pz);
-    this.chase.update(dt, this.tmp, heading, p.speed, kick, lerp(p.prevBump, p.bump));
+    this.chase.update(dt, this.tmp, heading, p.speed, {
+      travel: p.travel,
+      fovKick: world.speedRush(),
+      bump: lerp(p.prevBump, p.bump),
+      slide: Math.max(slide.front, slide.rear),
+      topSpeed: world.topSpeed(),
+    });
 
     this.sun.position.set(px - 40, elev + 60, -pz + 25);
     this.birds.update(dt, pz, elev, this.time);
