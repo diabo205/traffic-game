@@ -1,7 +1,7 @@
 import { LevelManager } from '../LevelManager';
 import type { RunStats } from '../LevelManager';
 import { clamp, obbOverlap, pointObbDistance } from '../math';
-import { ALTO, PlayerCar } from '../PlayerCar';
+import { ALTO, MOVES, PlayerCar, WALL } from '../PlayerCar';
 import { NPC_SPECS } from '../TrafficManager';
 import type { GameOverReason, GamePhase, InputFrame, NpcView, Obb, SimEvent } from '../types';
 import { cityMap } from './cityMap';
@@ -53,6 +53,7 @@ export class CityWorld {
   readonly props: Props;
   readonly stunts = new Stunts();
   private lastHonkTick = -1e9;
+  private wasPinned = false;
   readonly level: CityLevel;
   private startX = 0;
   private startZ = 0;
@@ -159,6 +160,9 @@ export class CityWorld {
     this.traffic.update(1 / 60, p);
     this.trafficCollisions();
     this.streetName();
+    const pinned = p.pinnedTime >= MOVES.pinnedHint;
+    if (pinned && !this.wasPinned) this.events.push({ type: 'pinned' });
+    this.wasPinned = pinned;
     this.fares.update(1 / 60, p, this.tick, this.events);
 
     // Horn / dipper cleared the way.
@@ -234,13 +238,18 @@ export class CityWorld {
   /** Reflect the velocity off a surface with normal n and apply crash damage. */
   private bounce(nx: number, nz: number, hx: number, hz: number): void {
     const p = this.player;
+    const fresh = p.wallContact === 0;
+    p.wallContact = WALL.memoryTicks;
     const { vx, vz } = p.velocity();
     const rel = vx * nx + vz * nz;
     if (rel >= 0) return;
     const j = -(1 + RESTITUTION) * rel;
     p.setVelocity(vx + nx * j, vz + nz * j);
+    p.scrapeWall(nx, nz);
     const impact = -rel;
-    if (impact > 3 && this.tick - this.lastWallHitTick > HIT_COOLDOWN) {
+    // Already scraping along this wall: steering back into it isn't a new crash
+    // unless it's a real hit (well above the scrape threshold).
+    if (impact > (fresh ? 3 : 8) && this.tick - this.lastWallHitTick > HIT_COOLDOWN) {
       this.lastWallHitTick = this.tick;
       const dmg = Math.min(30, (impact - 3) * 1.7);
       this.damage(dmg);
@@ -257,18 +266,26 @@ export class CityWorld {
     const p = this.player;
     let g = this.map.groundY(p.x, p.z);
     if (g > p.y + MAX_STEP) {
-      // Drove into the tall side of a ramp: stop as if it were a wall.
-      p.x = p.prevX;
-      p.z = p.prevZ;
-      const impact = Math.abs(p.speed);
-      p.speed *= -0.25;
-      if (impact > 3 && this.tick - this.lastWallHitTick > HIT_COOLDOWN) {
-        this.lastWallHitTick = this.tick;
-        const dmg = Math.min(20, (impact - 3) * 1.2);
-        this.damage(dmg);
-        this.level.stats.crashes++;
-        this.events.push({ type: 'crash', impact, damage: dmg, x: p.x, z: p.z });
+      // Drove into the tall side of a ramp: treat it as a wall. Undo only the
+      // axis that climbed the step so the car slides along the side instead of
+      // being frozen in place (which pinned it at 0 km/h).
+      const lim = p.y + MAX_STEP;
+      const dx = p.x - p.prevX, dz = p.z - p.prevZ;
+      let nx = 0, nz = 0;
+      if (this.map.groundY(p.x, p.prevZ) <= lim) {
+        p.z = p.prevZ;
+        nz = dz > 0 ? -1 : 1;
+      } else if (this.map.groundY(p.prevX, p.z) <= lim) {
+        p.x = p.prevX;
+        nx = dx > 0 ? -1 : 1;
+      } else {
+        p.x = p.prevX;
+        p.z = p.prevZ;
+        // Pick the axis we moved most along as the face we hit.
+        if (Math.abs(dx) > Math.abs(dz)) nx = dx > 0 ? -1 : 1;
+        else nz = dz > 0 ? -1 : 1;
       }
+      this.bounce(nx, nz, p.x - nx * ALTO.halfLength, p.z - nz * ALTO.halfLength);
       g = this.map.groundY(p.x, p.z);
     }
     const wasAir = p.airborne;

@@ -73,6 +73,8 @@ export type SimEvent =
   | { type: 'splash' }
   | { type: 'crash'; impact: number; damage: number; x: number; z: number }
   | { type: 'scrape'; intensity: number }
+  /** stuck nose-first against a wall with the gas held (HUD hints to reverse) */
+  | { type: 'pinned' }
   | { type: 'checkpoint'; label: string; bonus: number }
   | { type: 'zone'; zoneIndex: number; name: string; banner: string }
   | { type: 'kerb'; severity: number }

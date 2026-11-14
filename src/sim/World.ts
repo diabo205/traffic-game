@@ -2,7 +2,7 @@ import { HazardManager } from './HazardManager';
 import type { Hazard } from './HazardManager';
 import { LevelManager } from './LevelManager';
 import { clamp, obbOverlap, pointObbDistance } from './math';
-import { ALTO, PlayerCar } from './PlayerCar';
+import { ALTO, MOVES, PlayerCar, WALL } from './PlayerCar';
 import { ZONES, elevationAt, sampleRoad } from './road';
 import { NPC_SPECS, TrafficManager } from './TrafficManager';
 import type { InputFrame, NpcView, SimEvent } from './types';
@@ -14,6 +14,8 @@ export const DT = 1 / TICK_RATE;
 const RESTITUTION = 0.25;
 /** Hits closer together than this (ticks) don't stack damage. */
 const HIT_COOLDOWN = 36;
+/** Max fraction of the zone top speed you can hold while grinding the barrier. */
+const BARRIER_RIDE_CAP = 0.6;
 
 /**
  * The whole game state. Advance with step() at a fixed rate; read the public
@@ -117,7 +119,8 @@ export class World {
     if (p.driftEnded > 1) this.events.push({ type: 'drift', seconds: p.driftEnded });
     p.settle(elevationAt(p.z), DT);
     this.constrainToRoad();
-    this.hazardContacts(input);
+    this.pinnedHint();
+    if (running) this.hazardContacts(input);
     this.traffic.update(DT, p, this.hazards, this.tick);
     this.trafficCollisions();
 
@@ -165,10 +168,15 @@ export class World {
 
     const { vx, vz } = p.velocity();
     const into = vx * side; // >0 = moving into the wall
+    // Grinding along the barrier is a scrape, not a fresh crash every time you lean on it.
+    const fresh = p.wallContact === 0;
+    p.wallContact = WALL.memoryTicks;
     if (into > 0) {
-      p.setVelocity(-vx * 0.15, vz * 0.97);
-      p.heading *= 0.75;
-      if (into > 4 && this.tick - this.lastWallHitTick > HIT_COOLDOWN) {
+      // Kill the push into the barrier, keep the speed along it, and swing
+      // the nose parallel so a graze slides instead of grabbing the car.
+      p.setVelocity(-vx * 0.15, vz);
+      p.scrapeWall(-side, 0);
+      if (fresh && into > 4 && this.tick - this.lastWallHitTick > HIT_COOLDOWN) {
         const dmg = (into - 4) * 1.8;
         this.damage(dmg);
         this.lastWallHitTick = this.tick;
@@ -177,11 +185,22 @@ export class World {
         p.kick(-0.25);
       }
     }
+    // Riding the barrier is never the fast line: grinding caps you well
+    // below lane speed (no free traffic-proof wall ride).
+    const cap = sampleRoad(p.z).topSpeed * BARRIER_RIDE_CAP;
+    if (p.speed > cap) p.speed -= (p.speed - cap) * 0.04;
     if (Math.abs(vz) > 3 && this.tick - this.lastScrapeTick > 6) {
       this.lastScrapeTick = this.tick;
       this.events.push({ type: 'scrape', intensity: clamp(Math.abs(vz) / 25, 0.1, 1) });
-      p.speed *= 0.985;
     }
+  }
+
+  private pinnedTicks = 0;
+  /** Nose against a wall, gas held, not moving: tell the player to back up (once per pin). */
+  private pinnedHint(): void {
+    const t = this.player.pinnedTime;
+    if (t >= MOVES.pinnedHint && this.pinnedTicks === 0) this.events.push({ type: 'pinned' });
+    this.pinnedTicks = t >= MOVES.pinnedHint ? 1 : 0;
   }
 
   private hazardContacts(input: InputFrame): void {
@@ -228,10 +247,11 @@ export class World {
     if (pointObbDistance(h.x, h.z, p.obb()) > h.hw * 0.8) return;
     h.lastHitTick = this.tick;
     const v = Math.abs(p.speed);
-    const dmg = v > 3 ? Math.round(10 + 10 * clamp(v / 25, 0, 1)) : 3;
+    // Hurts and jolts, but no longer halves your speed: one hole shouldn't decide the run.
+    const dmg = v > 3 ? Math.round(6 + 8 * clamp(v / 25, 0, 1)) : 2;
     this.damage(dmg);
     p.kick(-1.3);
-    p.speed *= 0.5;
+    p.speed *= 0.78;
     this.level.stats.manholes++;
     this.events.push({ type: 'manhole', damage: dmg });
   }
@@ -242,11 +262,13 @@ export class World {
     if (!mtv) return;
     p.x += mtv.nx * mtv.depth;
     p.z += mtv.nz * mtv.depth;
+    p.wallContact = WALL.memoryTicks;
     const { vx, vz } = p.velocity();
     const rel = vx * mtv.nx + vz * mtv.nz;
     if (rel >= 0) return;
     const j = -(1 + RESTITUTION) * rel;
     p.setVelocity(vx + mtv.nx * j, vz + mtv.nz * j);
+    p.scrapeWall(mtv.nx, mtv.nz);
     const impact = -rel;
     if (impact > 2 && this.tick - h.lastHitTick > HIT_COOLDOWN) {
       h.lastHitTick = this.tick;

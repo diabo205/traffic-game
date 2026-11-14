@@ -119,7 +119,7 @@ function run(world, segments, mode, road, trace) {
   const samples = [];
   const m = {
     t50: null, t80: null, topKmh: 0, stopDistM: null, stopTimeS: null,
-    wallContactTicks: 0, longestWallContactS: 0, stuckS: 0, longestStuckS: 0,
+    wallContactTicks: 0, longestWallContactS: 0, stuckS: 0, longestStuckS: 0, longestStuckAt: null,
     speedLostOnWallPct: null, nanOrInf: false, maxYawRate: 0, teleports: 0,
   };
   let t = 0, contact = 0, stuck = 0, brakeStart = null, wallEntrySpeed = null, wallMinSpeed = Infinity;
@@ -160,7 +160,7 @@ function run(world, segments, mode, road, trace) {
         m.longestWallContactS = Math.max(m.longestWallContactS, contact / 60); contact = 0;
       }
       if (world.phase === "running" && s.throttle > 0.5 && s.brake < 0.5 && Math.abs(p.speed) < 1 && t > 0.5) stuck++;
-      else { m.longestStuckS = Math.max(m.longestStuckS, stuck / 60); if (stuck) m.stuckS += stuck / 60; stuck = 0; }
+      else { if (stuck / 60 > m.longestStuckS) { m.longestStuckS = stuck / 60; m.longestStuckAt = +(t - stuck / 60).toFixed(2); } if (stuck) m.stuckS += stuck / 60; stuck = 0; }
       if (trace ? i % 6 === 0 : i % 30 === 0) {
         samples.push({ t: +t.toFixed(2), label: s.label, kmh: +kmh.toFixed(1), x: +p.x.toFixed(1), z: +p.z.toFixed(1), y: +p.y.toFixed(2), heading: +p.heading.toFixed(3), slip: +wrap(p.heading - p.travel).toFixed(3), steerAngle: +p.steerAngle.toFixed(3), hp: +p.integrity.toFixed(1), boost: +p.boostTime.toFixed(2), drift: +p.drift.toFixed(2), air: p.airborne });
       }

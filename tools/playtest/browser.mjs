@@ -65,7 +65,7 @@ const t0 = Date.now();
 const hudText = async () => (await page.evaluate(() => document.body.innerText)).replace(/\s+/g, ' ').slice(0, 400);
 for (const s of script.steps) {
   try {
-    if (s.click) await page.click(s.click, { timeout: 3000 });
+    if (s.click) await page.click(s.click, { timeout: 3000, force: true }); // menu buttons pulse, so skip the stability wait
     else if (s.press) await page.keyboard.press(s.press);
     else if (s.hold) {
       for (const k of s.hold) await page.keyboard.down(k);
