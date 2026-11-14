@@ -3,6 +3,7 @@ import type { RunStats } from '../LevelManager';
 import { clamp, obbOverlap, pointObbDistance } from '../math';
 import { ALTO, MOVES, PlayerCar, WALL } from '../PlayerCar';
 import { NPC_SPECS } from '../TrafficManager';
+import { trafficDamage } from '../World';
 import type { GameOverReason, GamePhase, InputFrame, NpcView, Obb, SimEvent } from '../types';
 import { cityMap } from './cityMap';
 import type { CityMap, Rect } from './cityMap';
@@ -11,7 +12,8 @@ import { Fares } from './Fares';
 import { Props } from './Props';
 import { Stunts } from './Stunts';
 
-const RESTITUTION = 0.25;
+const RESTITUTION = 0.15;
+const TRAFFIC_RESTITUTION = 0.1;
 const HIT_COOLDOWN = 36;
 /** City top speed for the Alto (m/s, ~100 km/h). */
 const CITY_TOP_SPEED = 27.8;
@@ -340,7 +342,7 @@ export class CityWorld {
       const nvz = Math.cos(n.heading) * n.speed;
       const rel = (vx - nvx) * mtv.nx + (vz - nvz) * mtv.nz;
       if (rel >= 0) continue;
-      const j = -(1 + RESTITUTION) * rel;
+      const j = -(1 + TRAFFIC_RESTITUTION) * rel;
       p.setVelocity(vx + mtv.nx * j * mr, vz + mtv.nz * j * mr);
       // The NPC gets shoved (light ones fly sideways and spin) and loses speed.
       const shove = j * (1 - mr);
@@ -355,7 +357,7 @@ export class CityWorld {
       const impact = -rel;
       if (impact > 1.5 && this.tick - n.lastHitTick > HIT_COOLDOWN) {
         n.lastHitTick = this.tick;
-        const dmg = Math.min(40, (impact - 1.5) * spec.damage * 1.1);
+        const dmg = trafficDamage(impact, spec.damage);
         this.damage(dmg);
         this.level.stats.crashes++;
         p.kick(-0.2 - Math.min(0.4, impact * 0.02));

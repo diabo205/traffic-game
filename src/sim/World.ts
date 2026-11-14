@@ -16,6 +16,20 @@ const RESTITUTION = 0.25;
 const HIT_COOLDOWN = 36;
 /** Max fraction of the zone top speed you can hold while grinding the barrier. */
 const BARRIER_RIDE_CAP = 0.6;
+/** Extra rolling drag on the dirt shoulder (m/s^2): caps you around 75% of zone speed. */
+const SHOULDER_DRAG = 2.0;
+/** Player-vs-traffic bounce: lower than walls so a rear-end doesn't fling you backwards. */
+const TRAFFIC_RESTITUTION = 0.1;
+
+/**
+ * Damage from hitting traffic. Soft at city-traffic closing speeds (a
+ * nudge at 15 km/h is a few HP), still brutal for a head-on at speed.
+ */
+export function trafficDamage(impact: number, kindDamage: number): number {
+  if (impact <= 2.5) return 0;
+  const x = impact - 2.5;
+  return Math.min(35, x * (0.35 + x * 0.06) * kindDamage);
+}
 
 /**
  * The whole game state. Advance with step() at a fixed rate; read the public
@@ -144,6 +158,9 @@ export class World {
       if (!this.onWater && v > 6) this.events.push({ type: 'splash' });
     }
     this.onWater = wet;
+    // The dirt shoulder is rough: drivable for dodging, never the fast line.
+    const road = sampleRoad(p.z);
+    if (p.x < road.left - ALTO.halfWidth * 0.5) p.extraDrag += SHOULDER_DRAG;
   }
 
   private constrainToRoad(): void {
@@ -188,7 +205,7 @@ export class World {
     // Riding the barrier is never the fast line: grinding caps you well
     // below lane speed (no free traffic-proof wall ride).
     const cap = sampleRoad(p.z).topSpeed * BARRIER_RIDE_CAP;
-    if (p.speed > cap) p.speed -= (p.speed - cap) * 0.04;
+    if (p.speed > cap) p.speed -= (p.speed - cap) * 0.2;
     if (Math.abs(vz) > 3 && this.tick - this.lastScrapeTick > 6) {
       this.lastScrapeTick = this.tick;
       this.events.push({ type: 'scrape', intensity: clamp(Math.abs(vz) / 25, 0.1, 1) });
@@ -270,8 +287,9 @@ export class World {
     p.setVelocity(vx + mtv.nx * j, vz + mtv.nz * j);
     p.scrapeWall(mtv.nx, mtv.nz);
     const impact = -rel;
-    if (impact > 2 && this.tick - h.lastHitTick > HIT_COOLDOWN) {
+    if (impact > 2 && this.tick - h.lastHitTick > HIT_COOLDOWN && this.tick - this.lastWallHitTick > HIT_COOLDOWN) {
       h.lastHitTick = this.tick;
+      this.lastWallHitTick = this.tick;
       const dmg = Math.min(35, (impact - 2) * 2.3);
       this.damage(dmg);
       this.level.stats.crashes++;
@@ -301,7 +319,7 @@ export class World {
       const nvz = n.dir * n.speed;
       const rel = (vx - nvx) * mtv.nx + (vz - nvz) * mtv.nz;
       if (rel >= 0) continue;
-      const j = -(1 + RESTITUTION) * rel;
+      const j = -(1 + TRAFFIC_RESTITUTION) * rel;
       p.setVelocity(vx + mtv.nx * j * mr, vz + mtv.nz * j * mr);
       const newNvz = nvz - mtv.nz * j * (1 - mr);
       n.speed = Math.max(0, newNvz * n.dir);
@@ -310,7 +328,7 @@ export class World {
       const impact = -rel;
       if (impact > 1.5 && this.tick - n.lastHitTick > HIT_COOLDOWN) {
         n.lastHitTick = this.tick;
-        const dmg = Math.min(40, (impact - 1.5) * spec.damage * 1.1);
+        const dmg = trafficDamage(impact, spec.damage);
         this.damage(dmg);
         this.level.stats.crashes++;
         p.kick(-0.2 - Math.min(0.4, impact * 0.02));
