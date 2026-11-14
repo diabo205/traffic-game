@@ -233,7 +233,8 @@ export class PlayerCar {
     const target = Math.atan2(tx, tz);
     let d = target - this.heading;
     d = Math.atan2(Math.sin(d), Math.cos(d));
-    this.heading += d * WALL.align;
+    // The shallower the hit, the harder it straightens out along the wall.
+    this.heading += d * Math.min(1, WALL.align + (1 - into) * 0.4);
     // Keep the speed we still have, now pointing along the wall.
     const { vx, vz } = this.velocity();
     this.setVelocity(vx, vz);

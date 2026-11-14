@@ -46,7 +46,7 @@ const SMOKE = {
 const script = target === 'smoke' ? SMOKE : JSON.parse(readFileSync(target, 'utf8'));
 const mobile = args.includes('--mobile') || script.mobile;
 
-const server = await createServer({ root, logLevel: 'error', server: { port: 5199 + Math.floor(Math.random() * 300), strictPort: false, host: '127.0.0.1' } });
+const server = await createServer({ root, logLevel: 'error', server: { port: 5199 + Math.floor(Math.random() * 300), strictPort: false, host: '127.0.0.1', watch: { ignored: ['**/playtests/**', '**/tools/playtest/**'] } } });
 await server.listen();
 const base = server.resolvedUrls.local[0];
 const browser = await chromium.launch({ args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });

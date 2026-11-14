@@ -305,6 +305,8 @@ export class World {
       const box = TrafficManager.obb(n);
       const mtv = obbOverlap(p.obb(), box);
       if (!mtv) continue;
+      // A stopped bus is a wall too: allow the pivot and the STUCK hint.
+      if (n.speed < 1.5) p.wallContact = WALL.memoryTicks;
       const spec = NPC_SPECS[n.kind];
       // Mass share: how much of the correction the player takes.
       const mr = spec.mass / (spec.mass + ALTO.mass);
