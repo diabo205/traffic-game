@@ -84,6 +84,8 @@ export class InputManager {
   private prevPadConfirm = false;
   private prevPadMute = false;
   private muteQueued = false;
+  private radioQueued = false;
+  private prevPadRadio = false;
   private pauseQueued = false;
   private prevPadPause = false;
   lastSource: InputSource = 'keyboard';
@@ -99,6 +101,7 @@ export class InputManager {
       this.lastSource = 'keyboard';
       if (e.code === 'Enter' || e.code === 'NumpadEnter') this.confirmQueued = true;
       if (e.code === 'KeyM') this.muteQueued = true;
+      if (e.code === 'KeyR') this.radioQueued = true;
       if (e.code === 'Escape' || e.code === 'KeyP') this.pauseQueued = true;
       if (this.isGameKey(e.code)) e.preventDefault();
     });
@@ -200,6 +203,12 @@ export class InputManager {
     return m;
   }
 
+  consumeRadio(): boolean {
+    const r = this.radioQueued;
+    this.radioQueued = false;
+    return r;
+  }
+
   private findPad(): Gamepad | null {
     const pads = typeof navigator.getGamepads === 'function' ? navigator.getGamepads() : [];
     for (const p of pads) if (p && p.connected) return p;
@@ -261,6 +270,9 @@ export class InputManager {
       const mute = !!b(8)?.pressed;
       if (mute && !this.prevPadMute) this.muteQueued = true;
       this.prevPadMute = mute;
+      const radio = !!b(3)?.pressed;
+      if (radio && !this.prevPadRadio) this.radioQueued = true;
+      this.prevPadRadio = radio;
     }
 
     if (

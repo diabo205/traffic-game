@@ -81,6 +81,7 @@ export class Hud {
   private paneControls: HTMLDivElement;
   readonly rideBtn: HTMLButtonElement;
   readonly muteBtn: HTMLButtonElement;
+  readonly radioBtn: HTMLButtonElement;
   readonly camBtn: HTMLButtonElement;
   readonly todBtn: HTMLButtonElement;
   readonly touchBtn: HTMLButtonElement;
@@ -94,6 +95,7 @@ export class Hud {
   readonly pauseCamBtn: HTMLButtonElement;
   readonly pauseSteerBtn: HTMLButtonElement;
   readonly pauseControlsBtn: HTMLButtonElement;
+  readonly pauseRadioBtn: HTMLButtonElement;
   readonly pauseSoundBtn: HTMLButtonElement;
   readonly quitBtn: HTMLButtonElement;
   private endScreen: HTMLDivElement;
@@ -281,24 +283,24 @@ export class Hud {
     this.rideBtn = cardBtn('RIDE', 'ALTO', 'Switch vehicle');
     this.rideBtn.classList.add('wide');
     this.muteBtn = cardBtn('SOUND', 'ON', 'Toggle sound (M)');
+    this.radioBtn = cardBtn('RADIO', 'DHOL FM', 'Toggle Karachi Dhol FM radio (R)');
     this.camBtn = cardBtn('CAMERA', 'NEAR', 'Camera distance');
-    this.todBtn = cardBtn('TIME OF DAY', 'NOON', 'Noon, sunset, or night');
+    this.todBtn = cardBtn('TIME OF DAY', 'NOON', 'Noon, sunset, night, or monsoon');
     this.touchBtn = cardBtn('TOUCH CONTROLS', 'OFF', 'Show or hide touch controls');
     this.stickBtn = cardBtn('STEERING', 'BUTTONS', 'Steering buttons, joystick, or tilt');
     this.autoGasBtn = cardBtn('AUTO-GAS', 'OFF', 'Auto-accelerate on touch');
     this.hapticsBtn = cardBtn('HAPTICS', 'ON', 'Vibration feedback on supported devices');
-    this.hapticsBtn.classList.add('wide');
-    this.paneSound.append(this.rideBtn, this.muteBtn, this.camBtn, this.todBtn, this.touchBtn, this.stickBtn, this.autoGasBtn, this.hapticsBtn);
+    this.paneSound.append(this.rideBtn, this.muteBtn, this.radioBtn, this.camBtn, this.todBtn, this.touchBtn, this.stickBtn, this.autoGasBtn, this.hapticsBtn);
     this.paneControls = div('controls-pane hidden');
     this.paneControls.innerHTML = `
       <div class="ctl kb"><h3>KEYBOARD</h3>
         <p><b>W / ↑</b> gas · <b>S / ↓</b> brake, reverse</p>
         <p><b>A D / ← →</b> steer · <b>E</b> drift</p>
-        <p><b>SPACE</b> horn · <b>F / SHIFT</b> dipper · <b>ESC</b> pause</p></div>
+        <p><b>SPACE</b> horn · <b>F / SHIFT</b> dipper · <b>R</b> radio · <b>ESC</b> pause</p></div>
       <div class="ctl gp"><h3>GAMEPAD</h3>
         <p><b>RT</b> gas · <b>LT</b> brake</p>
         <p><b>LEFT STICK</b> steer · <b>B</b> drift</p>
-        <p><b>A</b> horn · <b>X</b> dipper · <b>START</b> pause</p></div>
+        <p><b>A</b> horn · <b>X</b> dipper · <b>Y</b> radio · <b>START</b> pause</p></div>
       <div class="ctl tc"><h3>TOUCH</h3>
         <p><b>◀ ▶</b>, joystick or tilt · <b>ZERO TILT</b> centers</p>
         <p><b>GAS / BRAKE</b> pedals · <b>DRIFT</b></p>
@@ -326,10 +328,11 @@ export class Hud {
     this.pauseCamBtn = cardBtn('CAMERA', 'NEAR', 'Camera distance');
     this.pauseSteerBtn = cardBtn('STEERING', 'BUTTONS', 'Touch steering mode');
     this.pauseControlsBtn = cardBtn('CONTROLS', '', 'Controls');
+    this.pauseRadioBtn = cardBtn('RADIO', 'DHOL FM', 'Toggle Karachi Dhol FM radio (R)');
     this.pauseSoundBtn = cardBtn('SOUND', 'ON', 'Sound');
     this.quitBtn = cardBtn('QUIT TO MENU', '', 'Quit to menu');
     const pRight = div('pause-right');
-    pRight.append(menuTag, this.resumeBtn, this.pauseCamBtn, this.pauseSteerBtn, this.pauseControlsBtn, this.pauseSoundBtn, this.quitBtn);
+    pRight.append(menuTag, this.resumeBtn, this.pauseCamBtn, this.pauseSteerBtn, this.pauseControlsBtn, this.pauseRadioBtn, this.pauseSoundBtn, this.quitBtn);
     this.pauseScreen.append(pLeft, pRight);
 
     // ---- Results --------------------------------------------------------------------------------------
@@ -429,6 +432,12 @@ export class Hud {
 
   setHaptics(on: boolean): void {
     setCard(this.hapticsBtn, on ? 'ON' : 'OFF');
+  }
+
+  setRadio(on: boolean): void {
+    const label = on ? 'DHOL FM' : 'OFF';
+    setCard(this.radioBtn, label);
+    setCard(this.pauseRadioBtn, label);
   }
 
   setMuted(m: boolean): void {

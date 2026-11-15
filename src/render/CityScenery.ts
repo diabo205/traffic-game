@@ -209,6 +209,8 @@ export class CityScenery {
   private ownedMats: THREE.Material[] = [];
   private ownedTex: THREE.Texture[] = [];
   private facadeMat!: THREE.MeshLambertMaterial;
+  private roadMat!: THREE.MeshPhongMaterial;
+  private puddleMat!: THREE.MeshPhongMaterial;
   private shopSignMat!: THREE.MeshLambertMaterial;
   private bannerMat!: THREE.MeshLambertMaterial;
   private lampBulbMat!: THREE.MeshLambertMaterial;
@@ -221,6 +223,7 @@ export class CityScenery {
     const shadow = !lowSpec;
     this.ground(map);
     this.roads(map);
+    this.puddles(map);
     this.pavements(map);
     this.markings(map);
     this.islands(map, shadow);
@@ -281,14 +284,25 @@ export class CityScenery {
   }
 
   setTimeOfDay(tod: TimeOfDay): void {
-    const night = tod === 'night' ? 0.95 : tod === 'sunset' ? 0.35 : 0;
+    const night = tod === 'night' ? 0.95 : tod === 'monsoon' ? 0.68 : tod === 'sunset' ? 0.35 : 0;
     setFacadeNight(this.facadeMat, night);
-    if (this.shopSignMat) this.shopSignMat.emissiveIntensity = tod === 'night' ? 0.95 : tod === 'sunset' ? 0.35 : 0;
-    if (this.bannerMat) this.bannerMat.emissiveIntensity = tod === 'night' ? 0.55 : tod === 'sunset' ? 0.2 : 0;
-    if (this.lampBulbMat) this.lampBulbMat.emissiveIntensity = tod === 'night' ? 1.2 : tod === 'sunset' ? 0.45 : 0;
-    for (const m of this.litProps) m.emissiveIntensity = tod === 'night' ? 0.65 : tod === 'sunset' ? 0.25 : 0;
+    if (this.roadMat) {
+      const wet = tod === 'monsoon';
+      this.roadMat.color.set(wet ? '#7e868e' : '#c9c7c2');
+      this.roadMat.specular.set(wet ? '#6a8298' : '#101010');
+      this.roadMat.shininess = wet ? 58 : 8;
+    }
+    if (this.puddleMat) {
+      const wet = tod === 'monsoon';
+      this.puddleMat.color.set(wet ? '#3f5364' : '#65757e');
+      this.puddleMat.opacity = wet ? 0.84 : 0.56;
+    }
+    if (this.shopSignMat) this.shopSignMat.emissiveIntensity = tod === 'night' ? 0.95 : tod === 'monsoon' ? 0.78 : tod === 'sunset' ? 0.35 : 0;
+    if (this.bannerMat) this.bannerMat.emissiveIntensity = tod === 'night' ? 0.55 : tod === 'monsoon' ? 0.42 : tod === 'sunset' ? 0.2 : 0;
+    if (this.lampBulbMat) this.lampBulbMat.emissiveIntensity = tod === 'night' ? 1.2 : tod === 'monsoon' ? 0.95 : tod === 'sunset' ? 0.45 : 0;
+    for (const m of this.litProps) m.emissiveIntensity = tod === 'night' ? 0.65 : tod === 'monsoon' ? 0.5 : tod === 'sunset' ? 0.25 : 0;
     const showGlow = tod !== 'noon';
-    if (this.warmGlowMat) this.warmGlowMat.opacity = tod === 'night' ? 0.44 : 0.22;
+    if (this.warmGlowMat) this.warmGlowMat.opacity = tod === 'night' ? 0.44 : tod === 'monsoon' ? 0.38 : 0.22;
     for (const gm of this.glowMeshes) gm.visible = showGlow;
   }
 
@@ -401,9 +415,45 @@ export class CityScenery {
         q.tri(center, [ax, 0, -az], [bx, 0, -bz], [cx * uvS, cz * uvS, ax * uvS, az * uvS, bx * uvS, bz * uvS], UP);
       }
     }
-    const m = new THREE.Mesh(q.build(), new THREE.MeshLambertMaterial({ map: asphaltTexture(), color: '#c9c7c2' }));
+    this.roadMat = new THREE.MeshPhongMaterial({
+      map: asphaltTexture(),
+      color: '#c9c7c2',
+      specular: '#101010',
+      shininess: 8,
+    });
+    this.ownedMats.push(this.roadMat);
+    const m = new THREE.Mesh(q.build(), this.roadMat);
     m.receiveShadow = true;
     this.group.add(m);
+  }
+
+  private puddles(map: CityMap): void {
+    if (map.puddles.length === 0) return;
+    const parts: THREE.BufferGeometry[] = [];
+    for (const p of map.puddles) {
+      const g = new THREE.CircleGeometry(1, 14);
+      g.scale(p.hw, 1, p.hl);
+      g.rotateX(-Math.PI / 2);
+      g.rotateY(-p.heading);
+      g.translate(p.x, 0.025, -p.z);
+      parts.push(g);
+    }
+    const merged = mergeGeometries(parts);
+    parts.forEach((g) => g.dispose());
+    if (!merged) return;
+    this.puddleMat = new THREE.MeshPhongMaterial({
+      color: '#65757e',
+      specular: '#d8eeff',
+      shininess: 98,
+      transparent: true,
+      opacity: 0.56,
+      polygonOffset: true,
+      polygonOffsetFactor: -4,
+    });
+    this.ownedMats.push(this.puddleMat);
+    const mesh = new THREE.Mesh(merged, this.puddleMat);
+    mesh.receiveShadow = true;
+    this.group.add(mesh);
   }
 
   private pavements(map: CityMap): void {

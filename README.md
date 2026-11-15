@@ -4,6 +4,7 @@ A stylized low-poly 3D arcade browser driving game set in Karachi, Pakistan. Pil
 
 ### Live Playable Links
 - **Play Online (PWA / Web):** [https://diabo205.github.io/traffic-game/](https://diabo205.github.io/traffic-game/)
+- **Monsoon Mode (Direct Launch):** [https://diabo205.github.io/traffic-game/?monsoon](https://diabo205.github.io/traffic-game/?monsoon)
 - **Single-File Standalone Build:** [https://diabo205.github.io/traffic-game/standalone.html](https://diabo205.github.io/traffic-game/standalone.html)
 
 ## Game Modes
@@ -36,6 +37,7 @@ npm run playtest:metrics # run all headless sim feel probes
 
 - `?mode=city` or `?mode=route` — launch directly into Free Roam or Route Run (defaults to last played, or `city`)
 - `?daily=1` — play Daily Saddar with today's UTC seed
+- `?monsoon` — launch directly into Karachi Monsoon weather mode (rain curtain, lightning, wet asphalt reflections, and hydroplaning puddles)
 - `?seed=123` — set deterministic world PRNG seed (default `1337`)
 - `?low` / `?high` — force graphics quality tier (touch devices default to `low`)
 - `?perf` — toggle FPS & draw-call HUD
@@ -49,6 +51,7 @@ npm run playtest:metrics # run all headless sim feel probes
 | **Steer** | `A` `D` / `←` `→` | Left Stick (or D-Pad) | `◀` `▶` buttons, virtual joystick, or **Tilt** (gyro) |
 | **Drift (Handbrake)** | `E` (or `W` + `S`) | `B` (or `RT` + `LT`) | `DRIFT` button |
 | **Horn / Headlight Dipper** | `Space` / `F` or `Shift` | `A` / `X` | `📯` / `💡` buttons |
+| **Radio (`DHOL FM` / `OFF`)** | `R` | `Y` | Options / Pause Menu (`RADIO`) |
 | **Pause** | `Esc` or `P` | `Start` | `‖` (top-left) |
 | **Confirm / Mute** | `Enter` / `M` | `A` or `Start` / `Back` | On-screen buttons |
 
@@ -63,7 +66,7 @@ npm run playtest:metrics # run all headless sim feel probes
 
 - **`src/sim/` (Pure, Deterministic Simulation):** Runs at a fixed 60 Hz timestep using a seeded `mulberry32` PRNG (`src/sim/rng.ts`) and custom OBB/AABB collision math—zero imports from Three.js, DOM APIs, or `Math.random()`.
 - **`src/render/` (Three.js Renderer):** Reads simulation snapshots and interpolates between ticks; combines procedural low-poly landmarks (`src/render/SaddarLandmarks.ts`, `src/render/Landmarks.ts`) with Blender-authored `.glb` vehicles (`alto.glb`, `rickshaw.glb`, `minibus.glb`, `bike.glb`, `cart.glb`, `car.glb`, `truck.glb`).
-- **`src/audio/` (Procedural Web Audio):** Synthesizes spatial stereo engine revving, horn, tyre screech, crashes, and UI chimes without external audio assets.
+- **`src/audio/` (Procedural Web Audio):** Synthesizes spatial stereo engine revving, horn, tyre screech, crashes, monsoon rain/thunder, and a procedural **Karachi Dhol FM** (Dholak percussion + Benjo folk melody) radio without external audio assets.
 - **Playtest Harness (`tools/playtest/`):** Headless simulation (`sim.mjs`), browser (`browser.mjs`), and feel metrics (`metrics.sh`) runners. See `playtests/PROTOCOL.md`.
 
 See [`CLAUDE.md`](./CLAUDE.md) for architectural invariants and [`HANDOFF.md`](./HANDOFF.md) for a detailed codebase guide.

@@ -702,9 +702,9 @@ export class Environment {
   }
 
   setTimeOfDay(tod: TimeOfDay): void {
-    const night = tod === 'night' ? 0.95 : tod === 'sunset' ? 0.35 : 0;
+    const night = tod === 'night' ? 0.95 : tod === 'monsoon' ? 0.65 : tod === 'sunset' ? 0.35 : 0;
     for (const m of this.facadeMats) setFacadeNight(m, night);
-    const glow = tod === 'night' ? 0.85 : tod === 'sunset' ? 0.32 : 0;
+    const glow = tod === 'night' ? 0.85 : tod === 'monsoon' ? 0.72 : tod === 'sunset' ? 0.32 : 0;
     for (const s of this.litSigns) s.emissiveIntensity = glow;
     for (const pv of this.roadblockPolice) pv.setHeadlights(tod === 'noon' ? 0 : 1, tod !== 'noon');
   }

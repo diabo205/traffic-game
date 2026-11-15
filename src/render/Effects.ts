@@ -52,6 +52,10 @@ export class Effects {
     this.emit(x, y + 0.2, z, 40, new THREE.Color('#c9d6dc'), 7, 5, 0.7);
   }
 
+  spray(x: number, y: number, z: number, intensity: number): void {
+    this.emit(x, y + 0.12, z, Math.max(1, Math.round(2 + intensity * 3)), new THREE.Color('#c8d9e6'), 2.6, 2.2, 0.36);
+  }
+
   update(dt: number): void {
     for (let i = 0; i < MAX; i++) {
       if (this.life[i] <= 0) continue;

@@ -10,12 +10,13 @@ import { Effects } from './Effects';
 import type { Environment } from './Environment';
 import type { FareVisuals } from './FareVisuals';
 import type { PropVisuals } from './PropVisuals';
+import { RainFx } from './RainFx';
 import { TyreFx } from './TyreFx';
 import { VehicleFactory } from './VehicleFactory';
 import type { VehicleVisual, VisualKind } from './VehicleFactory';
 
 export type AnyWorld = World | CityWorld;
-export type TimeOfDay = 'noon' | 'sunset' | 'night';
+export type TimeOfDay = 'noon' | 'sunset' | 'night' | 'monsoon';
 
 interface Scenery {
   group: THREE.Group;
@@ -84,6 +85,18 @@ const LIGHTING: Record<TimeOfDay, LightingPreset> = {
     sunIntensity: 0.9,
     exposure: 1.18,
   },
+  monsoon: {
+    top: '#182433',
+    mid: '#2c3d4f',
+    bottom: '#3a4b5c',
+    sunDir: [-0.35, 0.78, 0.42],
+    hemiSky: '#7d97b2',
+    hemiGround: '#28313a',
+    hemiIntensity: 1.25,
+    sunColor: '#b5d0ea',
+    sunIntensity: 1.35,
+    exposure: 1.08,
+  },
 };
 
 /**
@@ -107,6 +120,11 @@ export class Renderer {
   private effects = new Effects();
   private birds = new Birds();
   private tyres = new TyreFx();
+  private rain = new RainFx();
+  private sprayTimer = 0;
+  private lightningTimer = 9;
+  private lightningFlash = 0;
+  onThunder: ((pan: number, intensity: number) => void) | null = null;
   private player: VehicleVisual | null = null;
   private playerVehicle: PlayerVehicle = 'alto';
   private npcVisuals = new Map<number, VehicleVisual>();
@@ -174,6 +192,7 @@ export class Renderer {
     this.scene.add(this.effects.points);
     this.scene.add(this.tyres.group);
     this.scene.add(this.birds.mesh);
+    this.scene.add(this.rain.group);
 
     this.resize();
   }
@@ -192,13 +211,19 @@ export class Renderer {
     this.skyMat.uniforms.bottom.value.set(p.bottom);
     this.skyMat.uniforms.sunDir.value.set(p.sunDir[0], p.sunDir[1], p.sunDir[2]).normalize();
     (this.scene.background as THREE.Color).set(p.bottom);
-    if (this.scene.fog instanceof THREE.Fog) this.scene.fog.color.set(p.bottom);
+    if (this.scene.fog instanceof THREE.Fog) {
+      this.scene.fog.color.set(p.bottom);
+      this.scene.fog.near = tod === 'monsoon' ? 18 : 25;
+      this.scene.fog.far = tod === 'monsoon' ? 235 : 330;
+    }
     this.hemi.color.set(p.hemiSky);
     this.hemi.groundColor.set(p.hemiGround);
     this.hemi.intensity = p.hemiIntensity;
     this.sun.color.set(p.sunColor);
     this.sun.intensity = p.sunIntensity;
     this.gl.toneMappingExposure = p.exposure;
+    this.rain.setEnabled(tod === 'monsoon');
+    this.birds.mesh.visible = tod !== 'monsoon';
     this.env?.setTimeOfDay?.(tod);
   }
 
@@ -428,7 +453,7 @@ export class Renderer {
       v.body.rotation.set(lerp(p.prevPitch, p.pitch), 0, -lerp(p.prevRoll, p.roll));
       v.body.position.y = lerp(p.prevBump, p.bump) * 0.6;
       v.setBrake(p.braking || p.reversing);
-      v.setHeadlights(p.dipper || this.timeOfDay === 'night' ? 2 : 1, lowLight);
+      v.setHeadlights(p.dipper || this.timeOfDay === 'night' || this.timeOfDay === 'monsoon' ? 2 : 1, lowLight);
       v.setHazard(world.phase === 'gameover' && Math.floor(this.time * 3) % 2 === 0);
       for (const w of v.wheels) {
         w.rotation.order = 'YXZ';
@@ -482,6 +507,34 @@ export class Renderer {
     });
 
     const pLight = LIGHTING[this.timeOfDay];
+    if (this.timeOfDay === 'monsoon' && dt > 0) {
+      this.rain.update(dt, px, elev, -pz);
+      this.sprayTimer -= dt;
+      if (!p.airborne && Math.abs(p.speed) > 7 && this.sprayTimer <= 0) {
+        this.sprayTimer = 0.045;
+        const backX = px - Math.sin(heading) * (p.spec.halfLength * 0.85);
+        const backZ = pz - Math.cos(heading) * (p.spec.halfLength * 0.85);
+        this.effects.spray(backX, elev, -backZ, Math.min(1, (Math.abs(p.speed) - 7) / 18));
+      }
+      this.lightningTimer -= dt;
+      if (this.lightningTimer <= 0) {
+        this.lightningTimer = 10 + Math.random() * 11;
+        this.lightningFlash = 1.0;
+        const pan = (Math.random() - 0.5) * 1.4;
+        this.onThunder?.(pan, 0.7 + Math.random() * 0.3);
+      }
+      if (this.lightningFlash > 0) {
+        this.lightningFlash = Math.max(0, this.lightningFlash - dt * 5.2);
+        const pulse = this.lightningFlash > 0.45 && this.lightningFlash < 0.65 ? 0.2 : this.lightningFlash;
+        this.sun.intensity = pLight.sunIntensity + pulse * 3.2;
+        this.hemi.intensity = pLight.hemiIntensity + pulse * 1.4;
+        this.gl.toneMappingExposure = pLight.exposure + pulse * 0.35;
+      } else {
+        this.sun.intensity = pLight.sunIntensity;
+        this.hemi.intensity = pLight.hemiIntensity;
+        this.gl.toneMappingExposure = pLight.exposure;
+      }
+    }
     this.sun.position.set(px + pLight.sunDir[0] * 75, elev + pLight.sunDir[1] * 85, -pz + pLight.sunDir[2] * 75);
     this.birds.update(dt, pz, elev, this.time);
     this.sun.target.position.set(px, elev, -pz - 15);

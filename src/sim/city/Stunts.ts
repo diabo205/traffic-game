@@ -34,6 +34,7 @@ export class Stunts {
   private donutHistory: Array<{ x: number; z: number; tick: number }> = [];
   private shaveCooldown = 0;
   private smashCooldown = 0;
+  private splashCooldown = 0;
   private fareTipLeft = 320;
   private handbrakeActive = false;
   private driftStartX = 0;
@@ -54,6 +55,7 @@ export class Stunts {
     this.donutHistory.length = 0;
     this.shaveCooldown = 0;
     this.smashCooldown = 0;
+    this.splashCooldown = 0;
     this.fareTipLeft = 320;
     this.handbrakeActive = false;
     this.donutDuringDrift = false;
@@ -78,6 +80,12 @@ export class Stunts {
         if (e.impact > 7 && this.smashCooldown <= 0) {
           this.smashCooldown = 0.45;
           this.add('smash', e.kind === 'fruitcart' ? 'THELA SMASH' : 'SMASH', SMASH_POINTS[e.kind] ?? 15, events);
+        }
+        break;
+      case 'splash':
+        if (this.splashCooldown <= 0) {
+          this.splashCooldown = 2.5;
+          this.add('splash', 'HYDRO SLIDE', 45, events);
         }
         break;
       case 'land':
@@ -128,6 +136,7 @@ export class Stunts {
     if (this.donutCooldown > 0) this.donutCooldown = Math.max(0, this.donutCooldown - dt);
     if (this.shaveCooldown > 0) this.shaveCooldown = Math.max(0, this.shaveCooldown - dt);
     if (this.smashCooldown > 0) this.smashCooldown = Math.max(0, this.smashCooldown - dt);
+    if (this.splashCooldown > 0) this.splashCooldown = Math.max(0, this.splashCooldown - dt);
 
     if (p.handbrake) {
       if (!this.handbrakeActive) {

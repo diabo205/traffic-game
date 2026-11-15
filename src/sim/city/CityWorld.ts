@@ -63,6 +63,8 @@ export class CityWorld {
   private startZ = 0;
   private startHeading = 0;
   private events: SimEvent[] = [];
+  weather: 'clear' | 'monsoon' = 'clear';
+  private onWater = false;
   private onRoad = true;
   private lastKerbTick = -1e9;
   private lastWallHitTick = -1e9;
@@ -151,6 +153,28 @@ export class CityWorld {
     this.level.stats.damageTaken += scaled;
   }
 
+  private applySurface(): void {
+    const p = this.player;
+    if (p.airborne) {
+      this.onWater = false;
+      return;
+    }
+    const box = p.obb();
+    let wet = false;
+    this.map.forEachPuddleNear(p.x, p.z, 10, (pud) => {
+      if (!wet && obbOverlap(box, pud)) wet = true;
+    });
+    if (wet) {
+      const v = Math.abs(p.speed);
+      p.traction = clamp(0.62 - v * 0.016, 0.12, 0.62);
+      p.extraDrag = 0.7 + v * 0.045;
+      if (!this.onWater && v > 5.5) this.events.push({ type: 'splash' });
+    } else if (this.weather === 'monsoon') {
+      p.traction = Math.min(p.traction, 0.85);
+    }
+    this.onWater = wet;
+  }
+
   step(input: InputFrame): void {
     this.tick++;
     if (this.postLandGrace > 0) this.postLandGrace = Math.max(0, this.postLandGrace - 1 / 60);
@@ -166,6 +190,7 @@ export class CityWorld {
     }
     const running = this.level.phase === 'running';
     const firstEvent = this.events.length;
+    this.applySurface();
     p.update(input, this.topSpeed(), 1 / 60, running);
     if (p.boostFired) this.events.push({ type: 'boost', kind: p.boostFired });
     if (p.driftEnded > 0.85) this.events.push({ type: 'drift', seconds: p.driftEnded });

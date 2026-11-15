@@ -16,7 +16,7 @@ import type { ShiftRank } from './sim/city/Fares';
 
 const MAX_STEPS_PER_FRAME = 5;
 const VEHICLES: readonly PlayerVehicle[] = ['alto', 'rickshaw', 'minibus'];
-const TIMES_OF_DAY: readonly TimeOfDay[] = ['noon', 'sunset', 'night'];
+const TIMES_OF_DAY: readonly TimeOfDay[] = ['noon', 'sunset', 'night', 'monsoon'];
 const STEER_MODES: readonly TouchSteerMode[] = ['buttons', 'joystick', 'tilt'];
 const MONTHS = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
 
@@ -114,6 +114,7 @@ export class Game {
     this.bank = bank;
     this.vehicle = vehicle;
     this.tod = tod;
+    this.world.weather = tod === 'monsoon' ? 'monsoon' : 'clear';
 
     this.hud = new Hud(uiRoot);
     this.hud.setMode(mode);
@@ -122,6 +123,13 @@ export class Game {
     this.syncBestHud();
     this.syncMinimap();
     this.touch = new TouchControls(this.hud.root, this.input.touch);
+
+    this.renderer.onThunder = (pan, intensity) => {
+      if (this.world.phase === 'running' && !this.paused) {
+        this.audio.thunder(pan, intensity);
+        this.vibrate([18, 40, 28]);
+      }
+    };
 
     // Touch HUD: auto-detect, remember manual choice.
     const coarse = window.matchMedia('(pointer: coarse)').matches;
@@ -143,6 +151,7 @@ export class Game {
     this.setAutoGas(storageGet('kt3d.autogas') === '1', false);
     this.setHaptics(storageGet('kt3d.haptics') !== '0', false);
     this.setMuted(storageGet('kt3d.muted') === '1');
+    this.setRadio(storageGet('kt3d.radio') !== '0', false);
     this.setCamera(storageGet('kt3d.cam') === 'far', false);
 
     this.bindUi();
@@ -180,11 +189,13 @@ export class Game {
     }
     let tod: TimeOfDay = 'noon';
     const savedTod = storageGet('kt3d.tod');
-    if (savedTod === 'noon' || savedTod === 'sunset' || savedTod === 'night') tod = savedTod;
+    if (params.has('monsoon')) tod = 'monsoon';
+    else if (savedTod === 'noon' || savedTod === 'sunset' || savedTod === 'night' || savedTod === 'monsoon') tod = savedTod;
 
     const renderer = await Renderer.create(container, lowSpec);
     const activeSeed = isDaily ? daily.seed : seed;
     const world = await Game.buildWorld(mode, activeSeed, startZ, vehicle);
+    world.weather = tod === 'monsoon' ? 'monsoon' : 'clear';
     renderer.setTimeOfDay(tod);
     await renderer.attach(world);
     return new Game(renderer, world, seed, startZ, mode, isDaily, bank, vehicle, tod, uiRoot);
@@ -203,6 +214,7 @@ export class Game {
     try {
       const activeSeed = dailyMode ? this.daily.seed : this.seed;
       const nextWorld = await Game.buildWorld(mode, activeSeed, this.startZ, vehicle);
+      nextWorld.weather = this.tod === 'monsoon' ? 'monsoon' : 'clear';
       if (seq !== this.worldSeq) return false;
       await this.renderer.attach(nextWorld);
       if (seq !== this.worldSeq) return false;
@@ -280,6 +292,7 @@ export class Game {
   private cycleTimeOfDay(): void {
     const next = TIMES_OF_DAY[(TIMES_OF_DAY.indexOf(this.tod) + 1) % TIMES_OF_DAY.length];
     this.tod = next;
+    this.world.weather = next === 'monsoon' ? 'monsoon' : 'clear';
     this.renderer.setTimeOfDay(next);
     this.hud.setTimeOfDay(next);
     storageSet('kt3d.tod', next);
@@ -410,11 +423,13 @@ export class Game {
     this.hud.resumeBtn.addEventListener('click', () => this.resume());
     this.hud.quitBtn.addEventListener('click', () => void this.quitToMenu());
     this.hud.pauseSoundBtn.addEventListener('click', () => this.setMuted(!this.audio.isMuted));
+    this.hud.pauseRadioBtn.addEventListener('click', () => this.toggleRadio());
     this.hud.camBtn.addEventListener('click', () => this.setCamera(!this.farCamera));
     this.hud.pauseCamBtn.addEventListener('click', () => this.setCamera(!this.farCamera));
     this.hud.shiftBtn.addEventListener('click', () => this.input.queueConfirm());
     this.hud.restartBtn.addEventListener('click', () => this.input.queueConfirm());
     this.hud.muteBtn.addEventListener('click', () => this.setMuted(!this.audio.isMuted));
+    this.hud.radioBtn.addEventListener('click', () => this.toggleRadio());
     this.hud.touchBtn.addEventListener('click', () => this.setTouchVisible(!this.touch.visible));
     this.hud.stickBtn.addEventListener('click', () => void this.cycleSteerMode());
     this.hud.pauseSteerBtn.addEventListener('click', () => void this.cycleSteerMode());
@@ -448,6 +463,20 @@ export class Game {
     this.audio.setMuted(m);
     this.hud.setMuted(m);
     storageSet('kt3d.muted', m ? '1' : '0');
+  }
+
+  private setRadio(on: boolean, save = true): void {
+    this.audio.setRadio(on);
+    this.hud.setRadio(on);
+    if (save) storageSet('kt3d.radio', on ? '1' : '0');
+  }
+
+  private toggleRadio(): void {
+    const next = !this.audio.isRadioOn;
+    this.setRadio(next);
+    if (!this.hud.settingsOpen && !this.paused) {
+      this.toastNow(next ? '📻 KARACHI DHOL FM · ON' : '📻 RADIO OFF', next);
+    }
   }
 
   private setTouchVisible(v: boolean, save = true): void {
@@ -516,6 +545,7 @@ export class Game {
     const auto = this.autoGas && this.touch.visible && this.world.phase === 'running';
     const input = this.input.sample(frameDt, auto);
     if (this.input.consumeMute()) this.setMuted(!this.audio.isMuted);
+    if (this.input.consumeRadio()) this.toggleRadio();
     const pausePressed = this.input.consumePause();
     // Esc / Start: back out of game options first, then toggle pause.
     if (pausePressed) {
@@ -635,6 +665,8 @@ export class Game {
         screech,
         running: this.world.phase === 'running',
         vehicle: p.vehicle,
+        monsoon: this.tod === 'monsoon',
+        fever: this.world.mode === 'city' ? this.world.fares.chain : this.world.speedRush() * 2,
       },
       frameDt,
     );

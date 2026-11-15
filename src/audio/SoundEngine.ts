@@ -17,10 +17,29 @@ export interface EngineParams {
   screech: number;
   running: boolean;
   vehicle?: PlayerVehicle;
+  monsoon?: boolean;
+  /** 0..2 fare chain / speed fever level for radio intensity */
+  fever?: number;
 }
 
 /** Gear upshift points as fractions of top speed (5-speed manual). */
 const GEARS = [0, 0.18, 0.36, 0.56, 0.78, 1.2];
+
+/**
+ * 16-step Karachi Dholak Keherwa / Chaal rhythm:
+ * 1 = Dha (bayan bass + tilli slap), 2 = Dhin (bayan bass), 3 = Ta/Na (tilli rim slap), 4 = Tin (soft rim), 0 = rest.
+ */
+const DHOL_STEPS = [1, 0, 4, 3, 2, 0, 3, 4, 1, 3, 0, 2, 3, 0, 4, 3] as const;
+
+/**
+ * 32-step Sindhi/Karachi Benjo (bulbul tarang) folk melody in D Mixolydian (MIDI-like Hz, 0 = sustain/rest).
+ */
+const BENJO_NOTES = [
+  293.66, 0, 329.63, 369.99, 392.0, 0, 440.0, 392.0,
+  369.99, 329.63, 293.66, 0, 261.63, 293.66, 329.63, 0,
+  392.0, 0, 440.0, 523.25, 493.88, 440.0, 392.0, 369.99,
+  329.63, 369.99, 329.63, 293.66, 261.63, 293.66, 293.66, 0,
+] as const;
 
 export class SoundEngine {
   private ctx: AudioContext | null = null;
@@ -50,12 +69,29 @@ export class SoundEngine {
   private roadGain!: GainNode;
   private roadFilter!: BiquadFilterNode;
 
+  // Monsoon rainfall wash.
+  private rainGain!: GainNode;
+  private rainFilter!: BiquadFilterNode;
+
+  // Procedural Karachi Dhol FM radio sequencer.
+  private radioOn = true;
+  private radioTimer = 0;
+  private radioStep = 0;
+
   get unlocked(): boolean {
     return this.ctx !== null && this.ctx.state === 'running';
   }
 
   get isMuted(): boolean {
     return this.muted;
+  }
+
+  get isRadioOn(): boolean {
+    return this.radioOn;
+  }
+
+  setRadio(on: boolean): void {
+    this.radioOn = on;
   }
 
   /** Must be called from a user-gesture handler. Safe to call repeatedly. */
@@ -84,6 +120,7 @@ export class SoundEngine {
     this.buildHorn(ctx);
     this.buildScreech(ctx);
     this.buildRoad(ctx);
+    this.buildRain(ctx);
     if (ctx.state === 'suspended') void ctx.resume();
   }
 
@@ -214,6 +251,16 @@ export class SoundEngine {
     this.loopNoise(ctx).connect(this.roadFilter).connect(this.roadGain).connect(this.master);
   }
 
+  private buildRain(ctx: AudioContext): void {
+    this.rainGain = ctx.createGain();
+    this.rainGain.gain.value = 0;
+    this.rainFilter = ctx.createBiquadFilter();
+    this.rainFilter.type = 'bandpass';
+    this.rainFilter.frequency.value = 1150;
+    this.rainFilter.Q.value = 0.7;
+    this.loopNoise(ctx).connect(this.rainFilter).connect(this.rainGain).connect(this.master);
+  }
+
   /** Per-frame continuous voices. */
   update(p: EngineParams, dt: number): void {
     const ctx = this.ctx;
@@ -256,6 +303,92 @@ export class SoundEngine {
     this.screechGain.gain.setTargetAtTime(Math.min(1, p.screech) * 0.22, t, 0.04);
     this.roadGain.gain.setTargetAtTime(Math.min(0.25, v * 0.008), t, 0.1);
     this.roadFilter.frequency.setTargetAtTime(250 + v * 25, t, 0.1);
+
+    // Monsoon rainfall wash (richer as you drive through the downpour).
+    const rainLevel = p.monsoon ? (p.running ? 0.11 + Math.min(0.08, v * 0.003) : 0.07) : 0;
+    this.rainGain.gain.setTargetAtTime(rainLevel, t, 0.12);
+    this.rainFilter.frequency.setTargetAtTime(980 + v * 22, t, 0.12);
+
+    // Procedural Karachi Dhol FM sequencer.
+    if (this.radioOn && p.running && dt > 0) {
+      this.tickRadio(dt, p.horn, p.fever ?? 0);
+    }
+  }
+
+  private tickRadio(dt: number, hornActive: boolean, fever: number): void {
+    const bpm = 126 + Math.min(14, fever * 4);
+    const stepDur = 60 / bpm / 4; // 16th note
+    this.radioTimer -= dt;
+    if (this.radioTimer > 0) return;
+    this.radioTimer += stepDur;
+    if (this.radioTimer < 0) this.radioTimer = stepDur;
+
+    const step = this.radioStep++;
+    const duck = hornActive ? 0.42 : 1.0;
+    const hit = DHOL_STEPS[step % 16];
+    if (hit === 1 || hit === 2) {
+      // Dholak 'Ghe' / 'Dha' bass head (warm pitch-swept membrane).
+      this.thump(hit === 1 ? 122 : 104, 0.11, 0.16 * duck, -0.15);
+    }
+    if (hit === 1 || hit === 3) {
+      // Dholak 'Na' / 'Ta' treble rim slap.
+      this.dholSlap((step % 4 === 0 ? 0.11 : 0.08) * duck);
+    }
+    const note = BENJO_NOTES[step % BENJO_NOTES.length];
+    if (note > 0) {
+      this.benjoPluck(note, stepDur * 1.45, 0.065 * duck);
+    }
+  }
+
+  private dholSlap(gain: number): void {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    const t = ctx.currentTime;
+    const o = ctx.createOscillator();
+    o.type = 'triangle';
+    o.frequency.setValueAtTime(430, t);
+    o.frequency.exponentialRampToValueAtTime(270, t + 0.045);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(gain, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.05);
+    o.connect(g);
+    this.connectMaster(g, 0.18);
+    o.start(t);
+    o.stop(t + 0.06);
+    this.burst(0.038, 2100, 3.5, gain * 0.55, 'bandpass', 0.18);
+  }
+
+  private benjoPluck(freq: number, duration: number, gain: number): void {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    const t = ctx.currentTime;
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.value = 1180;
+    bp.Q.value = 2.2;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.linearRampToValueAtTime(gain, t + 0.008);
+    g.gain.exponentialRampToValueAtTime(0.0008, t + duration);
+    for (const detune of [-4, 4]) {
+      const o = ctx.createOscillator();
+      o.type = detune < 0 ? 'sawtooth' : 'triangle';
+      o.frequency.setValueAtTime(freq, t);
+      o.detune.value = detune;
+      o.connect(bp);
+      o.start(t);
+      o.stop(t + duration + 0.02);
+    }
+    bp.connect(g);
+    this.connectMaster(g, 0.08);
+  }
+
+  /** Rolling monsoon thunder crack and low rumble. */
+  thunder(pan = 0, intensity = 1): void {
+    const i = Math.max(0.3, Math.min(1, intensity));
+    this.burst(0.45, 520, 0.9, 0.28 * i, 'lowpass', pan);
+    this.burst(1.35, 165, 0.7, 0.42 * i, 'lowpass', pan * 0.6);
+    this.thump(54, 0.95, 0.36 * i, pan * 0.5);
   }
 
   private exhaustPop(): void {

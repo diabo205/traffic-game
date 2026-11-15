@@ -116,6 +116,10 @@ export interface Slab {
 }
 
 /** A wedge you can drive up and jump off. Rises along its heading from 0 to h. */
+export interface CityPuddle extends Obb {
+  id: number;
+}
+
 export interface Ramp {
   x: number;
   z: number;
@@ -215,6 +219,8 @@ export class CityMap {
   readonly roundaboutLoops: RoundaboutLoop[] = [];
   readonly pois: Poi[] = [];
   readonly ramps: Ramp[] = [];
+  /** standing water puddles on Saddar streets */
+  readonly puddles: CityPuddle[] = [];
   /** open oriented dirt construction yards (no buildings) */
   readonly yards: Obb[] = [];
   /** solid oriented colliders (buildings, landmarks, outer boundary walls) */
@@ -225,6 +231,7 @@ export class CityMap {
   private linkGrid = new Map<number, number[]>();
   private solidGrid = new Map<number, number[]>();
   private rampGrid = new Map<number, number[]>();
+  private puddleGrid = new Map<number, number[]>();
   private paths = new Map<string, JunctionPath>();
 
   constructor() {
@@ -504,14 +511,19 @@ export class CityMap {
       { x: b.x1 + t / 2, z: midZ, hw: t / 2, hl: wZ, heading: 0 },
     );
 
-    // ---- Ramps (yard dirt jumps + safe street kickers away from junctions) -
+    // ---- Ramps & standing water puddles ------------------------------------
     this.yardRamps();
     this.streetRamps();
+    this.streetPuddles();
 
     // ---- Spatial indices ----------------------------------------------------
     this.indexBoxes(
       this.ramps.map((r) => obbAabb(r.x, r.z, r.hw, r.hl, r.heading)),
       this.rampGrid,
+    );
+    this.indexBoxes(
+      this.puddles.map((p) => obbAabb(p.x, p.z, p.hw, p.hl, p.heading)),
+      this.puddleGrid,
     );
     this.indexBoxes(
       this.roadSegs.map((s) => ({
@@ -541,7 +553,7 @@ export class CityMap {
     );
   }
 
-  // ---- Ramp placement -----------------------------------------------------
+  // ---- Ramp & puddle placement --------------------------------------------
 
   private yardRamps(): void {
     for (const y of this.yards) {
@@ -584,6 +596,47 @@ export class CityMap {
       l.rampS0 = s - hl;
       l.rampS1 = s + hl;
       used.add(l.id);
+    }
+  }
+
+  /** Monsoon standing-water puddles along Saddar kerbsides and low road stretches. */
+  private streetPuddles(): void {
+    const rng = new Rng(0x404);
+    const used = new Set<number>();
+    // Guarantee a signature puddle along Shahrah-e-Liaquat ahead of the Empress Market approach.
+    const startLink = this.links.find(
+      (l) => l.name.startsWith('Shahrah-e-Liaquat') && l.dx > 0.5 && l.dz > 0.2 && l.len >= 50 && Math.hypot(l.sx - -79, l.sz - 225) < 160,
+    );
+    if (startLink && startLink.rampLane < 0) {
+      const s = Math.min(startLink.len - 12, Math.max(28, startLink.len * 0.68));
+      const off = this.laneOffset(startLink, startLink.lanes - 1) - 0.35;
+      const pt = this.linkPoint(startLink, s, off);
+      this.puddles.push({ id: 1, x: pt.x, z: pt.z, hw: 2.3, hl: 5.2, heading: startLink.heading });
+      used.add(startLink.id);
+      if (startLink.reverse >= 0) used.add(startLink.reverse);
+    }
+    for (const l of this.links) {
+      if (this.puddles.length >= 46) break;
+      if (l.turnaround || l.len < 44 || l.rampLane >= 0 || used.has(l.id) || (l.reverse >= 0 && used.has(l.reverse))) continue;
+      if (this.nodes[l.from].roundabout || this.nodes[l.to].roundabout) continue;
+      if (!rng.chance(0.24)) continue;
+      const s = rng.range(14, l.len - 14);
+      const lane = rng.chance(0.7) ? l.lanes - 1 : 0;
+      const off = this.laneOffset(l, lane) + rng.range(-0.4, 0.35);
+      const pt = this.linkPoint(l, s, off);
+      const hw = Math.min(l.hw * 0.72, rng.range(1.7, 2.7));
+      const hl = rng.range(3.8, 6.8);
+      if (this.rampHeight(pt.x, pt.z) > 0.01) continue;
+      this.puddles.push({
+        id: this.puddles.length + 1,
+        x: pt.x,
+        z: pt.z,
+        hw,
+        hl,
+        heading: l.heading + rng.range(-0.08, 0.08),
+      });
+      used.add(l.id);
+      if (l.reverse >= 0) used.add(l.reverse);
     }
   }
 
@@ -664,6 +717,22 @@ export class CityMap {
       h = Math.max(h, (r.h * (along + r.hl)) / (2 * r.hl));
     }
     return h;
+  }
+
+  /** Standing-water puddles whose spatial cell overlaps the circle. */
+  forEachPuddleNear(x: number, z: number, r: number, fn: (p: CityPuddle) => void): void {
+    const seen = new Set<number>();
+    for (let gx = Math.floor((x - r) / GRID); gx <= Math.floor((x + r) / GRID); gx++) {
+      for (let gz = Math.floor((z - r) / GRID); gz <= Math.floor((z + r) / GRID); gz++) {
+        const list = this.puddleGrid.get(cellKey(gx, gz));
+        if (!list) continue;
+        for (const i of list) {
+          if (seen.has(i)) continue;
+          seen.add(i);
+          fn(this.puddles[i]);
+        }
+      }
+    }
   }
 
   /** Solid colliders whose cell overlaps the circle (stable, may repeat across passes). */

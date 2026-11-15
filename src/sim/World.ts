@@ -34,6 +34,7 @@ export class World {
   readonly level = new LevelManager();
   /** Events since the last drainEvents() call. */
   private events: SimEvent[] = [];
+  weather: 'clear' | 'monsoon' = 'clear';
 
   private onWater = false;
   private lastWallHitTick = -1e9;
@@ -151,6 +152,8 @@ export class World {
       p.traction = clamp(0.6 - v * 0.018, 0.07, 0.6);
       p.extraDrag = 0.9 + v * 0.06;
       if (!this.onWater && v > 6) this.events.push({ type: 'splash' });
+    } else if (this.weather === 'monsoon') {
+      p.traction = Math.min(p.traction, 0.85);
     }
     this.onWater = wet;
     // The dirt shoulder is rough: drivable for dodging, never the fast line.
