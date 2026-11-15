@@ -141,6 +141,7 @@ self.addEventListener('fetch', (event) => {
 }
 
 export default defineConfig({
+  base: './',
   plugins: [karachiPwaPlugin()],
   // Reachable from phones on the LAN and through hosted preview links,
   // which arrive under hostnames Vite doesn't know.
