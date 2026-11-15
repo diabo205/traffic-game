@@ -82,6 +82,15 @@ export class Minimap {
         g.fillRect(-o.hw * RES, -o.hl * RES, o.hw * 2 * RES, o.hl * 2 * RES);
         g.restore();
       }
+
+      g.fillStyle = '#2e8b57';
+      for (const br of map.bridges) {
+        g.save();
+        g.translate((br.x - b.x0) * RES, (b.z1 - br.z) * RES);
+        g.rotate(br.heading);
+        g.fillRect((-br.span / 2) * RES, -1.6 * RES, br.span * RES, 3.2 * RES);
+        g.restore();
+      }
     }
   }
 

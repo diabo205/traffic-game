@@ -5,8 +5,10 @@ import type { Landmark } from '../sim/city/cityMap';
 import { buildEmpressMarketAt } from './Landmarks';
 import {
   cinemaPosterTexture,
+  clockFaceTexture,
   colonialVerandahTexture,
   gothicWallTexture,
+  mazarFaceTexture,
   signTexture,
   stainedLancetTexture,
   stPatricksFrontTexture,
@@ -242,6 +244,26 @@ export function buildSaddarLandmark(
         storeys: 5,
         glassAtrium: true,
       });
+      break;
+    case 'mazar_quaid':
+      sub.rotation.y = -heading;
+      buildMazarQuaid(sub, hw, hl, shadow, litMats);
+      break;
+    case 'frere_hall':
+      sub.rotation.y = -heading;
+      buildFrereHall(sub, hw, hl, shadow, litMats);
+      break;
+    case 'merewether_tower':
+      sub.rotation.y = -heading;
+      buildMerewetherTower(sub, hw, hl, shadow, litMats);
+      break;
+    case 'arts_council':
+      sub.rotation.y = -heading;
+      buildArtsCouncil(sub, hw, hl, shadow, litMats);
+      break;
+    case 'dj_science_college':
+      sub.rotation.y = -heading;
+      buildDjScienceCollege(sub, hw, hl, shadow, litMats);
       break;
   }
 }
@@ -1508,4 +1530,416 @@ function buildCommercialPlaza(group: THREE.Group, hw: number, hl: number, shadow
   );
   roofSign.rotation.y = Math.PI / 2;
 }
+
+// ---------------------------------------------------------------------------
+// 27. Mazar-e-Quaid (White Marble Mausoleum, Tiered Podium & Reflecting Pool)
+// ---------------------------------------------------------------------------
+
+function buildMazarQuaid(
+  group: THREE.Group,
+  hw: number,
+  hl: number,
+  shadow: boolean,
+  litMats: THREE.MeshLambertMaterial[],
+): void {
+  const g = new THREE.Group();
+  g.position.set(0, KERB_H, 0);
+  group.add(g);
+
+  const d = hw * 2;
+  const len = hl * 2;
+  const marble = new THREE.MeshLambertMaterial({
+    color: '#f8f7f2',
+    emissive: new THREE.Color('#fff5dd'),
+    emissiveIntensity: 0,
+  });
+  litMats.push(marble);
+  const darkSteps = lam('#45494e');
+  const lawnMat = lam('#6fa050');
+  const poolMat = lam('#38a3b8');
+  const goldMat = lam('#e6b830');
+
+  // Manicured terraced lawn base & ornamental perimeter iron-green boundary
+  mesh(g, new THREE.BoxGeometry(d, 0.35, len), lawnMat, 0, 0.175, 0, false);
+  // Reflecting pool and fountain jets along the front approach (+x)
+  mesh(g, new THREE.BoxGeometry(4.2, 0.42, len * 0.56), poolMat, hw - 2.6, 0.22, 0, false);
+  for (const fz of [-len * 0.2, 0, len * 0.2]) {
+    mesh(g, new THREE.CylinderGeometry(0.18, 0.35, 1.4, 8), basic('#d8f6ff'), hw - 2.6, 0.9, fz, false);
+  }
+
+  // Two-tier white marble podium with dark ceremonial stair flights on all 4 sides
+  mesh(g, new THREE.BoxGeometry(d * 0.76, 1.8, len * 0.78), marble, -1.2, 0.9, 0, shadow);
+  mesh(g, new THREE.BoxGeometry(d * 0.64, 1.6, len * 0.66), marble, -1.2, 2.6, 0, shadow);
+  mesh(g, new THREE.BoxGeometry(2.6, 1.85, 5.6), darkSteps, hw - 3.6, 0.92, 0, false);
+  mesh(g, new THREE.BoxGeometry(2.2, 1.65, 4.6), darkSteps, hw - 4.8, 2.62, 0, false);
+
+  // Tapered white marble mausoleum chamber with pointed-arch portals
+  const chW = Math.min(14.5, d * 0.56);
+  const chH = 11.8;
+  const bodyGeo = new THREE.CylinderGeometry(chW * 0.64, chW * 0.74, chH, 4);
+  bodyGeo.rotateY(Math.PI / 4);
+  mesh(g, bodyGeo, marble, -1.2, 3.4 + chH / 2, 0, shadow);
+
+  const faceTex = mazarFaceTexture();
+  const faceMat = new THREE.MeshLambertMaterial({
+    color: '#ffffff',
+    map: faceTex,
+    emissiveMap: faceTex,
+    emissive: new THREE.Color('#fff2cc'),
+    emissiveIntensity: 0,
+  });
+  litMats.push(faceMat);
+  for (let i = 0; i < 4; i++) {
+    const a = (i / 4) * Math.PI * 2;
+    const f = mesh(
+      g,
+      new THREE.PlaneGeometry(chW * 0.88, chH * 0.92),
+      faceMat,
+      -1.2 + Math.sin(a) * (chW * 0.5 + 0.08),
+      3.4 + chH * 0.48,
+      Math.cos(a) * (chW * 0.5 + 0.08),
+      false,
+    );
+    f.rotation.y = a;
+  }
+
+  // Octagonal drum, white marble dome, and golden crescent finial
+  const topY = 3.4 + chH;
+  mesh(g, new THREE.BoxGeometry(chW * 0.96, 0.7, chW * 0.96), marble, -1.2, topY + 0.35, 0, shadow);
+  mesh(g, new THREE.CylinderGeometry(chW * 0.44, chW * 0.48, 1.4, 16), lam('#d8e6e2'), -1.2, topY + 1.2, 0, shadow);
+  const dome = new THREE.SphereGeometry(chW * 0.44, 20, 14, 0, Math.PI * 2, 0, Math.PI * 0.55);
+  dome.scale(1, 1.18, 1);
+  mesh(g, dome, marble, -1.2, topY + 1.6, 0, shadow);
+  mesh(g, new THREE.ConeGeometry(0.42, 2.4, 8), goldMat, -1.2, topY + 1.6 + chW * 0.52 + 1.1, 0, false);
+
+  // Corner ceremonial marble minar pillars on the podium corners
+  for (const sx of [-1, 1]) {
+    for (const sz of [-1, 1]) {
+      mesh(
+        g,
+        new THREE.BoxGeometry(0.85, 4.8, 0.85),
+        marble,
+        -1.2 + sx * (d * 0.34),
+        3.4 + 2.4,
+        sz * (len * 0.35),
+        shadow,
+      );
+    }
+  }
+
+  const sign = mesh(
+    g,
+    new THREE.PlaneGeometry(15.0, 1.5),
+    lam('#ffffff', signTexture(['MAZAR-E-QUAID · مزارِ قائد', 'QUAID-E-AZAM MAUSOLEUM · M.A. JINNAH RD'], '#01411c', '#ffffff', 768, 128)),
+    hw + 0.15,
+    2.6,
+    0,
+    false,
+  );
+  sign.rotation.y = Math.PI / 2;
+}
+
+// ---------------------------------------------------------------------------
+// 28. Frere Hall (1865 Venetian-Gothic Limestone Hall, Spire & Bagh-e-Jinnah)
+// ---------------------------------------------------------------------------
+
+function buildFrereHall(
+  group: THREE.Group,
+  hw: number,
+  hl: number,
+  shadow: boolean,
+  litMats: THREE.MeshLambertMaterial[],
+): void {
+  const g = new THREE.Group();
+  g.position.set(0, KERB_H, 0);
+  group.add(g);
+
+  const d = hw * 2;
+  const len = hl * 2;
+  const h = 11.8;
+  const gizri = lam('#dfc282');
+  const redStone = lam('#9e3d2b');
+  const darkSlate = lam('#5e2d24');
+  const lawn = lam('#6fa050');
+
+  // Bagh-e-Jinnah manicured garden terrace & red sandstone plinth
+  mesh(g, new THREE.BoxGeometry(d, 0.4, len), lawn, 0, 0.2, 0, false);
+  mesh(g, new THREE.BoxGeometry(d * 0.78, 1.4, len * 0.84), redStone, -0.8, 0.9, 0, shadow);
+
+  // Main Venetian-Gothic hall body in yellow Gizri limestone
+  const hallW = d * 0.68;
+  const hallL = len * 0.76;
+  mesh(g, new THREE.BoxGeometry(hallW, h, hallL), gizri, -0.8, 1.6 + h / 2, 0, shadow);
+
+  // Ground & upper arched Venetian loggia along the front (+x) and sides
+  const wallTex = tiled(gothicWallTexture(), Math.max(2, Math.round(hallL / 7)), 2);
+  const frontArcade = mesh(
+    g,
+    new THREE.PlaneGeometry(hallL - 0.6, h - 0.8),
+    lam('#f0d89c', wallTex),
+    -0.8 + hallW / 2 + 0.06,
+    1.6 + h / 2,
+    0,
+    false,
+  );
+  frontArcade.rotation.y = Math.PI / 2;
+
+  // Alternating red-and-yellow limestone stringcourses and crenellated cornice
+  for (const y of [5.4, 9.2, 1.6 + h]) {
+    mesh(g, new THREE.BoxGeometry(hallW + 0.4, 0.45, hallL + 0.4), redStone, -0.8, y, 0, false);
+  }
+
+  // Steep pitched red-slate roof over the main hall
+  const roofGeo = new THREE.CylinderGeometry(hallW * 0.48, hallW * 0.48, hallL - 0.6, 3);
+  roofGeo.rotateX(Math.PI / 2);
+  roofGeo.rotateZ(Math.PI / 2);
+  roofGeo.scale(1, 0.68, 1);
+  mesh(g, roofGeo, darkSlate, -0.8, 1.6 + h + 2.4, 0, shadow);
+
+  // Iconic octagonal Venetian-Gothic bell/clock tower on the north-front corner
+  const tx = -0.8 + hallW * 0.32;
+  const tz = -hallL * 0.32;
+  const tH = 22.5;
+  mesh(g, new THREE.BoxGeometry(4.6, tH, 4.6), gizri, tx, 1.6 + tH / 2, tz, shadow);
+  mesh(g, new THREE.BoxGeometry(5.1, 0.6, 5.1), redStone, tx, 1.6 + tH, tz, false);
+  mesh(g, new THREE.CylinderGeometry(2.1, 2.3, 4.2, 8), gizri, tx, 1.6 + tH + 2.1, tz, shadow);
+  const spire = new THREE.ConeGeometry(2.4, 6.8, 8);
+  mesh(g, spire, darkSlate, tx, 1.6 + tH + 4.2 + 3.4, tz, shadow);
+
+  const plaqueMat = new THREE.MeshLambertMaterial({
+    color: '#ffffff',
+    map: signTexture(['FRERE HALL · فریئر ہال · 1865', 'BAGH-E-JINNAH · SADEQUAIN GALLERY'], '#7b1f16', '#ffecb3', 768, 128),
+    emissive: new THREE.Color('#ffecb3'),
+    emissiveIntensity: 0,
+  });
+  litMats.push(plaqueMat);
+  const sign = mesh(g, new THREE.PlaneGeometry(14.5, 1.5), plaqueMat, hw + 0.12, 3.2, 0, false);
+  sign.rotation.y = Math.PI / 2;
+}
+
+// ---------------------------------------------------------------------------
+// 29. Merewether Clock Tower (1892 Victorian Gothic Memorial Clock Tower)
+// ---------------------------------------------------------------------------
+
+function buildMerewetherTower(
+  group: THREE.Group,
+  hw: number,
+  hl: number,
+  shadow: boolean,
+  litMats: THREE.MeshLambertMaterial[],
+): void {
+  const g = new THREE.Group();
+  g.position.set(0, KERB_H, 0);
+  group.add(g);
+
+  const d = hw * 2;
+  const len = hl * 2;
+  const stone = lam('#dcc08a');
+  const trim = lam('#a8844c');
+  const roofCol = lam('#6e472b');
+
+  // Ornamental octagonal stone courtyard & red-trimmed railings
+  mesh(g, new THREE.BoxGeometry(d * 0.88, 0.8, len * 0.88), trim, 0, 0.4, 0, shadow);
+  mesh(g, new THREE.BoxGeometry(9.6, 2.4, 9.6), stone, 0, 1.6, 0, shadow);
+
+  // Cruciform buttressed lower shaft, gothic lancet stage, and clock stage
+  const tH = 25.0;
+  const wallTex = tiled(gothicWallTexture(), 1, 3);
+  mesh(g, new THREE.BoxGeometry(5.6, tH, 5.6), lam('#e5cb97', wallTex), 0, 2.8 + tH / 2, 0, shadow);
+  // Corner angle buttresses
+  for (const sx of [-1, 1]) {
+    for (const sz of [-1, 1]) {
+      mesh(g, new THREE.BoxGeometry(1.1, tH * 0.78, 1.1), trim, sx * 2.75, 2.8 + (tH * 0.78) / 2, sz * 2.75, shadow);
+      mesh(g, new THREE.ConeGeometry(0.75, 2.6, 4), roofCol, sx * 2.75, 2.8 + tH * 0.78 + 1.3, sz * 2.75, false);
+    }
+  }
+
+  // Decorative stone cornices dividing the 4 Gothic stages
+  for (const y of [9.0, 15.5, 21.8, 27.8]) {
+    mesh(g, new THREE.BoxGeometry(6.5, 0.65, 6.5), trim, 0, y, 0, false);
+  }
+
+  // 4 illuminated Victorian clock faces
+  const cTex = clockFaceTexture();
+  const clockMat = new THREE.MeshLambertMaterial({
+    color: '#ffffff',
+    map: cTex,
+    emissiveMap: cTex,
+    emissive: new THREE.Color('#fff2c4'),
+    emissiveIntensity: 0,
+  });
+  litMats.push(clockMat);
+  for (let i = 0; i < 4; i++) {
+    const a = (i / 4) * Math.PI * 2;
+    const cf = mesh(
+      g,
+      new THREE.PlaneGeometry(3.1, 3.1),
+      clockMat,
+      Math.sin(a) * 2.88,
+      24.8,
+      Math.cos(a) * 2.88,
+      false,
+    );
+    cf.rotation.y = a;
+  }
+
+  // Open Gothic belfry canopy & tall pointed spire with 4 corner spirelets
+  const topY = 27.8;
+  for (const sx of [-2.1, 2.1]) {
+    for (const sz of [-2.1, 2.1]) {
+      mesh(g, new THREE.BoxGeometry(0.85, 4.4, 0.85), stone, sx, topY + 2.2, sz, shadow);
+      mesh(g, new THREE.ConeGeometry(0.6, 2.4, 4), roofCol, sx, topY + 5.6, sz, false);
+    }
+  }
+  mesh(g, new THREE.BoxGeometry(5.8, 0.7, 5.8), trim, 0, topY + 4.6, 0, false);
+  const spire = new THREE.ConeGeometry(3.4, 8.8, 4);
+  spire.rotateY(Math.PI / 4);
+  mesh(g, spire, roofCol, 0, topY + 5.0 + 4.4, 0, shadow);
+
+  const sign = mesh(
+    g,
+    new THREE.PlaneGeometry(13.5, 1.45),
+    lam('#ffffff', signTexture(['MEREWETHER CLOCK TOWER · میری ویدر ٹاور', 'M.A. JINNAH RD · I.I. CHUNDRIGAR RD · 1892'], '#4e342e', '#ffecb3', 768, 128)),
+    hw + 0.12,
+    3.2,
+    0,
+    false,
+  );
+  sign.rotation.y = Math.PI / 2;
+}
+
+// ---------------------------------------------------------------------------
+// 30. Arts Council of Pakistan (Modernist Amphitheatre & Brise-Soleil Complex)
+// ---------------------------------------------------------------------------
+
+function buildArtsCouncil(
+  group: THREE.Group,
+  hw: number,
+  hl: number,
+  shadow: boolean,
+  litMats: THREE.MeshLambertMaterial[],
+): void {
+  const g = new THREE.Group();
+  g.position.set(0, KERB_H, 0);
+  group.add(g);
+
+  const d = hw * 2;
+  const len = hl * 2;
+  const h = 14.2;
+  const ivory = lam('#f2ede2');
+  const charcoal = lam('#263238');
+  const teal = lam('#00796b');
+  const crimson = lam('#c62828');
+
+  // Main auditorium block & sweeping curved modernist rotunda drum
+  mesh(g, new THREE.BoxGeometry(d * 0.78, h, len * 0.88), ivory, -1.2, h / 2, 0, shadow);
+  mesh(g, new THREE.CylinderGeometry(7.2, 7.6, h + 2.4, 18), ivory, hw - 5.2, (h + 2.4) / 2, 0, shadow);
+  mesh(g, new THREE.CylinderGeometry(7.5, 7.5, 1.1, 18), crimson, hw - 5.2, h + 2.2, 0, false);
+
+  // Vertical modernist acoustic brise-soleil fins & vibrant cultural mural bands
+  const muralCols = ['#e53935', '#fb8c00', '#fdd835', '#00897b', '#1e88e5', '#8e24aa'];
+  let idx = 0;
+  for (let z = -hl + 2.2; z <= hl - 2.2; z += 2.4, idx++) {
+    mesh(g, new THREE.BoxGeometry(0.55, h - 3.6, 0.28), teal, hw - 1.6, 3.6 + (h - 3.6) / 2, z, false);
+    mesh(
+      g,
+      new THREE.BoxGeometry(0.25, 2.4, 1.6),
+      lam(muralCols[idx % muralCols.length]),
+      hw - 1.75,
+      5.4,
+      z,
+      false,
+    );
+  }
+
+  // Cantilevered entrance stage canopy
+  mesh(g, new THREE.BoxGeometry(3.6, 0.5, len * 0.66), charcoal, hw - 0.6, 3.8, 0, shadow);
+
+  const marqueeTex = signTexture(
+    ['ARTS COUNCIL OF PAKISTAN · آرٹس کونسل کراچی', 'OPEN AIR AUDITORIUM · THEATRE · LITERATURE FESTIVAL'],
+    '#880e4f',
+    '#ffeb3b',
+    768,
+    128,
+  );
+  const marqueeMat = new THREE.MeshLambertMaterial({
+    color: '#ffffff',
+    map: marqueeTex,
+    emissiveMap: marqueeTex,
+    emissive: new THREE.Color('#ffeb3b'),
+    emissiveIntensity: 0,
+  });
+  litMats.push(marqueeMat);
+  const sign = mesh(g, new THREE.PlaneGeometry(16.0, 1.65), marqueeMat, hw + 0.2, 4.5, 0, false);
+  sign.rotation.y = Math.PI / 2;
+}
+
+// ---------------------------------------------------------------------------
+// 31. DJ Sindh Govt. Science College (1887 Indo-Saracenic Sandstone & Dome)
+// ---------------------------------------------------------------------------
+
+function buildDjScienceCollege(
+  group: THREE.Group,
+  hw: number,
+  hl: number,
+  shadow: boolean,
+  litMats: THREE.MeshLambertMaterial[],
+): void {
+  const g = new THREE.Group();
+  g.position.set(0, KERB_H, 0);
+  group.add(g);
+
+  const d = hw * 2;
+  const len = hl * 2;
+  const h = 13.8;
+  const sandstone = lam('#dfbe7d');
+  const deepStone = lam('#b38b46');
+  const domeMat = lam('#4b7f6e');
+
+  // Grand yellow Gizri sandstone block with arched colonial verandahs
+  mesh(g, new THREE.BoxGeometry(d * 0.84, h, len), sandstone, -0.8, h / 2, 0, shadow);
+  const verTex = tiled(colonialVerandahTexture(), Math.max(3, Math.round(len / 6)), 2);
+  const front = mesh(
+    g,
+    new THREE.PlaneGeometry(len - 0.8, h - 1.2),
+    lam('#f3dca8', verTex),
+    hw - 0.72,
+    h / 2,
+    0,
+    false,
+  );
+  front.rotation.y = Math.PI / 2;
+
+  // Projecting neoclassical entrance portico with columns & triangular pediment
+  mesh(g, new THREE.BoxGeometry(2.6, h + 1.4, 7.6), deepStone, hw - 0.4, (h + 1.4) / 2, 0, shadow);
+  for (const z of [-2.8, -1.0, 1.0, 2.8]) {
+    mesh(g, new THREE.CylinderGeometry(0.32, 0.36, h - 0.6, 8), lam('#f5ebd0'), hw + 0.9, (h - 0.6) / 2, z, shadow);
+  }
+
+  // Central octagonal clock drum & Indo-Saracenic copper-green cupola dome
+  const topY = h + 1.4;
+  mesh(g, new THREE.CylinderGeometry(3.2, 3.5, 4.8, 8), sandstone, hw - 0.6, topY + 2.4, 0, shadow);
+  const dome = new THREE.SphereGeometry(3.1, 16, 12, 0, Math.PI * 2, 0, Math.PI * 0.55);
+  mesh(g, dome, domeMat, hw - 0.6, topY + 4.8, 0, shadow);
+  mesh(g, new THREE.ConeGeometry(0.35, 2.0, 8), deepStone, hw - 0.6, topY + 4.8 + 3.6, 0, false);
+
+  const signTex = signTexture(
+    ['D.J. SINDH GOVT. SCIENCE COLLEGE · ڈی جے سائنس کالج', 'EST. 1887 · BURNS ROAD HERITAGE DISTRICT'],
+    '#5d4037',
+    '#ffecb3',
+    768,
+    128,
+  );
+  const signMat = new THREE.MeshLambertMaterial({
+    color: '#ffffff',
+    map: signTex,
+    emissiveMap: signTex,
+    emissive: new THREE.Color('#ffecb3'),
+    emissiveIntensity: 0,
+  });
+  litMats.push(signMat);
+  const sign = mesh(g, new THREE.PlaneGeometry(16.0, 1.55), signMat, hw + 1.0, 4.2, 0, false);
+  sign.rotation.y = Math.PI / 2;
+}
+
 

@@ -217,6 +217,10 @@ export class CityScenery {
   private warmGlowMat!: THREE.MeshBasicMaterial;
   private litProps: THREE.MeshLambertMaterial[] = [];
   private glowMeshes: THREE.InstancedMesh[] = [];
+  private fountainJets: THREE.Mesh[] = [];
+  private steamPos: Float32Array | null = null;
+  private steamGeo: THREE.BufferGeometry | null = null;
+  private steamSeeds: number[] = [];
 
   constructor(lowSpec: boolean) {
     const map = cityMap();
@@ -227,9 +231,11 @@ export class CityScenery {
     this.pavements(map);
     this.markings(map);
     this.islands(map, shadow);
+    this.pedestrianBridges(map, shadow);
     this.buildings(map, shadow);
     this.poles(map);
     this.trees(map, shadow);
+    this.chaiDhabas(map);
     this.parkedClutter(map);
     this.yards(map);
     this.ramps(map, shadow);
@@ -306,7 +312,7 @@ export class CityScenery {
     for (const gm of this.glowMeshes) gm.visible = showGlow;
   }
 
-  update(_time: number, x: number, z: number): void {
+  update(time: number, x: number, z: number): void {
     let vis = 0;
     for (const c of this.chunks) {
       const on = Math.abs(c.cx - x) < 460 && Math.abs(c.cz - z) < 460;
@@ -314,6 +320,27 @@ export class CityScenery {
       if (on) vis++;
     }
     this.visibleChunks = vis;
+
+    for (let i = 0; i < this.fountainJets.length; i++) {
+      const jet = this.fountainJets[i];
+      const pulse = 0.82 + 0.28 * Math.sin(time * 4.2 + i * 1.1);
+      jet.scale.y = pulse;
+    }
+
+    if (this.steamPos && this.steamGeo) {
+      const n = this.steamSeeds.length / 4;
+      for (let i = 0; i < n; i++) {
+        const bx = this.steamSeeds[i * 4];
+        const by = this.steamSeeds[i * 4 + 1];
+        const bz = this.steamSeeds[i * 4 + 2];
+        const ph = this.steamSeeds[i * 4 + 3];
+        const cyc = (time * 0.65 + ph) % 1;
+        this.steamPos[i * 3] = bx + Math.sin(time * 2.1 + ph * 6.2) * 0.22 * cyc;
+        this.steamPos[i * 3 + 1] = by + cyc * 1.65;
+        this.steamPos[i * 3 + 2] = bz + Math.cos(time * 1.8 + ph * 6.2) * 0.22 * cyc;
+      }
+      this.steamGeo.attributes.position.needsUpdate = true;
+    }
   }
 
   dispose(): void {
@@ -323,7 +350,7 @@ export class CityScenery {
     this.group.traverse((o) => {
       if (o instanceof THREE.BatchedMesh) {
         o.dispose();
-      } else if (o instanceof THREE.Mesh || o instanceof THREE.LineSegments) {
+      } else if (o instanceof THREE.Mesh || o instanceof THREE.LineSegments || o instanceof THREE.Points) {
         o.geometry.dispose();
         const mat = o.material;
         if (Array.isArray(mat)) mat.forEach((m) => m.dispose());
@@ -337,6 +364,10 @@ export class CityScenery {
     this.chunkMap.clear();
     this.clutterBuckets.clear();
     this.glowMeshes = [];
+    this.fountainJets = [];
+    this.steamPos = null;
+    this.steamGeo = null;
+    this.steamSeeds = [];
   }
 
   private ground(map: CityMap): void {
@@ -593,20 +624,62 @@ export class CityScenery {
       grass.receiveShadow = true;
       this.group.add(kerb, grass);
       if (s.monumental) {
-        // Plinth, white column and a national flag (Fawara Chowk).
+        // Monumental Fawara Chowk Musical Fountain, sandstone colonnade, water jets & national flag.
         const stone = new THREE.MeshLambertMaterial({ color: '#efece4' });
-        const plinth = new THREE.Mesh(new THREE.CylinderGeometry(2.4, 2.8, 1.2, 8), new THREE.MeshLambertMaterial({ color: '#b3261e' }));
-        plinth.position.set(s.x, 0.9, -s.z);
-        const col = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 1.0, 7, 8), stone);
-        col.position.set(s.x, 5, -s.z);
-        const cap = new THREE.Mesh(new THREE.SphereGeometry(1.1, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2), stone);
-        cap.position.set(s.x, 8.5, -s.z);
-        const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 6, 6), new THREE.MeshLambertMaterial({ color: '#8d9196' }));
-        pole.position.set(s.x, 11.5, -s.z);
-        const flag = new THREE.Mesh(new THREE.PlaneGeometry(3, 2), new THREE.MeshLambertMaterial({ map: flagTexture(), side: THREE.DoubleSide }));
-        flag.position.set(s.x + 1.5, 13.4, -s.z);
-        for (const o of [plinth, col, cap]) o.castShadow = shadow;
-        this.group.add(plinth, col, cap, pole, flag);
+        const redStone = new THREE.MeshLambertMaterial({ color: '#b33c26' });
+        const waterMat = new THREE.MeshLambertMaterial({
+          color: '#28a8c4',
+          emissive: new THREE.Color('#1e88a8'),
+          emissiveIntensity: 0,
+        });
+        this.litProps.push(waterMat);
+        const jetMat = new THREE.MeshBasicMaterial({ color: '#dff8ff', transparent: true, opacity: 0.78 });
+
+        // Outer octagonal sandstone rim & glowing turquoise fountain basin
+        const basinRim = new THREE.Mesh(new THREE.CylinderGeometry(8.6, 9.2, 0.95, 16), redStone);
+        basinRim.position.set(s.x, 0.75, -s.z);
+        const basinWater = new THREE.Mesh(new THREE.CylinderGeometry(8.0, 8.0, 0.82, 16), waterMat);
+        basinWater.position.set(s.x, 0.85, -s.z);
+
+        // 8 Mughal-colonial sandstone pavilion piers around the outer ring
+        for (let k = 0; k < 8; k++) {
+          const a = (k / 8) * Math.PI * 2;
+          const px = s.x + Math.cos(a) * 11.2;
+          const pz = -s.z + Math.sin(a) * 11.2;
+          const pier = new THREE.Mesh(new THREE.BoxGeometry(0.95, 3.8, 0.95), redStone);
+          pier.position.set(px, 2.1, pz);
+          const finial = new THREE.Mesh(new THREE.SphereGeometry(0.62, 8, 6), stone);
+          finial.position.set(px, 4.3, pz);
+          pier.castShadow = shadow;
+          this.group.add(pier, finial);
+        }
+
+        // Ring of 8 animated vertical fountain water plumes
+        for (let k = 0; k < 8; k++) {
+          const a = (k / 8) * Math.PI * 2;
+          const jx = s.x + Math.cos(a) * 5.2;
+          const jz = -s.z + Math.sin(a) * 5.2;
+          const jet = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.42, 2.8, 8).translate(0, 1.4, 0), jetMat);
+          jet.position.set(jx, 1.15, jz);
+          this.fountainJets.push(jet);
+          this.group.add(jet);
+        }
+        const centerJet = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.75, 4.4, 10).translate(0, 2.2, 0), jetMat);
+        centerJet.position.set(s.x, 2.0, -s.z);
+        this.fountainJets.push(centerJet);
+
+        const plinth = new THREE.Mesh(new THREE.CylinderGeometry(2.8, 3.3, 1.5, 12), redStone);
+        plinth.position.set(s.x, 1.1, -s.z);
+        const col = new THREE.Mesh(new THREE.CylinderGeometry(0.75, 1.05, 7.2, 10), stone);
+        col.position.set(s.x, 5.2, -s.z);
+        const cap = new THREE.Mesh(new THREE.SphereGeometry(1.2, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2), stone);
+        cap.position.set(s.x, 8.8, -s.z);
+        const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 6.2, 6), new THREE.MeshLambertMaterial({ color: '#8d9196' }));
+        pole.position.set(s.x, 11.8, -s.z);
+        const flag = new THREE.Mesh(new THREE.PlaneGeometry(3.2, 2.1), new THREE.MeshLambertMaterial({ map: flagTexture(), side: THREE.DoubleSide }));
+        flag.position.set(s.x + 1.6, 13.7, -s.z);
+        for (const o of [basinRim, plinth, col, cap]) o.castShadow = shadow;
+        this.group.add(basinRim, basinWater, centerJet, plinth, col, cap, pole, flag);
       } else {
         // Compact roundabout planter & neem centrepiece (Art Council Roundabout).
         const plinth = new THREE.Mesh(new THREE.CylinderGeometry(s.r * 0.42, s.r * 0.48, 0.7, 12), new THREE.MeshLambertMaterial({ color: '#b8914f' }));
@@ -617,6 +690,106 @@ export class CityScenery {
         crown.position.set(s.x, 4.4, -s.z);
         crown.castShadow = plinth.castShadow = shadow;
         this.group.add(plinth, trunk, crown);
+      }
+    }
+  }
+
+  /** Karachi municipal green-and-yellow overhead steel pedestrian bridges spanning major arterials. */
+  private pedestrianBridges(map: CityMap, shadow: boolean): void {
+    const steelGreen = new THREE.MeshLambertMaterial({ color: '#1b6b3a' });
+    const railYellow = new THREE.MeshLambertMaterial({ color: '#f2b705' });
+    const concreteMat = new THREE.MeshLambertMaterial({ color: '#cfc9bc' });
+    const canopyMat = new THREE.MeshLambertMaterial({ color: '#2b547e', side: THREE.DoubleSide });
+    this.ownedMats.push(steelGreen, railYellow, concreteMat, canopyMat);
+
+    const deckY = 5.85;
+    const deckW = 2.4;
+
+    for (const b of map.bridges) {
+      const target = this.chunkFor(b.x, b.z);
+      const bg = new THREE.Group();
+      bg.position.set(b.x, 0, -b.z);
+      bg.rotation.y = -b.heading;
+      target.add(bg);
+
+      const half = b.span * 0.5;
+      // Reserve pavement footprints around both bridge landings so parked bikes/trees don't overlap stairs.
+      const s = Math.sin(b.heading), c = Math.cos(b.heading);
+      for (const side of [-1, 1]) {
+        const lx = b.x + side * c * half;
+        const lz = b.z - side * s * half;
+        this.occupied.push([lx, lz, 4.2]);
+        this.occupied.push([lx + s * 4.5, lz + c * 4.5, 3.5]);
+      }
+
+      // Main overhead walkway deck, yellow safety side trusses & arched shade canopy
+      const deck = new THREE.Mesh(new THREE.BoxGeometry(b.span + 1.6, 0.38, deckW), concreteMat);
+      deck.position.set(0, deckY, 0);
+      deck.castShadow = shadow;
+      deck.receiveShadow = true;
+      bg.add(deck);
+
+      for (const dz of [-deckW / 2 + 0.08, deckW / 2 - 0.08]) {
+        const topRail = new THREE.Mesh(new THREE.BoxGeometry(b.span + 1.4, 0.16, 0.12), railYellow);
+        topRail.position.set(0, deckY + 1.25, dz);
+        const midRail = new THREE.Mesh(new THREE.BoxGeometry(b.span + 1.4, 0.12, 0.1), steelGreen);
+        midRail.position.set(0, deckY + 0.68, dz);
+        bg.add(topRail, midRail);
+
+        for (let x = -half; x <= half + 0.01; x += 2.6) {
+          const post = new THREE.Mesh(new THREE.BoxGeometry(0.12, 2.5, 0.12), steelGreen);
+          post.position.set(x, deckY + 1.25, dz);
+          bg.add(post);
+        }
+      }
+
+      const roofGeo = new THREE.CylinderGeometry(deckW * 0.58, deckW * 0.58, b.span + 1.6, 8, 1, false, -Math.PI / 2, Math.PI);
+      roofGeo.rotateZ(Math.PI / 2);
+      roofGeo.scale(1, 0.42, 1);
+      const roof = new THREE.Mesh(roofGeo, canopyMat);
+      roof.position.set(0, deckY + 2.45, 0);
+      roof.castShadow = shadow;
+      bg.add(roof);
+
+      // Left and right pavement support piers + stepped access staircases
+      for (const side of [-1, 1]) {
+        const px = side * half;
+        for (const dz of [-0.85, 0.85]) {
+          const pier = new THREE.Mesh(new THREE.CylinderGeometry(0.36, 0.42, deckY, 8), concreteMat);
+          pier.position.set(px, deckY / 2, dz);
+          pier.castShadow = shadow;
+          bg.add(pier);
+        }
+        // Landing platform & sloped stair ramp running parallel to the pavement (+z in local space)
+        const landing = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.35, 2.4), concreteMat);
+        landing.position.set(px, deckY * 0.52, 2.2);
+        const stairLen = 5.4;
+        const stair = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.28, stairLen), steelGreen);
+        stair.position.set(px, deckY * 0.5, 2.8);
+        stair.rotation.x = 0.52;
+        const rail = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.14, stairLen), railYellow);
+        rail.position.set(px + side * 0.72, deckY * 0.5 + 0.85, 2.8);
+        rail.rotation.x = 0.52;
+        bg.add(landing, stair, rail);
+      }
+
+      // Double-sided illuminated municipal gantry sign over the roadway
+      const signTex = signTexture([b.name, 'PEDESTRIAN BRIDGE · پیدل چلنے والوں کا پل'], '#0f5c2e', '#ffffff', 512, 96);
+      this.ownedTex.push(signTex);
+      const signMat = new THREE.MeshLambertMaterial({
+        color: '#ffffff',
+        map: signTex,
+        emissiveMap: signTex,
+        emissive: new THREE.Color('#d8ffd0'),
+        emissiveIntensity: 0,
+      });
+      this.ownedMats.push(signMat);
+      this.litProps.push(signMat);
+      for (const dir of [-1, 1]) {
+        const board = new THREE.Mesh(new THREE.PlaneGeometry(Math.min(11.5, b.span * 0.68), 1.25), signMat);
+        board.position.set(0, deckY + 0.55, dir * (deckW / 2 + 0.16));
+        if (dir < 0) board.rotation.y = Math.PI;
+        bg.add(board);
       }
     }
   }
@@ -1075,6 +1248,110 @@ export class CityScenery {
       for (let lf = -o.hl; lf <= o.hl; lf += 12) {
         add(o.x + lf * s + lr * c, o.z + lf * c - lr * s, 8);
       }
+    }
+  }
+
+  /** Roadside Quetta Chai Hotel dhabas with shamiana tarps, charpais, glowing samovar counters, and rising steam. */
+  private chaiDhabas(map: CityMap): void {
+    const tarpColors = ['#1565c0', '#c62828', '#2e7d32', '#ef6c00'];
+    const dhabaGeos = tarpColors.map((tarpCol) => {
+      const parts: THREE.BufferGeometry[] = [];
+      const addPart = (g: THREE.BufferGeometry, col: string) => {
+        paint(g, col);
+        parts.push(g.index ? g.toNonIndexed() : g);
+      };
+      // 4 bamboo corner poles + colorful shamiana canopy roof
+      for (const sx of [-1.4, 1.4]) {
+        for (const sz of [-1.8, 1.8]) {
+          addPart(new THREE.CylinderGeometry(0.045, 0.055, 2.8, 5).translate(sx, 1.4, sz), '#8d6e43');
+        }
+      }
+      addPart(new THREE.BoxGeometry(3.2, 0.14, 4.0).translate(0, 2.82, 0), tarpCol);
+      addPart(new THREE.BoxGeometry(3.3, 0.24, 4.1).translate(0, 2.68, 0), '#f9a825');
+
+      // Red-brick & stainless-steel chai counter + copper samovar urn + tandoor drum
+      addPart(new THREE.BoxGeometry(0.95, 0.98, 1.85).translate(-0.85, 0.49, -0.7), '#a63a28');
+      addPart(new THREE.BoxGeometry(1.02, 0.08, 1.92).translate(-0.85, 1.0, -0.7), '#cfd8dc');
+      addPart(new THREE.CylinderGeometry(0.24, 0.28, 0.72, 8).translate(-0.85, 1.38, -0.95), '#d4883a');
+      addPart(new THREE.CylinderGeometry(0.38, 0.42, 0.82, 8).translate(-0.85, 0.41, 0.65), '#8d4925');
+
+      // Traditional woven charpai (wooden frame + cream rope weave) & red plastic dhaba chairs/table
+      addPart(new THREE.BoxGeometry(1.15, 0.1, 1.85).translate(0.65, 0.46, -0.75), '#e6d7b8');
+      for (const cx of [0.15, 1.15]) {
+        for (const cz of [-1.6, 0.1]) {
+          addPart(new THREE.BoxGeometry(0.1, 0.52, 0.1).translate(cx, 0.26, cz), '#6d4c2f');
+        }
+      }
+      addPart(new THREE.BoxGeometry(0.85, 0.08, 0.85).translate(0.65, 0.72, 1.05), '#e53935');
+      addPart(new THREE.CylinderGeometry(0.06, 0.08, 0.72, 6).translate(0.65, 0.36, 1.05), '#b71c1c');
+      for (const dz of [0.42, 1.68]) {
+        addPart(new THREE.BoxGeometry(0.46, 0.44, 0.46).translate(0.65, 0.22, dz), '#c62828');
+      }
+
+      const merged = mergeGeometries(parts);
+      parts.forEach((g) => g.dispose());
+      return prepBatchGeo(merged ?? new THREE.BoxGeometry(2.8, 2.8, 3.6), false);
+    });
+    this.ownedGeos.push(...dhabaGeos);
+
+    const rng = new Rng(0xc4a1);
+    let placedCount = 0;
+    for (const l of map.links) {
+      if (placedCount >= 22) break;
+      if (l.turnaround || l.len < 42) continue;
+      if (map.nodes[l.from].roundabout && map.nodes[l.to].roundabout) continue;
+      const sides = l.oneway ? [1, -1] : [1];
+      for (const side of sides) {
+        if (placedCount >= 22) break;
+        if (!rng.chance(0.26)) continue;
+        const s = rng.range(14, l.len - 14);
+        if (this.isMedianSide(map, l, s, side)) continue;
+        const off = side * (l.hw + 2.35);
+        const p = map.linkPoint(l, s, off);
+        if (!this.canPlaceOnPavement(map, p.x, p.z, 2.4, 0.9, 1.2)) continue;
+        this.occupied.push([p.x, p.z, 2.6]);
+        placedCount++;
+
+        const ry = -l.heading + (side > 0 ? 0 : Math.PI);
+        this.pushClutter(p.x, p.z, dhabaGeos[placedCount % dhabaGeos.length], place(p.x, KERB_H, -p.z, ry));
+
+        const bk = this.bucketFor(p.x, p.z);
+        bk.bulbs.push(place(p.x, KERB_H + 2.62, -p.z, ry, 1.15, 1.15, 1.15));
+        bk.glows.push(place(p.x, KERB_H + 0.03, -p.z, 0, 8.5, 1, 8.5));
+
+        // 4 rising steam puffs above the copper samovar urn
+        const sinR = Math.sin(ry), cosR = Math.cos(ry);
+        const localX = -0.85, localZ = -0.95;
+        const wx = p.x + localX * cosR + localZ * sinR;
+        const wz = -p.z - localX * sinR + localZ * cosR;
+        for (let k = 0; k < 4; k++) {
+          this.steamSeeds.push(wx, KERB_H + 1.8, wz, k * 0.25 + rng.range(0, 0.2));
+        }
+      }
+    }
+
+    if (this.steamSeeds.length > 0) {
+      const count = this.steamSeeds.length / 4;
+      this.steamPos = new Float32Array(count * 3);
+      for (let i = 0; i < count; i++) {
+        this.steamPos[i * 3] = this.steamSeeds[i * 4];
+        this.steamPos[i * 3 + 1] = this.steamSeeds[i * 4 + 1];
+        this.steamPos[i * 3 + 2] = this.steamSeeds[i * 4 + 2];
+      }
+      this.steamGeo = new THREE.BufferGeometry();
+      this.steamGeo.setAttribute('position', new THREE.BufferAttribute(this.steamPos, 3).setUsage(THREE.DynamicDrawUsage));
+      const steamMat = new THREE.PointsMaterial({
+        color: '#f5f2eb',
+        size: 0.42,
+        transparent: true,
+        opacity: 0.55,
+        depthWrite: false,
+      });
+      this.ownedGeos.push(this.steamGeo);
+      this.ownedMats.push(steamMat);
+      const pts = new THREE.Points(this.steamGeo, steamMat);
+      pts.frustumCulled = false;
+      this.group.add(pts);
     }
   }
 

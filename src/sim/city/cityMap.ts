@@ -162,12 +162,25 @@ export type LandmarkKind =
   | 'press_club'
   | 'grammar_school'
   | 'ymca'
-  | 'madina_mall';
+  | 'madina_mall'
+  | 'mazar_quaid'
+  | 'frere_hall'
+  | 'merewether_tower'
+  | 'arts_council'
+  | 'dj_science_college';
 
 export interface Landmark {
   kind: LandmarkKind;
   name: string;
   obb: Obb;
+}
+
+export interface PedestrianBridge {
+  name: string;
+  x: number;
+  z: number;
+  heading: number;
+  span: number;
 }
 
 export interface Island {
@@ -215,6 +228,7 @@ export class CityMap {
   readonly slabs: Slab[] = [];
   readonly buildings: Building[] = [];
   readonly landmarks: Landmark[] = [];
+  readonly bridges: PedestrianBridge[] = [];
   readonly islands: Island[] = [];
   readonly roundaboutLoops: RoundaboutLoop[] = [];
   readonly pois: Poi[] = [];
@@ -432,6 +446,12 @@ export class CityMap {
       this.roundaboutLoops.push({ island, pts, r2: maxR2 });
     }
     for (const [name, x, z] of SADDAR_POIS) this.pois.push({ name, x, z });
+    this.pois.push(
+      { name: 'Mazar-e-Quaid', x: 654.4, z: 562.5 },
+      { name: 'Frere Hall', x: -155.6, z: -827.3 },
+      { name: 'Merewether Clock Tower', x: -886.2, z: 251.4 },
+      { name: 'DJ Science College', x: -798.1, z: -168.1 },
+    );
     for (const [x, z, hw, hl, heading] of SADDAR_YARDS) this.yards.push({ x, z, hw, hl, heading });
 
     const landmarkSpecs: ReadonlyArray<Landmark> = [
@@ -461,8 +481,22 @@ export class CityMap {
       { kind: 'grammar_school', name: 'Karachi Grammar School', obb: { x: -223.8, z: 492.0, hw: 11.5, hl: 16.0, heading: -2.173 } },
       { kind: 'ymca', name: 'Historic YMCA', obb: { x: -494.6, z: -784.9, hw: 10.5, hl: 14.0, heading: -1.706 } },
       { kind: 'madina_mall', name: 'Madina Mall', obb: { x: -160.5, z: -655.0, hw: 9.5, hl: 12.5, heading: 2.868 } },
+      { kind: 'mazar_quaid', name: 'Mazar-e-Quaid', obb: { x: 644.0, z: 579.0, hw: 11.5, hl: 14.5, heading: 1.010 } },
+      { kind: 'frere_hall', name: 'Frere Hall', obb: { x: -138.5, z: -821.6, hw: 10.0, hl: 14.0, heading: 2.818 } },
+      { kind: 'merewether_tower', name: 'Merewether Clock Tower', obb: { x: -899.1, z: 241.1, hw: 8.5, hl: 10.5, heading: -0.671 } },
+      { kind: 'arts_council', name: 'Art Council Roundabout', obb: { x: -812.4, z: -768.4, hw: 9.5, hl: 12.5, heading: 0.907 } },
+      { kind: 'dj_science_college', name: 'DJ Science College', obb: { x: -814.1, z: -175.1, hw: 9.5, hl: 13.5, heading: -0.411 } },
     ];
     for (const l of landmarkSpecs) this.landmarks.push(l);
+
+    this.bridges.push(
+      { name: 'SADDAR · EMPRESS MARKET', x: -80.8, z: 140.4, heading: 1.038, span: 21.0 },
+      { name: 'M.A. JINNAH RD · MAZAR-E-QUAID', x: 290.4, z: 357.1, heading: -2.068, span: 17.8 },
+      { name: 'M.A. JINNAH RD · GUL PLAZA', x: -587.9, z: 480.2, heading: 0.975, span: 24.0 },
+      { name: 'INVERARITY RD · SADDAR', x: 91.1, z: -432.4, heading: 1.301, span: 17.3 },
+      { name: 'SHAHRAH-E-FAISAL · CANTT', x: 492.0, z: -788.0, heading: 0.475, span: 25.0 },
+      { name: 'ABDULLAH HAROON RD · ZAINAB MKT', x: -315.0, z: -243.3, heading: -0.398, span: 12.6 },
+    );
 
     const rng = new Rng(0x5add4);
     for (const [x, z, hw, hl, heading, storeys] of SADDAR_BUILDINGS) {
