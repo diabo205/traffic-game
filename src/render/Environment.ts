@@ -18,13 +18,14 @@ import {
   towerFacadeAtlas,
 } from './textures';
 import { buildCorridors, FOOTBRIDGES, hasCrescentLight, inRiver, PLANTER_Z, RIVER_Z0, RIVER_Z1, riverFar, TOLL_Z } from './Corridors';
-import { makeFacadeMaterial, GROUND_FLOOR_H, STOREY_H } from './facadeMaterial';
+import { makeFacadeMaterial, setFacadeNight, GROUND_FLOOR_H, STOREY_H } from './facadeMaterial';
 import { buildLandmarks, excluded, FLYOVERS } from './Landmarks';
+import type { TimeOfDay } from './Renderer';
 import { buildSaddar, FOOTPATH_W, SADDAR_END } from './Saddar';
 import type { SaddarBuilding } from './Saddar';
 import { paint, StripBuilder } from './strip';
 import type { XFn } from './strip';
-import type { VehicleFactory } from './VehicleFactory';
+import type { VehicleFactory, VehicleVisual } from './VehicleFactory';
 
 /**
  * Static world: road surface, expressway deck, scenery and hazard props.
@@ -47,6 +48,10 @@ export class Environment {
   private redLight = new THREE.MeshBasicMaterial({ color: '#ff1a1a' });
   private blueLight = new THREE.MeshBasicMaterial({ color: '#1a4dff' });
   private water: THREE.MeshPhongMaterial | null = null;
+  private facadeMats: THREE.MeshLambertMaterial[] = [];
+  private litSigns: THREE.MeshLambertMaterial[] = [];
+  private ownedTex: THREE.Texture[] = [];
+  private roadblockPolice: VehicleVisual[] = [];
 
   constructor(hazards: HazardManager, factory: VehicleFactory, private readonly lowSpec: boolean) {
     this.buildGround();
@@ -55,8 +60,8 @@ export class Environment {
     this.buildScenery();
     this.buildHazards(hazards, factory);
     this.buildGantries();
-    buildLandmarks(this.group, this.lowSpec);
-    buildCorridors(this.group, this.lowSpec);
+    buildLandmarks(this.group, this.lowSpec, this.litSigns);
+    buildCorridors(this.group, this.lowSpec, this.litSigns);
   }
 
   // ---------------------------------------------------------------------------
@@ -65,9 +70,19 @@ export class Environment {
     const tex = dirtTexture().clone();
     tex.needsUpdate = true;
     tex.repeat.set(120, 120);
-    const g = new THREE.PlaneGeometry(1200, 1200);
+    this.ownedTex.push(tex);
+    const g = new THREE.PlaneGeometry(1200, 1200, 24, 24);
     g.rotateX(-Math.PI / 2);
-    this.ground = new THREE.Mesh(g, new THREE.MeshLambertMaterial({ color: '#d8c39a', map: tex }));
+    this.ground = new THREE.Mesh(
+      g,
+      new THREE.MeshLambertMaterial({
+        color: '#d8c39a',
+        map: tex,
+        polygonOffset: true,
+        polygonOffsetFactor: 4,
+        polygonOffsetUnits: 4,
+      }),
+    );
     this.ground.position.y = -0.06;
     this.ground.receiveShadow = true;
     this.group.add(this.ground);
@@ -307,11 +322,15 @@ export class Environment {
       mesh.receiveShadow = true;
       this.group.add(mesh);
     };
-    placeBlocks(settlements, makeFacadeMaterial(settlementFacadeAtlas(), 'settlementFacade'));
-    placeBlocks(towers, makeFacadeMaterial(towerFacadeAtlas(), 'towerFacade', true));
+    const settlementMat = makeFacadeMaterial(settlementFacadeAtlas(), 'settlementFacade');
+    const towerMat = makeFacadeMaterial(towerFacadeAtlas(), 'towerFacade', true);
+    const saddarMat = makeFacadeMaterial(saddarFacadeAtlas());
+    this.facadeMats.push(settlementMat, towerMat, saddarMat);
+    placeBlocks(settlements, settlementMat);
+    placeBlocks(towers, towerMat);
     this.buildRoofClutter(rng, settlements, towers);
     // Saddar blocks: facade tiles in world space (correct storeys + shopfronts).
-    const sMesh = new THREE.InstancedMesh(bGeo, makeFacadeMaterial(saddarFacadeAtlas()), saddar.length);
+    const sMesh = new THREE.InstancedMesh(bGeo, saddarMat, saddar.length);
     saddar.forEach((b, i) => {
       dummy.position.set(b.x, 0, -b.z);
       dummy.scale.set(b.d, b.h, b.w);
@@ -323,7 +342,7 @@ export class Environment {
     sMesh.castShadow = !this.lowSpec;
     sMesh.receiveShadow = true;
     this.group.add(sMesh);
-    buildSaddar(this.group, saddar, this.lowSpec);
+    buildSaddar(this.group, saddar, this.lowSpec, this.litSigns);
 
     // --- Palm trees (instanced, merged trunk + crown) ------------------------
     const trunk = new THREE.CylinderGeometry(0.16, 0.26, 7, 6);
@@ -378,12 +397,19 @@ export class Environment {
     arm.translate(-1.3, 9, 0);
     const arm2 = arm.clone();
     arm2.translate(2.6, 0, 0);
+    [pole, arm, arm2].forEach((g) => paint(g, '#8d9196'));
+    const lightGeo = mergeGeometries([pole, arm, arm2]);
     const lamp = new THREE.BoxGeometry(0.6, 0.15, 0.3);
     lamp.translate(-2.5, 8.9, 0);
     const lamp2 = lamp.clone();
     lamp2.translate(5, 0, 0);
-    [pole, arm, arm2, lamp, lamp2].forEach((g, i) => paint(g, i < 3 ? '#8d9196' : '#f1eedc'));
-    const lightGeo = mergeGeometries([pole, arm, arm2, lamp, lamp2]);
+    const lampGeo = mergeGeometries([lamp, lamp2]);
+    const bulbMat = new THREE.MeshLambertMaterial({
+      color: '#f1eedc',
+      emissive: new THREE.Color('#ffcc66'),
+      emissiveIntensity: 0,
+    });
+    this.litSigns.push(bulbMat);
     const lights: THREE.Matrix4[] = [];
     for (let z = START_Z; z < END_Z; z += 40) {
       if (hasCrescentLight(z) || FOOTBRIDGES.some((f) => Math.abs(f - z) < 6)) continue;
@@ -394,10 +420,15 @@ export class Environment {
       dummy.updateMatrix();
       lights.push(dummy.matrix.clone());
     }
-    if (lightGeo) {
+    if (lightGeo && lights.length) {
       const lMesh = new THREE.InstancedMesh(lightGeo, new THREE.MeshLambertMaterial({ vertexColors: true }), lights.length);
       lights.forEach((m, i) => lMesh.setMatrixAt(i, m));
       this.group.add(lMesh);
+    }
+    if (lampGeo && lights.length) {
+      const bMesh = new THREE.InstancedMesh(lampGeo, bulbMat, lights.length);
+      lights.forEach((m, i) => bMesh.setMatrixAt(i, m));
+      this.group.add(bMesh);
     }
 
     // --- Billboards ------------------------------------------------------------------
@@ -413,10 +444,16 @@ export class Environment {
       const base = 0;
       const h = zone.elevated ? elevationAt(z) + 6 : 9;
       const x = side < 0 ? road.left - road.shoulder - rng.range(4, 8) : road.right + 1.4 + (road.right - road.left) + rng.range(4, 8);
-      const board = new THREE.Mesh(
-        new THREE.PlaneGeometry(9, 4.5),
-        new THREE.MeshLambertMaterial({ map: billboardTexture(bi++ % BILLBOARD_COUNT), side: THREE.DoubleSide }),
-      );
+      const bTex = billboardTexture(bi++ % BILLBOARD_COUNT);
+      const bMat = new THREE.MeshLambertMaterial({
+        map: bTex,
+        emissiveMap: bTex,
+        emissive: new THREE.Color('#fff4db'),
+        emissiveIntensity: 0,
+        side: THREE.DoubleSide,
+      });
+      this.litSigns.push(bMat);
+      const board = new THREE.Mesh(new THREE.PlaneGeometry(9, 4.5), bMat);
       board.position.set(x, h + 2.25, -z);
       board.rotation.y = side * -0.35;
       this.group.add(board);
@@ -606,14 +643,21 @@ export class Environment {
     for (const rb of hm.roadblocks) {
       const road = sampleRoad(rb.z);
       const v = factory.create('police', 0);
+      v.root.userData.sharedFactory = true;
       v.root.position.set(road.left - road.shoulder * 0.5, elevationAt(rb.z), -(rb.z - 6));
       v.root.rotation.y = 0.25;
       this.group.add(v.root);
+      this.roadblockPolice.push(v);
       // "VIP MOVEMENT" warning sign ahead of it.
-      const sign = new THREE.Mesh(
-        new THREE.PlaneGeometry(3.2, 1.2),
-        new THREE.MeshLambertMaterial({ map: signTexture(['VIP MOVEMENT', 'ROAD CLOSED'], '#b71c1c', '#ffffff', 384, 144) }),
-      );
+      const warnTex = signTexture(['VIP MOVEMENT', 'ROAD CLOSED'], '#b71c1c', '#ffffff', 384, 144);
+      const warnMat = new THREE.MeshLambertMaterial({
+        map: warnTex,
+        emissiveMap: warnTex,
+        emissive: new THREE.Color('#ffffff'),
+        emissiveIntensity: 0,
+      });
+      this.litSigns.push(warnMat);
+      const sign = new THREE.Mesh(new THREE.PlaneGeometry(3.2, 1.2), warnMat);
       sign.position.set(road.left - road.shoulder + 0.5, elevationAt(rb.z) + 1.6, -(rb.z - 40));
       sign.rotation.y = 0.5;
       this.group.add(sign);
@@ -636,10 +680,15 @@ export class Environment {
       const beam = new THREE.Mesh(new THREE.BoxGeometry(x1 - x0, 0.4, 0.4), steel);
       beam.position.set((x0 + x1) / 2, y + h, -z);
       this.group.add(beam);
-      const sign = new THREE.Mesh(
-        new THREE.PlaneGeometry(Math.min(11, x1 - x0 - 1), 2.4),
-        new THREE.MeshLambertMaterial({ map: signTexture(lines, bg) }),
-      );
+      const gTex = signTexture(lines, bg);
+      const gMat = new THREE.MeshLambertMaterial({
+        map: gTex,
+        emissiveMap: gTex,
+        emissive: new THREE.Color('#fff4db'),
+        emissiveIntensity: 0,
+      });
+      this.litSigns.push(gMat);
+      const sign = new THREE.Mesh(new THREE.PlaneGeometry(Math.min(11, x1 - x0 - 1), 2.4), gMat);
       sign.position.set((x0 + x1) / 2, y + h - 0.6, -z + 0.25);
       this.group.add(sign);
     };
@@ -650,6 +699,35 @@ export class Environment {
 
     // Destination gantry; the Teen Talwar monument stands just beyond it.
     addGantry(FINISH_Z, ['CLIFTON · TEEN TALWAR', 'DESTINATION'], '#1b5e20');
+  }
+
+  setTimeOfDay(tod: TimeOfDay): void {
+    const night = tod === 'night' ? 0.95 : tod === 'sunset' ? 0.35 : 0;
+    for (const m of this.facadeMats) setFacadeNight(m, night);
+    const glow = tod === 'night' ? 0.85 : tod === 'sunset' ? 0.32 : 0;
+    for (const s of this.litSigns) s.emissiveIntensity = glow;
+    for (const pv of this.roadblockPolice) pv.setHeadlights(tod === 'noon' ? 0 : 1, tod !== 'noon');
+  }
+
+  dispose(): void {
+    for (const t of this.ownedTex) t.dispose();
+    this.ownedTex = [];
+    const disposeTree = (obj: THREE.Object3D) => {
+      if (obj.userData.sharedFactory) return;
+      if (obj instanceof THREE.BatchedMesh) {
+        obj.dispose();
+      } else if (obj instanceof THREE.Mesh || obj instanceof THREE.LineSegments) {
+        obj.geometry.dispose();
+        const mat = obj.material;
+        if (Array.isArray(mat)) mat.forEach((m) => m.dispose());
+        else mat.dispose();
+      }
+      for (const ch of obj.children) disposeTree(ch);
+    };
+    disposeTree(this.group);
+    this.facadeMats = [];
+    this.litSigns = [];
+    this.roadblockPolice = [];
   }
 
   /** Per-frame: keep ground under the camera, animate lights. */

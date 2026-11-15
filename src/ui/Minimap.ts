@@ -1,7 +1,7 @@
 import type { CityMap } from '../sim/city/cityMap';
 import type { Fares } from '../sim/city/Fares';
 
-const TIER = ['#3ddc84', '#ffc23d', '#ff4d4d'];
+const TIER = ['#3ddc84', '#ffc23d', '#ff4d4d', '#ff2d6f'];
 /** Pixels per metre in the pre-drawn street layer. */
 const RES = 0.6;
 

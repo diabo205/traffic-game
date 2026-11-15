@@ -1,5 +1,6 @@
 import type { PlayerCar } from '../PlayerCar';
 import { NPC_SPECS } from '../TrafficManager';
+import { COMBO_WINDOW } from '../types';
 import type { SimEvent } from '../types';
 import type { CityNpc } from './CityTraffic';
 
@@ -11,8 +12,7 @@ import type { CityNpc } from './CityTraffic';
  * the chain and the unbanked points are lost.
  */
 
-/** Seconds to land the next stunt before the combo banks. */
-export const COMBO_WINDOW = 3;
+export { COMBO_WINDOW };
 const MAX_MULT = 8;
 const NEAR_GAP = 0.9;
 const NEAR_SPEED = 11;
@@ -31,9 +31,7 @@ export class Stunts {
   private overTick = new Map<number, number>();
   private donutTime = 0;
   private donutCooldown = 0;
-  private donutAnchorX = 1e6;
-  private donutAnchorZ = 1e6;
-  private sameSpotDonuts = 0;
+  private donutHistory: Array<{ x: number; z: number; tick: number }> = [];
   private shaveCooldown = 0;
   private smashCooldown = 0;
   private fareTipLeft = 320;
@@ -53,9 +51,7 @@ export class Stunts {
     this.bestCombo = 0;
     this.donutTime = 0;
     this.donutCooldown = 0;
-    this.donutAnchorX = 1e6;
-    this.donutAnchorZ = 1e6;
-    this.sameSpotDonuts = 0;
+    this.donutHistory.length = 0;
     this.shaveCooldown = 0;
     this.smashCooldown = 0;
     this.fareTipLeft = 320;
@@ -150,20 +146,21 @@ export class Stunts {
     const fx = Math.sin(p.heading), fz = Math.cos(p.heading);
     const sp = p.spec;
 
-    // Sustained tight spin (gas + steer / handbrake circle) -> DONUT stunt (diminishes if farmed in one spot).
+    // Sustained tight spin (gas + steer / handbrake circle) -> DONUT stunt (diminishes within 32m / 30s).
+    while (this.donutHistory.length > 0 && tick - this.donutHistory[0].tick > 1800) this.donutHistory.shift();
+    let recentDonuts = 0;
+    for (const d of this.donutHistory) {
+      if (Math.hypot(p.x - d.x, p.z - d.z) < 32) recentDonuts++;
+    }
     if (!p.airborne && Math.abs(p.yawRate) > 1.45 && v > 2 && v < 13.5 && (p.handbrake || Math.abs(p.steerAngle) > 0.35)) {
       this.donutTime += dt;
       if (this.donutTime >= 0.85 && this.donutCooldown <= 0) {
         if (this.handbrakeActive) this.donutDuringDrift = true;
-        if (Math.hypot(p.x - this.donutAnchorX, p.z - this.donutAnchorZ) < 24) {
-          this.sameSpotDonuts++;
-        } else {
-          this.donutAnchorX = p.x;
-          this.donutAnchorZ = p.z;
-          this.sameSpotDonuts = 0;
+        const pts = recentDonuts === 0 ? 95 : recentDonuts === 1 ? 45 : 0;
+        if (pts > 0) {
+          this.donutHistory.push({ x: p.x, z: p.z, tick });
+          this.add('donut', 'DONUT', pts, events);
         }
-        const pts = this.sameSpotDonuts === 0 ? 95 : this.sameSpotDonuts === 1 ? 45 : 0;
-        if (pts > 0) this.add('donut', 'DONUT', pts, events);
         this.donutTime = 0;
         this.donutCooldown = 1.8;
       }
@@ -171,6 +168,7 @@ export class Stunts {
       this.donutTime = Math.max(0, this.donutTime - dt * 2);
     }
 
+    const { vx: pvx, vz: pvz } = p.velocity();
     for (const n of npcs) {
       const dx = n.x - p.x, dz = n.z - p.z;
       if (Math.abs(dx) > 9 || Math.abs(dz) > 9) continue;
@@ -181,8 +179,11 @@ export class Stunts {
         this.add('over', 'OVER THE TOP', 250, events);
         continue;
       }
-      // Near miss: alongside it, a hand's width apart, fast, and not touching.
+      // Near miss: alongside it, a hand's width apart, fast, meaningful relative speed, and not touching.
       if (v < NEAR_SPEED || p.airborne) continue;
+      const nvx = Math.sin(n.heading) * n.speed;
+      const nvz = Math.cos(n.heading) * n.speed;
+      if (Math.hypot(pvx - nvx, pvz - nvz) < 3.5) continue;
       const along = dx * fx + dz * fz;
       const lat = Math.abs(dx * fz - dz * fx);
       const cosRel = Math.cos(n.heading - p.heading);
@@ -191,7 +192,7 @@ export class Stunts {
       const gap = lat - sp.halfWidth - nAcross;
       if (Math.abs(along) > sp.halfLength + spec.hl || gap <= 0.05 || gap > NEAR_GAP) continue;
       if (tick - n.lastHitTick < 120) continue;
-      if (tick - (this.nearTick.get(n.id) ?? -1e9) < 180) continue;
+      if (tick - (this.nearTick.get(n.id) ?? -1e9) < 360) continue;
       this.nearTick.set(n.id, tick);
       const oncoming = cosRel < -0.5;
       const close = 1 - gap / NEAR_GAP;
@@ -205,7 +206,7 @@ export class Stunts {
     }
 
     // The window freezes while a stunt is still going (drifting, spinning a fresh donut, in the air).
-    const activeDonut = this.sameSpotDonuts < 2 && this.donutTime >= 0.25;
+    const activeDonut = recentDonuts < 2 && this.donutTime >= 0.25;
     if (this.mult > 0 && !p.handbrake && !p.airborne && !activeDonut) {
       this.window -= dt;
       if (this.window <= 0) {

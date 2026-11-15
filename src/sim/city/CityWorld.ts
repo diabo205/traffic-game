@@ -3,7 +3,7 @@ import type { RunStats } from '../LevelManager';
 import { clamp, obbOverlap, pointObbDistance } from '../math';
 import { MOVES, PlayerCar, WALL } from '../PlayerCar';
 import { NPC_SPECS } from '../TrafficManager';
-import { trafficDamage } from '../World';
+import { trafficDamage } from '../types';
 import type { GameOverReason, GamePhase, InputFrame, NpcView, Obb, PlayerVehicle, SimEvent } from '../types';
 import { cityMap } from './cityMap';
 import type { CityLink, CityMap } from './cityMap';
@@ -188,7 +188,13 @@ export class CityWorld {
       this.lastHonkTick = this.tick;
       this.events.push({ type: 'honk', cleared: this.traffic.honked });
     }
-    // Stunts: score what happened this tick, then tick the combo clock.
+    if (running) {
+      const st = this.level.stats;
+      st.elapsed += 1 / 60;
+      st.topSpeed = Math.max(st.topSpeed, Math.max(0, p.speed));
+      if (p.integrity <= 0) this.tow();
+    }
+    // Stunts: score what happened this tick (including tow combo-break), then tick the combo clock.
     const f = this.fares;
     const pay = (rs: number) => {
       f.money += rs;
@@ -197,13 +203,6 @@ export class CityWorld {
     const end = this.events.length;
     for (let i = firstEvent; i < end; i++) this.stunts.handle(this.events[i], this.events);
     this.stunts.update(1 / 60, this.tick, p, this.traffic.npcs, !!f.fare, this.events, pay, f.fare?.partyCount ?? 1);
-
-    if (running) {
-      const st = this.level.stats;
-      st.elapsed += 1 / 60;
-      st.topSpeed = Math.max(st.topSpeed, Math.max(0, p.speed));
-      if (p.integrity <= 0) this.tow();
-    }
   }
 
   /** Wrecked: no game over, just a tow onto the nearest clear kerb, a repair bill and lost time. */
@@ -213,30 +212,48 @@ export class CityWorld {
     f.cancelFare();
     const rawBill = Math.round((Math.max(0, f.money) * 0.35) / 10) * 10;
     const cost = Math.min(TOW_COST, Math.max(120, rawBill));
-    f.money = Math.max(-TOW_COST, f.money - cost);
+    const paid = Math.min(Math.max(0, f.money), cost);
+    f.money = Math.max(0, f.money - paid);
+    f.shiftEarnings = Math.max(0, f.shiftEarnings - paid);
     if (f.onShift) f.shiftTime = Math.max(0, f.shiftTime - TOW_TIME);
 
     // Nearest clear road kerb instead of teleporting back to spawn.
     const p = this.player;
     let bestLink: CityLink | null = null;
     let bestS = 0;
+    let bestLane = 0;
     let bestD = Infinity;
     for (const l of this.map.links) {
       if (l.turnaround || l.len < 22) continue;
       const rx = p.x - l.sx;
       const rz = p.z - l.sz;
-      const s = clamp(rx * l.dx + rz * l.dz, 10, l.len - 10);
-      const pt = this.map.linkPoint(l, s, 0);
+      let lane = l.lanes - 1;
+      if (lane === l.rampLane && l.lanes > 1) lane = 0;
+      let s = clamp(rx * l.dx + rz * l.dz, 10, l.len - 10);
+      if (lane === l.rampLane && s >= l.rampS0 - 3 && s <= l.rampS1 + 3) {
+        if (l.rampS0 - 3 >= 10) s = l.rampS0 - 3;
+        else if (l.rampS1 + 3 <= l.len - 10) s = l.rampS1 + 3;
+        else continue;
+      }
+      const pt = this.map.linkPoint(l, s, this.map.laneOffset(l, lane));
+      if (
+        this.map.rampHeight(pt.x, pt.z) > 0.01 ||
+        this.map.rampHeight(pt.x + l.dx * 1.8, pt.z + l.dz * 1.8) > 0.01 ||
+        this.map.rampHeight(pt.x - l.dx * 1.8, pt.z - l.dz * 1.8) > 0.01
+      ) {
+        continue;
+      }
       const d = Math.hypot(pt.x - p.x, pt.z - p.z);
       if (d < bestD) {
         bestD = d;
         bestLink = l;
         bestS = s;
+        bestLane = lane;
       }
     }
     let tx = this.startX, tz = this.startZ, th = this.startHeading;
     if (bestLink) {
-      const pt = this.map.linkPoint(bestLink, bestS, this.map.laneOffset(bestLink, bestLink.lanes - 1));
+      const pt = this.map.linkPoint(bestLink, bestS, this.map.laneOffset(bestLink, bestLane));
       tx = pt.x;
       tz = pt.z;
       th = bestLink.heading;
@@ -244,7 +261,7 @@ export class CityWorld {
     this.player.reset(tx, tz, th, this.map.groundY(tx, tz));
     this.player.freeRoam = true;
     this.onRoad = true;
-    this.events.push({ type: 'towed', cost });
+    this.events.push({ type: 'towed', cost: paid });
   }
 
   // ---------------------------------------------------------------------------
@@ -285,18 +302,32 @@ export class CityWorld {
     const p = this.player;
     const fresh = p.wallContact === 0;
     p.wallContact = WALL.memoryTicks;
+    const prevSpeed = p.speed;
+    const fx = Math.sin(p.heading), fz = Math.cos(p.heading);
+    const intoNorm = prevSpeed < -0.15 ? fx * nx + fz * nz : -(fx * nx + fz * nz);
     const { vx, vz } = p.velocity();
     const rel = vx * nx + vz * nz;
     if (rel >= 0) return;
+    const preMag = Math.hypot(vx, vz);
     const j = -(1 + RESTITUTION) * rel;
     p.setVelocity(vx + nx * j, vz + nz * j);
+    if (prevSpeed > 1.5 && intoNorm < 0.92) {
+      // Oblique forward wall contact: never flip gear into reverse; slide forward along wall.
+      if (p.speed < 0) p.speed = Math.abs(p.speed);
+      if (preMag > 3) {
+        p.speed = Math.max(p.speed, preMag * Math.max(0.72, 1 - intoNorm * 0.28));
+      }
+    } else if (prevSpeed > 1.5 && intoNorm >= 0.92 && p.throttle > 0.3 && p.speed < -3.5) {
+      p.speed = -3.5;
+    }
     p.scrapeWall(nx, nz);
     const impact = -rel;
     // Already scraping along this wall: steering back into it isn't a new crash
     // unless it's a real hit (well above the scrape threshold).
-    if (impact > (fresh ? 3 : 8) && this.tick - this.lastWallHitTick > HIT_COOLDOWN) {
+    const hitThresh = fresh ? (intoNorm < 0.5 ? 5.5 : 3) : 8;
+    if (impact > hitThresh && this.tick - this.lastWallHitTick > HIT_COOLDOWN) {
       this.lastWallHitTick = this.tick;
-      const dmg = Math.min(30, (impact - 3) * 1.7);
+      const dmg = Math.min(30, (impact - 3) * (intoNorm < 0.5 ? 1.1 : 1.7));
       this.damage(dmg);
       this.level.stats.crashes++;
       p.kick(-0.3);

@@ -5,11 +5,11 @@ import type { PlayerVehicle, SimEvent } from '../sim/types';
 import type { World } from '../sim/World';
 import { Birds } from './Birds';
 import { ChaseCamera } from './ChaseCamera';
-import { CityScenery } from './CityScenery';
+import type { CityScenery } from './CityScenery';
 import { Effects } from './Effects';
-import { Environment } from './Environment';
-import { FareVisuals } from './FareVisuals';
-import { PropVisuals } from './PropVisuals';
+import type { Environment } from './Environment';
+import type { FareVisuals } from './FareVisuals';
+import type { PropVisuals } from './PropVisuals';
 import { TyreFx } from './TyreFx';
 import { VehicleFactory } from './VehicleFactory';
 import type { VehicleVisual, VisualKind } from './VehicleFactory';
@@ -19,6 +19,8 @@ export type TimeOfDay = 'noon' | 'sunset' | 'night';
 
 interface Scenery {
   group: THREE.Group;
+  visibleChunks?: number;
+  setTimeOfDay?(tod: TimeOfDay): void;
   update(time: number, x: number, z: number): void;
   dispose?(): void;
 }
@@ -98,6 +100,7 @@ export class Renderer {
   private timeOfDay: TimeOfDay = 'noon';
   private env: Scenery | null = null;
   private envKey = '';
+  private attachSeq = 0;
   private fares: FareVisuals | null = null;
   private props: PropVisuals | null = null;
   private flame: THREE.Mesh;
@@ -111,6 +114,11 @@ export class Renderer {
   private time = 0;
   private avgDt = 1 / 60;
   private slowFrames = 0;
+  private perfEl: HTMLDivElement | null = null;
+  private perfTimer = 0;
+  private perfFrames = 0;
+  private perfMsAcc = 0;
+  private perfFps = 60;
   private tmp = new THREE.Vector3();
 
   private constructor(
@@ -126,6 +134,14 @@ export class Renderer {
     this.gl.shadowMap.enabled = !lowSpec;
     this.gl.shadowMap.type = THREE.PCFShadowMap;
     container.appendChild(this.gl.domElement);
+
+    if (new URLSearchParams(window.location.search).has('perf')) {
+      const el = document.createElement('div');
+      el.className = 'perf-hud';
+      el.textContent = 'FPS -- · CALLS -- · TRIS --';
+      document.body.appendChild(el);
+      this.perfEl = el;
+    }
 
     this.chase = new ChaseCamera(1);
     const flameGeo = new THREE.ConeGeometry(0.11, 0.7, 8).rotateX(Math.PI / 2).translate(0, 0, 0.35);
@@ -183,23 +199,53 @@ export class Renderer {
     this.sun.color.set(p.sunColor);
     this.sun.intensity = p.sunIntensity;
     this.gl.toneMappingExposure = p.exposure;
+    this.env?.setTimeOfDay?.(tod);
   }
 
-  /** (Re)bind to a world. Rebuilds static scenery only if the seed changed. */
-  attach(world: AnyWorld): void {
+  /** (Re)bind to a world. Dynamically imports scenery modules and rebuilds static scenery only if the seed changed. */
+  async attach(world: AnyWorld): Promise<void> {
+    const seq = ++this.attachSeq;
     const key = `${world.mode}:${world.seed}`;
+    let loadedEnv: Environment | null = null;
+    let loadedScenery: CityScenery | null = null;
+    let LoadedFares: (typeof FareVisuals) | null = null;
+    let LoadedProps: (typeof PropVisuals) | null = null;
+
+    if (world.mode === 'route') {
+      if (this.envKey !== key) {
+        const { Environment } = await import('./Environment');
+        if (seq !== this.attachSeq) return;
+        loadedEnv = new Environment(world.hazards, this.factory, this.lowSpec);
+      }
+    } else {
+      const needScenery = this.envKey !== key;
+      const [sceneryMod, fareMod, propMod] = await Promise.all([
+        needScenery ? import('./CityScenery') : Promise.resolve(null),
+        import('./FareVisuals'),
+        import('./PropVisuals'),
+      ]);
+      if (seq !== this.attachSeq) return;
+      if (sceneryMod) loadedScenery = new sceneryMod.CityScenery(this.lowSpec);
+      LoadedFares = fareMod.FareVisuals;
+      LoadedProps = propMod.PropVisuals;
+    }
+
     if (this.envKey !== key) {
       if (this.env) {
         this.scene.remove(this.env.group);
         this.env.dispose?.();
       }
-      if (world.mode === 'route') {
-        const env = new Environment(world.hazards, this.factory, this.lowSpec);
-        this.env = { group: env.group, update: (t, _x, z) => env.update(t, z) };
-      } else {
-        this.env = new CityScenery(this.lowSpec);
+      if (loadedEnv) {
+        this.env = {
+          group: loadedEnv.group,
+          setTimeOfDay: (tod) => loadedEnv.setTimeOfDay(tod),
+          update: (t, _x, z) => loadedEnv.update(t, z),
+          dispose: () => loadedEnv.dispose(),
+        };
+      } else if (loadedScenery) {
+        this.env = loadedScenery;
       }
-      this.scene.add(this.env.group);
+      if (this.env) this.scene.add(this.env.group);
       this.envKey = key;
     }
     if (this.fares) {
@@ -212,10 +258,10 @@ export class Renderer {
     }
     this.fares = null;
     this.props = null;
-    if (world.mode === 'city') {
-      this.fares = new FareVisuals();
+    if (world.mode === 'city' && LoadedFares && LoadedProps) {
+      this.fares = new LoadedFares();
       this.scene.add(this.fares.group);
-      this.props = new PropVisuals(world.props, !this.lowSpec);
+      this.props = new LoadedProps(world.props, !this.lowSpec);
       this.scene.add(this.props.group);
     }
     const veh = world.player.vehicle;
@@ -240,6 +286,9 @@ export class Renderer {
     // Compile every shader now, so nothing pops in (or hitches) the first
     // time it is drawn: a new road material, the first skid, the first puff.
     this.gl.compile(this.scene, this.chase.camera);
+    this.perfTimer = 0.25;
+    this.perfFrames = 0;
+    this.perfMsAcc = 0;
   }
 
   resize(): void {
@@ -326,23 +375,23 @@ export class Renderer {
   /** Pull chase camera inside building OBBs in Saddar so awnings/walls never occlude the car. */
   private clipCamera(world: CityWorld, camPos: THREE.Vector3, target: THREE.Vector3): void {
     let bestT = 1;
-    for (const t of [0.4, 0.68, 0.9, 1.0]) {
+    for (const t of [0.35, 0.55, 0.72, 0.86, 1.0]) {
       const x = target.x + (camPos.x - target.x) * t;
       const y = target.y + (camPos.y - target.y) * t;
       const z = target.z + (camPos.z - target.z) * t;
       let hit = false;
-      world.map.forEachSolidNear(x, -z, 1.4, (b) => {
-        if (y < 10 && pointObbDistance(x, -z, b) < 1.1) hit = true;
+      world.map.forEachSolidNear(x, -z, 2.5, (b) => {
+        if (y < 10 && pointObbDistance(x, -z, b) < 1.85) hit = true;
       });
       if (hit) {
-        bestT = Math.min(bestT, Math.max(0.42, t - 0.12));
+        bestT = Math.min(bestT, Math.max(0.35, t - 0.14));
         break;
       }
     }
     if (bestT < 1) {
       camPos.x = target.x + (camPos.x - target.x) * bestT;
       camPos.z = target.z + (camPos.z - target.z) * bestT;
-      camPos.y = Math.max(camPos.y, target.y + 1.8) + (1 - bestT) * 0.55;
+      camPos.y = Math.min(target.y + 2.25, Math.max(camPos.y, target.y + 1.65) + (1 - bestT) * 0.25);
     }
   }
 
@@ -379,7 +428,7 @@ export class Renderer {
       v.body.rotation.set(lerp(p.prevPitch, p.pitch), 0, -lerp(p.prevRoll, p.roll));
       v.body.position.y = lerp(p.prevBump, p.bump) * 0.6;
       v.setBrake(p.braking || p.reversing);
-      v.setHeadlights(p.dipper || this.timeOfDay === 'night' ? 2 : 1);
+      v.setHeadlights(p.dipper || this.timeOfDay === 'night' ? 2 : 1, lowLight);
       v.setHazard(world.phase === 'gameover' && Math.floor(this.time * 3) % 2 === 0);
       for (const w of v.wheels) {
         w.rotation.order = 'YXZ';
@@ -410,7 +459,7 @@ export class Renderer {
       v.body.rotation.z = Math.max(-0.35, Math.min(0.35, lean));
       v.setBrake(n.brakeLights);
       v.setHazard(n.hazardLights && blink);
-      v.setHeadlights(lowLight ? 1 : 0);
+      v.setHeadlights(lowLight ? 1 : 0, lowLight);
     }
     for (const [id, v] of this.npcVisuals) {
       if (!seen.has(id)) {
@@ -450,7 +499,64 @@ export class Renderer {
     }
     this.effects.update(dt);
 
+    const t0 = performance.now();
     this.gl.render(this.scene, this.chase.camera);
+    const renderMs = performance.now() - t0;
+
+    if (dt > 0) {
+      this.perfFrames++;
+      this.perfMsAcc += dt;
+      this.perfTimer += dt;
+      if (this.perfTimer >= 0.25) {
+        this.perfFps = this.perfFrames / Math.max(1e-3, this.perfMsAcc);
+        const info = this.gl.info.render;
+        const chunks = this.env?.visibleChunks ?? null;
+        const snap = {
+          fps: +this.perfFps.toFixed(1),
+          ms: +(1000 / Math.max(1, this.perfFps)).toFixed(1),
+          renderMs: +renderMs.toFixed(2),
+          calls: info.calls,
+          triangles: info.triangles,
+          geometries: this.gl.info.memory.geometries,
+          textures: this.gl.info.memory.textures,
+          dpr: +this.gl.getPixelRatio().toFixed(2),
+          visibleChunks: chunks,
+          mode: world.mode,
+          timeOfDay: this.timeOfDay,
+        };
+        (window as unknown as { __KT3D_PERF__?: typeof snap }).__KT3D_PERF__ = snap;
+        if (this.perfEl) {
+          const chStr = chunks !== null ? ` · CHUNKS ${chunks}` : '';
+          this.perfEl.textContent =
+            `${snap.fps.toFixed(0)} FPS (${snap.ms.toFixed(1)} ms) · CALLS ${snap.calls} · TRIS ${(snap.triangles / 1000).toFixed(1)}k · DPR ${snap.dpr}${chStr}`;
+        }
+        this.perfFrames = 0;
+        this.perfMsAcc = 0;
+        this.perfTimer = 0;
+      }
+    } else if (this.perfEl || !(window as unknown as { __KT3D_PERF__?: unknown }).__KT3D_PERF__) {
+      const info = this.gl.info.render;
+      const chunks = this.env?.visibleChunks ?? null;
+      const snap = {
+        fps: +this.perfFps.toFixed(1),
+        ms: +(1000 / Math.max(1, this.perfFps)).toFixed(1),
+        renderMs: +renderMs.toFixed(2),
+        calls: info.calls,
+        triangles: info.triangles,
+        geometries: this.gl.info.memory.geometries,
+        textures: this.gl.info.memory.textures,
+        dpr: +this.gl.getPixelRatio().toFixed(2),
+        visibleChunks: chunks,
+        mode: world.mode,
+        timeOfDay: this.timeOfDay,
+      };
+      (window as unknown as { __KT3D_PERF__?: typeof snap }).__KT3D_PERF__ = snap;
+      if (this.perfEl) {
+        const chStr = chunks !== null ? ` · CHUNKS ${chunks}` : '';
+        this.perfEl.textContent =
+          `PAUSED · CALLS ${snap.calls} · TRIS ${(snap.triangles / 1000).toFixed(1)}k · DPR ${snap.dpr}${chStr}`;
+      }
+    }
   }
 }
 

@@ -63,12 +63,12 @@ const WAITING = 6;
 const SPAWN_MIN = 35;
 const SPAWN_MAX = 185;
 const DESPAWN = 260;
-export const SHIFT_START = 90;
+export const SHIFT_START = 105;
 const BOARD_TIME = 0.7;
 const ALIGHT_TIME = 0.4;
 const BOARD_RADIUS = 6;
 const DROP_RADIUS = 10;
-const STOP_SPEED = 2.2;
+const STOP_SPEED = 2.6;
 
 export class Fares {
   readonly spots: Spot[] = [];
@@ -183,7 +183,7 @@ export class Fares {
       if (Math.hypot(p.x - place.x, p.z - place.z) < DROP_RADIUS && stopped) {
         f.alight += dt;
         if (f.alight >= ALIGHT_TIME) this.deliver(p, events);
-      } else f.alight = 0;
+      } else f.alight = Math.max(0, f.alight - dt * 2.5);
       if (this.fare && f.timeLeft <= 0) {
         events.push({ type: 'fareFailed', name: place.name, reason: 'time' });
         this.fare = null;
@@ -199,7 +199,7 @@ export class Fares {
             this.board(w, p, events);
             break;
           }
-        } else w.board = 0;
+        } else w.board = Math.max(0, w.board - dt * 2.5);
       }
     }
 
@@ -230,14 +230,36 @@ export class Fares {
     this.navigate(p);
   }
 
-  private pickDest(fromX: number, fromZ: number, exclude = -1): number {
+  private pickDest(fromX: number, fromZ: number, exclude = -1, maxRoute = Infinity): number {
     if (this.places.length <= 1) return 0;
-    let dest = this.rng.int(0, this.places.length - 1);
-    for (let k = 0; k < 6; k++) {
-      if (dest !== exclude && Math.hypot(this.places[dest].x - fromX, this.places[dest].z - fromZ) >= 95) break;
-      dest = this.rng.int(0, this.places.length - 1);
+    const cands: number[] = [];
+    for (let k = 0; k < 14 && cands.length < 5; k++) {
+      const c = this.rng.int(0, this.places.length - 1);
+      if (c === exclude || cands.includes(c)) continue;
+      if (Math.hypot(this.places[c].x - fromX, this.places[c].z - fromZ) >= 95) cands.push(c);
     }
-    return dest;
+    if (cands.length === 0) {
+      let dest = this.rng.int(0, this.places.length - 1);
+      if (dest === exclude) dest = (dest + 1) % this.places.length;
+      return dest;
+    }
+    if (this.shiftFares < 2 || maxRoute < Infinity) {
+      const cap = this.shiftFares < 2 ? Math.min(maxRoute, 540) : maxRoute;
+      const targetLen = this.shiftFares === 0 ? 290 : 380;
+      let best = cands[0];
+      let bestScore = Infinity;
+      for (const c of cands) {
+        const rLen = this.routeLength(fromX, fromZ, 0, this.places[c]);
+        const over = Math.max(0, rLen - cap) * 3.5;
+        const sc = Math.abs(rLen - targetLen) + over;
+        if (sc < bestScore) {
+          bestScore = sc;
+          best = c;
+        }
+      }
+      return best;
+    }
+    return cands[0];
   }
 
   private deliver(p: PlayerCar, events: SimEvent[]): void {
@@ -247,19 +269,20 @@ export class Fares {
     if (f.stopsLeft > 1) {
       // Mid-ride stop on a Party fare: pay leg 1 and chain seamlessly to stop 2!
       const legPay = Math.round(((50 + f.distance * 0.4) * (1 + (f.partyCount - 1) * 0.25)) / 10) * 10;
-      const bonus = 6;
+      const bonus = Math.round(7 + f.distance / 120);
       this.money += legPay;
       this.shiftEarnings += legPay;
       this.shiftTime += bonus;
       const oldName = this.places[f.dest].name;
-      const nextDest = this.pickDest(p.x, p.z, f.dest);
+      const nextDest = this.pickDest(p.x, p.z, f.dest, 720);
       const nextPlace = this.places[nextDest];
       const nextDist = this.routeLength(p.x, p.z, p.heading, nextPlace);
       const nextLimit = Math.max(12, Math.round(nextDist / 10.6 + 6));
+      const carry = Math.min(12, Math.round(f.timeLeft * 0.45));
       f.dest = nextDest;
       f.distance = nextDist;
-      f.timeLeft = Math.min(nextLimit, f.timeLeft + Math.round(nextDist / 10.6 + 5));
-      f.limit = Math.max(f.limit, f.timeLeft);
+      f.timeLeft = nextLimit + carry;
+      f.limit = f.timeLeft;
       f.stopsLeft--;
       f.alight = 0;
       events.push({
@@ -284,7 +307,8 @@ export class Fares {
     const kindMul = f.kind === 'vip' ? 2.0 : f.kind === 'party' ? 1.45 : 1.0;
     const base = Math.round(((60 + f.distance * 0.5) * kindMul * streakMul) / 10) * 10;
     const tip = frac > 0.5 ? Math.round((base * 0.5) / 10) * 10 : frac > 0.25 ? Math.round((base * 0.2) / 10) * 10 : 0;
-    const bonus = Math.round((8 + 14 * frac + (f.kind === 'vip' ? 5 : 0)) * (1 + Math.min(3, Math.max(0, this.chain - 1)) * 0.1));
+    const distSec = Math.round(f.distance / 110);
+    const bonus = Math.round((8 + distSec + 12 * frac + (f.kind === 'vip' ? 5 : 0)) * (1 + Math.min(3, Math.max(0, this.chain - 1)) * 0.1));
     this.money += base + tip;
     this.shiftEarnings += base + tip;
     this.shiftFares++;
@@ -330,7 +354,7 @@ export class Fares {
       if (best >= 0) si = best;
     }
     const sp = this.spots[si];
-    const d = Math.hypot(sp.x - p.x, sp.z - p.z);
+    const d = Math.hypot(sp.x - p.x, p.z - p.z);
     if (d < SPAWN_MIN || d > SPAWN_MAX) return;
     if (this.waiting.some((w) => Math.hypot(w.x - sp.x, w.z - sp.z) < 40)) return;
     const dest = this.pickDest(sp.x, sp.z);
@@ -388,7 +412,10 @@ export class Fares {
 
   private route(p: PlayerCar, target: Spot, tx: number, tz: number): void {
     const direct = Math.hypot(tx - p.x, tz - p.z);
-    const r = direct < 30 ? null : this.shortest(p.x, p.z, p.heading, target);
+    const here = this.map.linkAt(p.x, p.z, p.heading);
+    const tl = this.map.links[target.link];
+    const sameStreet = !!(here && (here.id === tl.id || (tl.reverse >= 0 && here.id === tl.reverse)));
+    const r = direct < 26 && sameStreet ? null : this.shortest(p.x, p.z, p.heading, target);
     const pts: number[] = [p.x, p.z];
     if (r) for (const n of r.nodes) pts.push(this.map.nodes[n].x, this.map.nodes[n].z);
     pts.push(tx, tz);
@@ -398,7 +425,7 @@ export class Fares {
     this.navX = tx;
     this.navZ = tz;
     for (let i = 2; i < pts.length; i += 2) {
-      if (Math.hypot(pts[i] - p.x, pts[i + 1] - p.z) > 16) {
+      if (Math.hypot(pts[i] - p.x, pts[i + 1] - p.z) > 6.5) {
         this.navX = pts[i];
         this.navZ = pts[i + 1];
         break;
@@ -455,12 +482,14 @@ export class Fares {
 
     const here = m.linkAt(x, z, heading);
     if (here) {
-      // Ahead to the next junction (or back, at a cost, for a U-turn).
+      // Ahead to the next junction (or back, at a cost, for a U-turn on two-way streets).
       const s = (x - here.sx) * here.dx + (z - here.sz) * here.dz;
       dist[here.to] = Math.max(0, here.len - s);
       push(here.to, dist[here.to]);
-      dist[here.from] = Math.max(0, s) + (here.oneway ? 55 : 25);
-      push(here.from, dist[here.from]);
+      if (!here.oneway) {
+        dist[here.from] = Math.max(0, s) + 38;
+        push(here.from, dist[here.from]);
+      }
     } else {
       for (let i = 0; i < n; i++) {
         const nd = m.nodes[i];

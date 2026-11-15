@@ -92,6 +92,7 @@ export class Hud {
   private pauseGoals: HTMLDivElement;
   readonly resumeBtn: HTMLButtonElement;
   readonly pauseCamBtn: HTMLButtonElement;
+  readonly pauseSteerBtn: HTMLButtonElement;
   readonly pauseControlsBtn: HTMLButtonElement;
   readonly pauseSoundBtn: HTMLButtonElement;
   readonly quitBtn: HTMLButtonElement;
@@ -116,6 +117,7 @@ export class Hud {
   private lastScore = -1;
   private lastCombo = '';
   private lastDistLeft = -1;
+  private lastNextDist = -1;
   private lastUrgency = '';
 
   constructor(parent: HTMLElement) {
@@ -304,7 +306,7 @@ export class Hud {
       <div class="ctl moves"><h3>MOVES</h3>
         <p><b>DRIFT</b> gas + brake while turning — power out for a boost</p>
         <p><b>LAUNCH</b> hold brake + gas when stopped, release brake</p>
-        <p><b>DASH</b> double-tap gas · <b>DONUT</b> spin tight · <b>HORN</b> clears traffic & pedestrians</p></div>`;
+        <p><b>DASH</b> double-tap gas (&lt; 55% top speed) · <b>DONUT</b> spin tight · <b>HORN</b> clears traffic & pedestrians</p></div>`;
     const osmCredit = div('osm-credit');
     osmCredit.textContent = 'Map data © OpenStreetMap contributors';
     this.settingsScreen.append(sBack, sHead, tabs, this.paneSound, this.paneControls, osmCredit);
@@ -322,11 +324,12 @@ export class Hud {
     menuTag.textContent = 'GAME MENU';
     this.resumeBtn = cardBtn('RESUME', '', 'Resume');
     this.pauseCamBtn = cardBtn('CAMERA', 'NEAR', 'Camera distance');
+    this.pauseSteerBtn = cardBtn('STEERING', 'BUTTONS', 'Touch steering mode');
     this.pauseControlsBtn = cardBtn('CONTROLS', '', 'Controls');
     this.pauseSoundBtn = cardBtn('SOUND', 'ON', 'Sound');
     this.quitBtn = cardBtn('QUIT TO MENU', '', 'Quit to menu');
     const pRight = div('pause-right');
-    pRight.append(menuTag, this.resumeBtn, this.pauseCamBtn, this.pauseControlsBtn, this.pauseSoundBtn, this.quitBtn);
+    pRight.append(menuTag, this.resumeBtn, this.pauseCamBtn, this.pauseSteerBtn, this.pauseControlsBtn, this.pauseSoundBtn, this.quitBtn);
     this.pauseScreen.append(pLeft, pRight);
 
     // ---- Results --------------------------------------------------------------------------------------
@@ -375,9 +378,9 @@ export class Hud {
       this.heroTitle.innerHTML = 'SADDAR TO <em>CLIFTON</em><br>AGAINST THE CLOCK.';
       this.heroText.textContent = '4.2 km dash via Lyari Expressway & Shahrah-e-Faisal to Teen Talwar. Hit checkpoints before the clock hits zero and keep your ride intact.';
       this.statAKey.textContent = 'LEFT';
-      this.statBKey.textContent = 'HP';
+      this.statBKey.textContent = 'NEXT';
     }
-    this.lastDistLeft = this.lastScore = this.lastIntegrity = -1;
+    this.lastDistLeft = this.lastNextDist = this.lastScore = this.lastIntegrity = -1;
     this.targetMoney = 0;
     this.shownMoney = this.lastMoneyShown = Number.NaN;
     if (mode !== 'city') {
@@ -435,12 +438,14 @@ export class Hud {
 
   setSteerMode(mode: TouchSteerMode): void {
     setCard(this.stickBtn, mode.toUpperCase());
+    setCard(this.pauseSteerBtn, mode.toUpperCase());
   }
 
   setTouchVisible(v: boolean): void {
     setCard(this.touchBtn, v ? 'ON' : 'OFF');
     this.stickBtn.classList.toggle('disabled', !v);
     this.autoGasBtn.classList.toggle('disabled', !v);
+    this.pauseSteerBtn.classList.toggle('hidden', !v);
   }
 
   setCamera(far: boolean): void {
@@ -452,6 +457,7 @@ export class Hud {
 
   private menu(open: boolean): void {
     this.root.classList.toggle('in-menu', open);
+    document.body.classList.toggle('in-menu', open);
     if (open) {
       this.toast.classList.remove('show');
       this.toastTimer = 0;
@@ -600,16 +606,25 @@ export class Hud {
    * Boost meter. charge 0..1 (1 = ready), active = boosting now (fill shows
    * what's left), drifting shows the drift tag, launchFrac shows Launch charge.
    */
-  setBoost(charge: number, active: boolean, drifting: boolean, launchFrac = 0, dashReady = false, stopped = false): void {
+  setBoost(
+    charge: number,
+    active: boolean,
+    drifting: boolean,
+    launchFrac = 0,
+    dashReady = false,
+    stopped = false,
+    launchReady = false,
+    driftFrac = 0,
+  ): void {
     const launchShown = !active && !drifting && launchFrac > 0;
-    const c = Math.max(0, Math.min(1, launchShown ? launchFrac : charge));
+    const c = Math.max(0, Math.min(1, drifting ? driftFrac : launchShown ? launchFrac : charge));
     this.boostFill.style.width = `${(c * 100).toFixed(1)}%`;
     const state = active
       ? 'active'
       : drifting
         ? 'drift'
         : launchShown
-          ? launchFrac >= 1
+          ? launchReady
             ? 'launch-ready'
             : 'launch'
           : c >= 1
@@ -618,11 +633,17 @@ export class Hud {
     const label = active
       ? 'BOOST!'
       : drifting
-        ? 'DRIFTING'
+        ? driftFrac >= 1
+          ? 'FULL DRIFT · RELEASE!'
+          : driftFrac >= 0.635
+            ? 'MINI DRIFT · RELEASE'
+            : 'DRIFTING · TURN'
         : launchShown
           ? launchFrac >= 1
-            ? 'RELEASE BRAKE!'
-            : 'CHARGING LAUNCH'
+            ? 'MAX LAUNCH · RELEASE!'
+            : launchReady
+              ? 'LAUNCH READY · HOLD'
+              : 'CHARGING LAUNCH'
           : c >= 1
             ? dashReady
               ? 'DASH READY · 2× GAS'
@@ -750,7 +771,7 @@ export class Hud {
     window.setTimeout(() => el.remove(), 2000);
   }
 
-  update(dt: number, speedKmh: number, integrity: number, timeLeft: number, progress: number): void {
+  update(dt: number, speedKmh: number, integrity: number, timeLeft: number, progress: number, nextCpDist = 0): void {
     if (this.mode === 'city' && this.shownMoney < this.targetMoney) {
       const step = Math.max(dt * 120, (this.targetMoney - this.shownMoney) * Math.min(1, dt * 10));
       this.shownMoney = Math.min(this.targetMoney, this.shownMoney + step);
@@ -768,7 +789,6 @@ export class Hud {
       this.integrityFill.className = `integ-fill ${hp > 60 ? 'ok' : hp > 30 ? 'warn' : 'crit'}`;
       this.integrityText.textContent = `${hp}%`;
       this.lastIntegrity = hp;
-      if (this.mode === 'route') this.statB.textContent = String(hp);
     }
     const tt = `${String(Math.floor(timeLeft / 60)).padStart(2, '0')}:${String(Math.floor(timeLeft % 60)).padStart(2, '0')}.${Math.floor((timeLeft % 1) * 10)}`;
     if (tt !== this.lastClock) {
@@ -781,6 +801,11 @@ export class Hud {
       if (rem !== this.lastDistLeft) {
         this.lastDistLeft = rem;
         this.statA.textContent = rem >= 1000 ? `${(rem / 1000).toFixed(1)} KM` : `${rem} M`;
+      }
+      const nxt = Math.max(0, Math.round(nextCpDist));
+      if (nxt !== this.lastNextDist) {
+        this.lastNextDist = nxt;
+        this.statB.textContent = nxt >= 1000 ? `${(nxt / 1000).toFixed(1)} KM` : `${nxt} M`;
       }
     }
 

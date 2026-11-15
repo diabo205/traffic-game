@@ -187,10 +187,12 @@ export class CityTraffic {
     const m = this.map;
     const link = m.links[n.link];
     const node = m.nodes[link.to];
+    const hasThru = node.out.some((k) => !m.links[k].turnaround);
     const options: number[] = [];
     const weights: number[] = [];
     for (const id of node.out) {
       const out = m.links[id];
+      if (hasThru && out.turnaround) continue;
       const turn = m.turnBetween(link, out);
       if (turn === 'uturn') continue;
       if (n.kind === 'cart' && out.lanes < 2) continue;
@@ -349,13 +351,22 @@ export class CityTraffic {
       for (const o of this.npcs) {
         if (o === n) continue;
         // Deadlock breakers: of two vehicles waiting on each other the lower id
-        // goes; after a long wait, crossing traffic is nosed through slowly.
+        // goes; after a long wait, crossing traffic is nosed through slowly
+        // unless already within direct bumper overlap range.
         if (o.blocker === n.id && n.id < o.id) continue;
-        if (n.blockedTime > 3 && Math.cos(o.heading - n.heading) < 0.6) {
-          creep = true;
-          continue;
-        }
         const os = NPC_SPECS[o.kind];
+        const dx = o.x - n.x;
+        const dz = o.z - n.z;
+        if (dx * dx + dz * dz > 36) {
+          if (n.blockedTime > 3 && Math.cos(o.heading - n.heading) < 0.6) {
+            creep = true;
+            continue;
+          }
+          if (n.path && n.blockedTime > 3.5 && n.id < o.id && Math.hypot(dx, dz) > spec.hl + os.hl + 0.5) {
+            creep = true;
+            continue;
+          }
+        }
         consider(o.id, o.x, o.z, os.hw, os.hl);
       }
       if (player.y < 1.6) consider(0, px, pz, ALTO.halfWidth, ALTO.halfLength);
@@ -445,8 +456,9 @@ export class CityTraffic {
           const room = l.hw - offT - spec.hw - 0.2;
           offT += Math.max(0, Math.min(1.3, room));
         }
+        const latRateCap = n.yieldTime > 0 ? Math.max(spec.latSpeed, 1.8) : spec.latSpeed;
         const before = n.lat;
-        n.lat = approach(n.lat, offT, spec.latSpeed * dt);
+        n.lat = approach(n.lat, offT, latRateCap * dt);
         const latRate = (n.lat - before) / dt;
         const p = m.linkPoint(l, n.s, n.lat);
         x = p.x;
@@ -455,7 +467,7 @@ export class CityTraffic {
         heading = l.heading - Math.atan2(latRate, Math.max(n.speed, 1.5));
         n.latVel = -latRate;
       }
-      // Shoves: slide off with friction, spin, then drift back into lane.
+      // Shoves: slide off with friction, spin, then drift back into lane once moving again.
       n.kx += n.kvx * dt;
       n.kz += n.kvz * dt;
       const fr = Math.exp(-dt * 3.2);
@@ -463,10 +475,18 @@ export class CityTraffic {
       n.kvz *= fr;
       n.kHead += n.kSpin * dt;
       n.kSpin *= Math.exp(-dt * 2.5);
-      const back = Math.exp(-dt * 0.9);
-      n.kx *= back;
-      n.kz *= back;
-      n.kHead *= Math.exp(-dt * 1.1);
+      if (n.speed > 1.2 && n.blockedTime < 0.25) {
+        const back = Math.exp(-dt * 0.9 * Math.min(1, n.speed / 5));
+        n.kx *= back;
+        n.kz *= back;
+        n.kHead *= Math.exp(-dt * 1.1 * Math.min(1, n.speed / 5));
+      }
+      const kLen = Math.hypot(n.kx, n.kz);
+      if (kLen > 1.8) {
+        const sc = 1.8 / kLen;
+        n.kx *= sc;
+        n.kz *= sc;
+      }
       n.x = x + n.kx;
       n.z = z + n.kz;
       heading += n.kHead;
@@ -478,7 +498,7 @@ export class CityTraffic {
       n.heading = n.prevHeading + dh;
     }
 
-    // ---- Pairwise NPC separation (prevents junction deadlock phasing) ------
+    // ---- Pairwise NPC separation (prevents junction deadlock phasing & tailback overlap) ------
     for (let i = 0; i < this.npcs.length; i++) {
       const a = this.npcs[i];
       for (let j = i + 1; j < this.npcs.length; j++) {
@@ -486,15 +506,39 @@ export class CityTraffic {
         if (Math.abs(a.x - b.x) > 7 || Math.abs(a.z - b.z) > 7) continue;
         const mtv = obbOverlap(CityTraffic.obb(a), CityTraffic.obb(b));
         if (!mtv || mtv.depth <= 0.02) continue;
-        const push = Math.min(mtv.depth, 1.2) * 0.5;
+        const push = Math.min(mtv.depth + 0.03, 1.2) * 0.5;
+        const aProj = mtv.nx * Math.sin(a.heading) + mtv.nz * Math.cos(a.heading);
         a.x += mtv.nx * push;
         a.z += mtv.nz * push;
-        a.kx += mtv.nx * push;
-        a.kz += mtv.nz * push;
+        if (aProj < -0.5) {
+          const back = -aProj * push;
+          if (a.path) a.ps = Math.max(0, a.ps - back);
+          else a.s = Math.max(0, a.s - back);
+          a.speed = Math.min(a.speed, b.speed * 0.5);
+        } else {
+          a.kx += mtv.nx * push;
+          a.kz += mtv.nz * push;
+        }
+        const bProj = -(mtv.nx * Math.sin(b.heading) + mtv.nz * Math.cos(b.heading));
         b.x -= mtv.nx * push;
         b.z -= mtv.nz * push;
-        b.kx -= mtv.nx * push;
-        b.kz -= mtv.nz * push;
+        if (bProj < -0.5) {
+          const back = -bProj * push;
+          if (b.path) b.ps = Math.max(0, b.ps - back);
+          else b.s = Math.max(0, b.s - back);
+          b.speed = Math.min(b.speed, a.speed * 0.5);
+        } else {
+          b.kx -= mtv.nx * push;
+          b.kz -= mtv.nz * push;
+        }
+        for (const v of [a, b]) {
+          const kl = Math.hypot(v.kx, v.kz);
+          if (kl > 1.8) {
+            const sc = 1.8 / kl;
+            v.kx *= sc;
+            v.kz *= sc;
+          }
+        }
         if (a.id > b.id) a.speed *= 0.88;
         else b.speed *= 0.88;
       }

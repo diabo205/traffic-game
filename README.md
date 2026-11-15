@@ -22,12 +22,13 @@ Cumulative earnings bank across runs to unlock rides:
 ```bash
 npm install
 npm run dev              # http://localhost:5173 and LAN IP for phones on Wi-Fi
-npm run build            # type-check + production bundle + PWA assets in dist/
+npm run build            # type-check + split production bundle + PWA assets in dist/
+npm run pack             # build self-contained single-file HTML in dist/
 npm run preview          # serve dist/ on LAN
 npm run playtest:metrics # run all headless sim feel probes
 ```
 
-URL options: `?mode=city|route`, `?daily=1`, `?seed=123`, `?low` / `?high` (graphics tier), `?z=1500` (debug route start).
+URL options: `?mode=city|route`, `?daily=1`, `?seed=123`, `?low` / `?high` (graphics tier), `?perf` (FPS & draw-call HUD), `?z=1500` (debug route start).
 
 See [CLAUDE.md](CLAUDE.md) for architecture rules (`src/sim/` is pure, deterministic TypeScript; `src/render/` only reads it).
 

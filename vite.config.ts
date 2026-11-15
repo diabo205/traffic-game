@@ -64,6 +64,10 @@ function karachiPwaPlugin(): Plugin {
         './models/alto.glb',
         './models/rickshaw.glb',
         './models/minibus.glb',
+        './models/bike.glb',
+        './models/cart.glb',
+        './models/car.glb',
+        './models/truck.glb',
       ];
       const precache = Array.from(new Set([...staticAssets, ...emitted.map((f) => `./${f}`)]));
       const version = fnv1aHex(precache.join('|'));
@@ -144,6 +148,16 @@ export default defineConfig({
   preview: { host: true, allowedHosts: true },
   build: {
     target: 'es2022',
-    chunkSizeWarningLimit: 800,
+    chunkSizeWarningLimit: isSingleFile() ? 2000 : 800,
+    rolldownOptions: {
+      output: isSingleFile()
+        ? { codeSplitting: false }
+        : {
+            manualChunks(id: string) {
+              if (id.includes('node_modules/three/')) return 'three';
+              return undefined;
+            },
+          },
+    },
   },
 });

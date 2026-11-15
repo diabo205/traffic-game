@@ -223,7 +223,7 @@ export class InputManager {
 
     // Digital steering (keys + touch buttons) ramps for smoothness.
     const dTarget = (kRight || t.right ? 1 : 0) - (kLeft || t.left ? 1 : 0);
-    const rate = dTarget === 0 ? 7 : Math.sign(dTarget) !== Math.sign(this.digitalSteer) ? 9 : 4.5;
+    const rate = dTarget === 0 ? 10 : Math.sign(dTarget) !== Math.sign(this.digitalSteer) ? 14 : 7.5;
     const diff = dTarget - this.digitalSteer;
     this.digitalSteer += Math.sign(diff) * Math.min(Math.abs(diff), rate * dt);
 

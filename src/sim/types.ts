@@ -30,6 +30,21 @@ export const EMPTY_INPUT: Readonly<InputFrame> = Object.freeze({
   dipper: false,
 });
 
+export const TICK_RATE = 60;
+export const DT = 1 / TICK_RATE;
+/** Seconds to land the next stunt before the combo banks. */
+export const COMBO_WINDOW = 3;
+
+/**
+ * Damage from hitting traffic. Soft at city-traffic closing speeds (a
+ * nudge at 15 km/h is a few HP), still brutal for a head-on at speed.
+ */
+export function trafficDamage(impact: number, kindDamage: number): number {
+  if (impact <= 2.5) return 0;
+  const x = impact - 2.5;
+  return Math.min(8 + kindDamage * 6.5, x * (0.2 + x * 0.032) * kindDamage);
+}
+
 export type NpcKind = 'bike' | 'minibus' | 'rickshaw' | 'cart' | 'car' | 'truck';
 
 export type PlayerVehicle = 'alto' | 'rickshaw' | 'minibus';

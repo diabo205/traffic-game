@@ -33,7 +33,7 @@ export const ROADBLOCK_ROW_GAP = 11;
 
 /** Keep hazards clear of these z ranges (ramps, checkpoint gates, start). */
 const KEEP_CLEAR: ReadonlyArray<readonly [number, number]> = [
-  [-50, 70],
+  [-50, 120],
   [1080, 1290],
   [2880, 3090],
   [FINISH_Z - 40, FINISH_Z + 200],
@@ -189,14 +189,15 @@ export class HazardManager {
     const openMin = road.left + open * road.laneWidth;
     const openMax = openMin + road.laneWidth;
     this.roadblocks.push({ id, z, openMin, openMax, openX: (openMin + openMax) / 2 });
+    const leftEdge = road.left - road.shoulder;
     for (const rowZ of [z, z + ROADBLOCK_ROW_GAP]) {
-      // Barrier segment left of the gap.
+      // Barrier segment left of the gap (spans shoulder + closed left lanes).
       const pad = 0.15;
-      if (openMin - road.left > 0.5) {
-        const w = openMin - road.left - pad;
+      if (openMin - leftEdge > 0.5) {
+        const w = openMin - leftEdge - pad;
         this.add({
           kind: 'checkpoint',
-          x: road.left + w / 2,
+          x: leftEdge + w / 2,
           z: rowZ,
           hw: w / 2,
           hl: 0.45,

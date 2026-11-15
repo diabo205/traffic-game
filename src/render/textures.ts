@@ -116,11 +116,17 @@ const ART_PALETTES: readonly (readonly string[])[] = [
   ['#ff006e', '#ffbe0b', '#3a86ff', '#fb5607', '#ffffff', '#06d6a0'],
   ['#d62828', '#fcbf49', '#003049', '#eae2b7', '#2ec4b6', '#f77f00'],
   ['#9b5de5', '#f15bb5', '#fee440', '#00bbf9', '#00f5d4', '#ffffff'],
+  ['#0f4c5c', '#e36414', '#fb8b24', '#9a031e', '#fdf0d5', '#2a9d8f'],
+  ['#1b4332', '#ffb703', '#fb8500', '#e63946', '#f1faee', '#219ebc'],
+  ['#5f0f40', '#ffbe0b', '#3a86ff', '#ff006e', '#ffffff', '#8ac926'],
+  ['#14213d', '#fca311', '#e63946', '#06d6a0', '#ffffff', '#f72585'],
 ];
 
-/** Pakistani truck-art style panel: bands, florals, chevrons, mirror dots. */
+const TRUCK_SLOGANS = ['سفر بخیر', 'ماشاءاللہ', 'پاکستان زندہ باد', 'دیکھ مگر پیار سے', 'چمک پٹی اسپیشل'];
+
+/** Pakistani truck-art style panel: bands, arches, florals, mirror dots, calligraphy. */
 export function truckArtTexture(variant: number): THREE.Texture {
-  return cached(`art${variant % 8}`, () => {
+  return cached(`art${variant % 10}`, () => {
     const [c, ctx] = canvas(512, 256);
     const rng = new Rng(100 + variant);
     const pal = ART_PALETTES[variant % ART_PALETTES.length];
@@ -129,11 +135,10 @@ export function truckArtTexture(variant: number): THREE.Texture {
     // Horizontal bands.
     let y = 0;
     while (y < 256) {
-      const h = rng.int(14, 40);
+      const h = rng.int(16, 42);
       ctx.fillStyle = rng.pick(pal);
       ctx.fillRect(0, y, 512, h);
-      // Chevrons or dots inside the band.
-      const style = rng.int(0, 2);
+      const style = rng.int(0, 3);
       ctx.fillStyle = rng.pick(pal);
       if (style === 0) {
         for (let x = 0; x < 512; x += h) {
@@ -149,30 +154,52 @@ export function truckArtTexture(variant: number): THREE.Texture {
           ctx.arc(x, y + h / 2, h / 4, 0, Math.PI * 2);
           ctx.fill();
         }
+      } else if (style === 2) {
+        for (let x = 0; x < 512; x += h * 1.2) {
+          ctx.beginPath();
+          ctx.arc(x + h * 0.6, y + h, h * 0.55, Math.PI, 0);
+          ctx.fill();
+        }
       }
       y += h + 3;
       ctx.fillStyle = '#fff';
       ctx.fillRect(0, y - 3, 512, 2);
     }
-    // Big floral medallions.
+    // Framed scalloped borders top/bottom.
+    ctx.strokeStyle = '#ffd60a';
+    ctx.lineWidth = 4;
+    ctx.strokeRect(6, 6, 500, 244);
+    // Big floral medallions & mirror-work centres.
     for (let i = 0; i < 4; i++) {
-      const cx = 64 + i * 128 + rng.int(-10, 10), cy = 128 + rng.int(-30, 30);
+      const cx = 64 + i * 128 + rng.int(-10, 10), cy = 128 + rng.int(-26, 26);
       const r = rng.int(30, 46);
-      for (let p = 0; p < 8; p++) {
-        const a = (p / 8) * Math.PI * 2;
-        ctx.fillStyle = rng.pick(pal);
+      for (let p = 0; p < 10; p++) {
+        const a = (p / 10) * Math.PI * 2;
+        ctx.fillStyle = pal[p % pal.length];
         ctx.beginPath();
-        ctx.ellipse(cx + Math.cos(a) * r * 0.55, cy + Math.sin(a) * r * 0.55, r * 0.45, r * 0.22, a, 0, Math.PI * 2);
+        ctx.ellipse(cx + Math.cos(a) * r * 0.56, cy + Math.sin(a) * r * 0.56, r * 0.44, r * 0.19, a, 0, Math.PI * 2);
         ctx.fill();
       }
-      ctx.fillStyle = '#fff';
+      ctx.fillStyle = '#ffffff';
       ctx.beginPath();
-      ctx.arc(cx, cy, r * 0.25, 0, Math.PI * 2);
+      ctx.arc(cx, cy, r * 0.27, 0, Math.PI * 2);
       ctx.fill();
-      ctx.fillStyle = rng.pick(pal);
+      ctx.fillStyle = pal[(i + 2) % pal.length];
       ctx.beginPath();
-      ctx.arc(cx, cy, r * 0.13, 0, Math.PI * 2);
+      ctx.arc(cx, cy, r * 0.14, 0, Math.PI * 2);
       ctx.fill();
+    }
+    if (variant % 3 === 0) {
+      ctx.fillStyle = 'rgba(12, 20, 44, 0.85)';
+      ctx.fillRect(116, 178, 280, 56);
+      ctx.strokeStyle = '#ffd60a';
+      ctx.lineWidth = 3;
+      ctx.strokeRect(118, 180, 276, 52);
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 34px "Noto Nastaliq Urdu", "Noto Naskh Arabic", serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(TRUCK_SLOGANS[variant % TRUCK_SLOGANS.length], 256, 207);
     }
     return finish(c);
   });
@@ -447,26 +474,56 @@ const SHOPS: ReadonlyArray<{ en: string; ur: string; bg: string; fg: string }> =
 ];
 export const SHOP_SIGN_COUNT = SHOPS.length;
 
+function drawShopSign(ctx: CanvasRenderingContext2D, s: { en: string; ur: string; bg: string; fg: string }, x: number, y: number, w: number, h: number): void {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.fillStyle = s.bg;
+  ctx.fillRect(0, 0, w, h);
+  ctx.strokeStyle = s.fg;
+  ctx.lineWidth = 4;
+  ctx.strokeRect(6, 6, w - 12, h - 12);
+  ctx.fillStyle = s.fg;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.font = '900 44px system-ui, sans-serif';
+  ctx.fillText(s.en, w / 2, h * 0.34, w - 32);
+  ctx.font = '700 34px "Noto Nastaliq Urdu", "Noto Naskh Arabic", "Segoe UI", Tahoma, sans-serif';
+  ctx.direction = 'rtl';
+  ctx.fillText(s.ur, w / 2, h * 0.73, w - 32);
+  ctx.restore();
+}
+
 /** Bilingual shop signboard (English + Urdu). */
 export function shopSignTexture(i: number): THREE.Texture {
   const s = SHOPS[i % SHOPS.length];
   return cached(`shop${i % SHOPS.length}`, () => {
     const [c, ctx] = canvas(512, 128);
-    ctx.fillStyle = s.bg;
-    ctx.fillRect(0, 0, 512, 128);
-    ctx.strokeStyle = s.fg;
-    ctx.lineWidth = 4;
-    ctx.strokeRect(6, 6, 500, 116);
-    ctx.fillStyle = s.fg;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.font = '900 44px system-ui, sans-serif';
-    ctx.fillText(s.en, 256, 44, 480);
-    ctx.font = '700 34px "Noto Nastaliq Urdu", "Noto Naskh Arabic", "Segoe UI", Tahoma, sans-serif';
-    ctx.direction = 'rtl';
-    ctx.fillText(s.ur, 256, 94, 480);
+    drawShopSign(ctx, s, 0, 0, 512, 128);
     return finish(c);
   });
+}
+
+/** 2x5 texture atlas of all 10 bilingual shop signs (1 draw call per chunk). */
+export function shopSignAtlas(): THREE.Texture {
+  return cached('shopAtlas', () => {
+    const [c, ctx] = canvas(1024, 640);
+    SHOPS.forEach((s, i) => {
+      const col = i % 2;
+      const row = Math.floor(i / 2);
+      drawShopSign(ctx, s, col * 512, row * 128, 512, 128);
+    });
+    return finish(c);
+  });
+}
+
+/** UV rect [u0, v0, u1, v1] inside shopSignAtlas() for variant i. */
+export function shopSignAtlasUv(i: number): readonly [number, number, number, number] {
+  const k = ((i % SHOPS.length) + SHOPS.length) % SHOPS.length;
+  const col = k % 2;
+  const row = Math.floor(k / 2);
+  const epsU = 0.004;
+  const epsV = 0.004;
+  return [col * 0.5 + epsU, 1 - (row + 1) * 0.2 + epsV, (col + 1) * 0.5 - epsU, 1 - row * 0.2 - epsV];
 }
 
 const BANNERS: ReadonlyArray<{ lines: string[]; bg: string; fg: string }> = [
@@ -481,6 +538,71 @@ export const BANNER_COUNT = BANNERS.length;
 export function streetBannerTexture(i: number): THREE.Texture {
   const b = BANNERS[i % BANNERS.length];
   return signTexture(b.lines, b.bg, b.fg, 768, 96);
+}
+
+/** Vertical texture atlas containing all street banners (1 draw call). */
+export function streetBannerAtlas(): THREE.Texture {
+  return cached('bannerAtlas', () => {
+    const rows = BANNERS.length;
+    const h = rows * 96;
+    const [c, ctx] = canvas(768, h);
+    BANNERS.forEach((b, i) => {
+      const y = i * 96;
+      ctx.fillStyle = b.bg;
+      ctx.fillRect(0, y, 768, 96);
+      ctx.strokeStyle = b.fg;
+      ctx.lineWidth = 5;
+      ctx.strokeRect(6, y + 6, 756, 84);
+      ctx.fillStyle = b.fg;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.font = '800 42px system-ui, sans-serif';
+      ctx.fillText(b.lines[0], 384, y + 48, 730);
+    });
+    return finish(c);
+  });
+}
+
+export function streetBannerAtlasUv(i: number): readonly [number, number, number, number] {
+  const k = ((i % BANNER_COUNT) + BANNER_COUNT) % BANNER_COUNT;
+  const slot = 1 / BANNER_COUNT;
+  const eps = 0.005;
+  return [eps, 1 - (k + 1) * slot + eps, 1 - eps, 1 - k * slot - eps];
+}
+
+/** Soft conical ground headlight pool projected onto road asphalt. */
+export function headlightPoolTexture(): THREE.Texture {
+  return cached('headlightPool', () => {
+    const [c, ctx] = canvas(128, 128);
+    const g = ctx.createRadialGradient(64, 114, 4, 64, 62, 62);
+    g.addColorStop(0, 'rgba(255, 250, 224, 0.95)');
+    g.addColorStop(0.35, 'rgba(255, 240, 190, 0.55)');
+    g.addColorStop(0.7, 'rgba(255, 224, 150, 0.16)');
+    g.addColorStop(1, 'rgba(255, 210, 130, 0)');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.moveTo(46, 122);
+    ctx.lineTo(82, 122);
+    ctx.lineTo(126, 6);
+    ctx.lineTo(2, 6);
+    ctx.closePath();
+    ctx.fill();
+    return finish(c);
+  });
+}
+
+/** Warm circular sidewalk pool under shop signs & streetlamps at night. */
+export function warmGlowTexture(): THREE.Texture {
+  return cached('warmGlow', () => {
+    const [c, ctx] = canvas(128, 128);
+    const g = ctx.createRadialGradient(64, 64, 2, 64, 64, 62);
+    g.addColorStop(0, 'rgba(255, 225, 165, 0.9)');
+    g.addColorStop(0.45, 'rgba(255, 198, 110, 0.42)');
+    g.addColorStop(1, 'rgba(255, 180, 90, 0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, 128, 128);
+    return finish(c);
+  });
 }
 
 /** Faded yellow and grey stripes on the expressway's concrete barriers. */

@@ -20,6 +20,17 @@ What you care about (test these):
   Is the damage fair? Is a crash fun or just a speed-killer?
 - **Edge states:** full reverse + steer, gas+brake spam, drift at low speed, landing jumps sideways, holding
   brake when towed, route mode leaving the road. Use the browser once to see if visuals/HUD survive chaos.
-- **Exploits:** infinite boosts, score farming, damage-free wall riding.
+- **Exploits:** infinite boosts, score farming, damage-free wall riding, near-miss farming.
 
-Tone: gleeful gremlin, but every claim backed by a repro (probe/script + numbers).
+Sub-dimensions you MUST score (1–10 each, before computing overall rating):
+1. `stability` (zero NaNs, teleports, negative integrity, or stuck-forever flags across 4+ chaos seeds)
+2. `collision_sanity` (wall grinds, building corners, ramp sides, and NPC hits resolve cleanly without gluing or jitter)
+3. `crash_juice` (do impacts, flying props, and traffic shoves feel reactive and hilarious rather than dead stops?)
+4. `exploit_resistance` (can you cheese scores, boosts, barriers, or tow timers?)
+
+Calibration rules:
+- Any `nanOrInf > 0`, `teleports > 0`, `longestStuckS > 2.0`, or state flag that never resets triggers the **max 5/10 cap** (`stability` <= 4).
+- If grinding a wall or farming near-misses/props is trivial or breaks physics, `exploit_resistance` <= 5.
+- If head-on crashes feel like hitting wet cardboard or freeze the car dead with no spectacle, `crash_juice` <= 5.
+- Tone: gleeful gremlin, ruthless QA, every claim backed by a repro (probe/script + numbers).
+- Follow `playtests/PROTOCOL.md` calibration & hard caps strictly.

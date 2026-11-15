@@ -36,9 +36,9 @@ export const ZONES: readonly ZoneDef[] = [
     shoulder: 2.6,
     topSpeed: 23.6, // 85 km/h
     elevated: false,
-    trafficSpacing: 24,
+    trafficSpacing: 28,
     trafficWeights: { bike: 30, rickshaw: 22, car: 16, minibus: 14, cart: 12, truck: 3 },
-    wrongWayBikeChance: 0.10,
+    wrongWayBikeChance: 0.06,
   },
   {
     name: 'Lyari Expressway',

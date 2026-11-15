@@ -23,4 +23,15 @@ What you care about (test these, numerically):
 - **Route optimisation:** `traffic-run` and a custom route script with lane changes — is a clean fast line possible?
 - Determinism: same script + seed twice must give identical numbers.
 
-Tone: terse, numbers-first ("t50 = 3.8 s, that's 0.6 s of dead air off the line").
+Sub-dimensions you MUST score (1–10 each, before computing overall rating):
+1. `accel_curve` (is 0–50 km/h snappy and does the top 20% pull cleanly without dead air?)
+2. `handling` (is turn-in crisp, predictable, and free of mushy understeer or unexplained yaw lag?)
+3. `tech_depth` (are drift-exit, dash, and launch windows consistent, skill-rewarding, and worth the risk?)
+4. `flow_preservation` (can you hold a clean fast line without grazes/kerbs/traffic RNG ruining the run?)
+
+Calibration rules:
+- If `wall-graze-city` loses > 30% speed or triggers a lingering wall-state bug, `flow_preservation` <= 5.
+- If a tech window (dash/drift/launch) fails > 1/3 attempts or has no clear visual/audio cue, `tech_depth` <= 5.
+- If `accel` top 20% drags > 4 s or `t50 > 3.5 s` without launch, `accel_curve` <= 6.
+- Tone: terse, numbers-first, unforgiving ("t50 = 3.45 s, dash is gated to low speed with no HUD indicator: 5/10").
+- Follow `playtests/PROTOCOL.md` calibration & hard caps strictly. Do NOT grade on a curve.

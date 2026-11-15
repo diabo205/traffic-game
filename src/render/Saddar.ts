@@ -3,14 +3,23 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import { Rng } from '../sim/rng';
 import { sampleRoad } from '../sim/road';
 import { GROUND_FLOOR_H, STOREY_H } from './facadeMaterial';
+import { buildParkedBikeGeometry, PARKED_BIKE_COLORS } from './parkedBikes';
 import { paint, StripBuilder } from './strip';
-import { BANNER_COUNT, SHOP_SIGN_COUNT, dirtTexture, shopSignTexture, streetBannerTexture } from './textures';
+import {
+  BANNER_COUNT,
+  SHOP_SIGN_COUNT,
+  dirtTexture,
+  shopSignAtlas,
+  shopSignAtlasUv,
+  streetBannerAtlas,
+  streetBannerAtlasUv,
+} from './textures';
 
 /**
  * Street-level clutter that makes Saddar read as Saddar: footpaths, tangled
  * overhead wires on concrete poles, banners across the road, stacked bilingual
  * shop signs, balconies with laundry, rooftop water tanks and dishes, parked
- * motorbikes, carts and people on the pavement. Render-only, all instanced.
+ * motorbikes, carts and people on the pavement. Render-only, instanced/batched.
  */
 
 export const SADDAR_START = -80;
@@ -65,9 +74,51 @@ function instanced(
   group.add(m);
 }
 
+function atlasQuad(uv: readonly [number, number, number, number]): THREE.BufferGeometry {
+  const g = new THREE.PlaneGeometry(1, 1).toNonIndexed();
+  const uvAttr = g.getAttribute('uv');
+  const [u0, v0, u1, v1] = uv;
+  for (let i = 0; i < uvAttr.count; i++) {
+    uvAttr.setXY(i, uvAttr.getX(i) > 0.5 ? u1 : u0, uvAttr.getY(i) > 0.5 ? v1 : v0);
+  }
+  return g;
+}
+
+function doubleAtlasQuad(uv: readonly [number, number, number, number]): THREE.BufferGeometry {
+  const front = atlasQuad(uv).translate(0, 0, 0.015);
+  const back = atlasQuad(uv).rotateY(Math.PI).translate(0, 0, -0.015);
+  const merged = mergeGeometries([front, back]);
+  front.dispose();
+  back.dispose();
+  return merged ?? atlasQuad(uv);
+}
+
+function batchedQuads(group: THREE.Group, mat: THREE.Material, geos: THREE.BufferGeometry[], lists: THREE.Matrix4[][]): void {
+  let totalInstances = 0;
+  let totalVertices = 0;
+  for (let i = 0; i < geos.length; i++) {
+    if (lists[i].length === 0) continue;
+    totalInstances += lists[i].length;
+    totalVertices += geos[i].getAttribute('position').count;
+  }
+  if (totalInstances === 0) return;
+  const bm = new THREE.BatchedMesh(totalInstances, totalVertices, 0, mat);
+  for (let i = 0; i < geos.length; i++) {
+    if (lists[i].length === 0) continue;
+    const gid = bm.addGeometry(geos[i]);
+    for (const mx of lists[i]) {
+      const iid = bm.addInstance(gid);
+      bm.setMatrixAt(iid, mx);
+    }
+  }
+  bm.computeBoundingBox();
+  bm.computeBoundingSphere();
+  group.add(bm);
+}
+
 const vcMat = () => new THREE.MeshLambertMaterial({ vertexColors: true });
 
-export function buildSaddar(group: THREE.Group, buildings: SaddarBuilding[], lowSpec: boolean): void {
+export function buildSaddar(group: THREE.Group, buildings: SaddarBuilding[], lowSpec: boolean, litMats: THREE.MeshLambertMaterial[] = []): void {
   const rng = new Rng(9090);
   const shadow = !lowSpec;
 
@@ -174,9 +225,17 @@ export function buildSaddar(group: THREE.Group, buildings: SaddarBuilding[], low
     for (let k = 0; k < rng.int(1, 3); k++) wire(a.x + 0.85, top8, a.z, best.x - 0.85, top8, best.z, rng.range(1.0, 1.8));
   }
 
-  // ---- Banners across the road ------------------------------------------------
-  const bannerMats = Array.from({ length: BANNER_COUNT }, (_, i) =>
-    new THREE.MeshLambertMaterial({ map: streetBannerTexture(i), side: THREE.DoubleSide }));
+  // ---- Banners across the road (batched on streetBannerAtlas) ------------------
+  const bannerTex = streetBannerAtlas();
+  const bannerMat = new THREE.MeshLambertMaterial({
+    map: bannerTex,
+    emissiveMap: bannerTex,
+    emissive: new THREE.Color('#fff4db'),
+    emissiveIntensity: 0,
+  });
+  litMats.push(bannerMat);
+  const bannerGeos = Array.from({ length: BANNER_COUNT }, (_, i) => doubleAtlasQuad(streetBannerAtlasUv(i)));
+  const bannerLists: THREE.Matrix4[][] = Array.from({ length: BANNER_COUNT }, () => []);
   let bi = rng.int(0, BANNER_COUNT - 1);
   for (let i = 1; i < leftPoles.length; i += 3) {
     const p = leftPoles[i];
@@ -186,23 +245,30 @@ export function buildSaddar(group: THREE.Group, buildings: SaddarBuilding[], low
     const w = span * 0.72;
     const cx = (p.x + x1) / 2;
     const y = 6.3;
-    const m = new THREE.Mesh(new THREE.PlaneGeometry(w, 1.1), bannerMats[bi++ % BANNER_COUNT]);
-    m.position.set(cx, y, -p.z);
-    m.rotation.z = rng.range(-0.02, 0.02);
-    group.add(m);
+    bannerLists[bi++ % BANNER_COUNT].push(place(cx, y, -p.z, 0, w, 1.1, 1, 0, rng.range(-0.02, 0.02)));
     wire(p.x, y + 0.6, p.z, cx - w / 2, y + 0.5, p.z, 0.1);
     wire(cx + w / 2, y + 0.5, p.z, x1, y + 0.6, p.z, 0.1);
     wire(p.x, y - 0.4, p.z, cx - w / 2, y - 0.5, p.z, 0.05);
     wire(cx + w / 2, y - 0.5, p.z, x1, y - 0.4, p.z, 0.05);
   }
+  batchedQuads(group, bannerMat, bannerGeos, bannerLists);
+  bannerGeos.forEach((g) => g.dispose());
 
   const wireGeo = new THREE.BufferGeometry();
   wireGeo.setAttribute('position', new THREE.Float32BufferAttribute(wirePts, 3));
   group.add(new THREE.LineSegments(wireGeo, new THREE.LineBasicMaterial({ color: '#1e1c1a' })));
 
-  // ---- Shop signs (stacked, bilingual) ----------------------------------------
+  // ---- Shop signs (stacked, bilingual, batched on shopSignAtlas) --------------
   const signMats: THREE.Matrix4[][] = Array.from({ length: SHOP_SIGN_COUNT }, () => []);
-  const plane = new THREE.PlaneGeometry(1, 1);
+  const signGeos = Array.from({ length: SHOP_SIGN_COUNT }, (_, i) => atlasQuad(shopSignAtlasUv(i)));
+  const signTex = shopSignAtlas();
+  const signMat = new THREE.MeshLambertMaterial({
+    map: signTex,
+    emissiveMap: signTex,
+    emissive: new THREE.Color('#ffffff'),
+    emissiveIntensity: 0,
+  });
+  litMats.push(signMat);
   for (const b of buildings) {
     const faceX = b.x - b.side * (b.d / 2 + 0.05);
     const ry = b.side < 0 ? Math.PI / 2 : -Math.PI / 2;
@@ -217,7 +283,8 @@ export function buildSaddar(group: THREE.Group, buildings: SaddarBuilding[], low
       signMats[rng.int(0, SHOP_SIGN_COUNT - 1)].push(place(faceX + off, y, -z, ry, w, h, 1));
     }
   }
-  signMats.forEach((mats, i) => instanced(group, plane, new THREE.MeshLambertMaterial({ map: shopSignTexture(i) }), mats));
+  batchedQuads(group, signMat, signGeos, signMats);
+  signGeos.forEach((g) => g.dispose());
 
   // ---- Balconies + laundry -------------------------------------------------------
   const balconyGeo = (() => {
@@ -297,24 +364,7 @@ export function buildSaddar(group: THREE.Group, buildings: SaddarBuilding[], low
     return mergeGeometries([legs, kameez]);
   })();
   const personHead = new THREE.SphereGeometry(0.13, 6, 4).translate(0, 1.72, 0);
-  const bikeGeo = (() => {
-    const parts: THREE.BufferGeometry[] = [];
-    for (const z of [-0.65, 0.65]) {
-      const w = new THREE.CylinderGeometry(0.3, 0.3, 0.1, 8).rotateZ(Math.PI / 2).translate(0, 0.3, z);
-      paint(w, '#1b1b1b');
-      parts.push(w);
-    }
-    const tank = new THREE.BoxGeometry(0.26, 0.22, 0.45).translate(0, 0.72, -0.15);
-    paint(tank, '#ffffff');
-    const seat = new THREE.BoxGeometry(0.26, 0.1, 0.6).translate(0, 0.76, 0.32);
-    paint(seat, '#222222');
-    const frame = new THREE.BoxGeometry(0.1, 0.1, 1.2).translate(0, 0.46, 0);
-    paint(frame, '#555555');
-    const bar = new THREE.BoxGeometry(0.62, 0.04, 0.04).translate(0, 0.98, -0.5);
-    paint(bar, '#cccccc');
-    parts.push(tank, seat, frame, bar);
-    return mergeGeometries(parts);
-  })();
+  const bikeGeos = PARKED_BIKE_COLORS.map((c) => buildParkedBikeGeometry(c));
   const cartGeo = (() => {
     const bed = new THREE.BoxGeometry(1.1, 0.12, 1.9).translate(0, 0.8, 0);
     paint(bed, '#8d5a2b');
@@ -342,13 +392,11 @@ export function buildSaddar(group: THREE.Group, buildings: SaddarBuilding[], low
   const bodyMats: THREE.Matrix4[] = [];
   const bodyCols: THREE.Color[] = [];
   const headMats: THREE.Matrix4[] = [];
-  const bikeMats: THREE.Matrix4[] = [];
-  const bikeCols: THREE.Color[] = [];
+  const bikeLists: THREE.Matrix4[][] = PARKED_BIKE_COLORS.map(() => []);
   const cartMats: THREE.Matrix4[] = [];
   const cartCols: THREE.Color[] = [];
   const treeMats: THREE.Matrix4[] = [];
   const CLOTHES = ['#efe9dc', '#e9e4d4', '#3a6ea5', '#6b8e23', '#7a7a7a', '#2f4f4f', '#c2b280', '#8b0000', '#4a3b6b', '#d4a373'];
-  const BIKES = ['#c0161c', '#c0161c', '#c0161c', '#1d1d1f', '#1d1d1f', '#1f4fa0'];
   const UMBRELLAS = ['#e53935', '#1e88e5', '#fdd835', '#43a047'];
   for (const side of [-1, 1] as const) {
     for (let z = SADDAR_START + 5; z < SADDAR_END; z += rng.range(3, 7)) {
@@ -367,15 +415,16 @@ export function buildSaddar(group: THREE.Group, buildings: SaddarBuilding[], low
           headMats.push(place(x, FOOTPATH_H, -zz));
         }
       } else if (roll < 0.62) {
-        // A row of parked bikes, nose to the kerb.
-        const n = rng.int(3, 8);
+        // A kerbside group of parked CD-70 bikes spaced cleanly on the footpath.
+        const n = rng.int(2, 4);
+        const step = rng.range(1.3, 1.65);
         for (let k = 0; k < n; k++) {
-          bikeMats.push(place(across(1.0), FOOTPATH_H, -(z + k * 0.85), Math.PI / 2 + rng.range(-0.25, 0.25)));
-          bikeCols.push(new THREE.Color(BIKES[rng.int(0, BIKES.length - 1)]));
+          const idx = rng.int(0, bikeGeos.length - 1);
+          bikeLists[idx].push(place(across(1.38), FOOTPATH_H, -(z + k * step), Math.PI / 2 + rng.range(-0.2, 0.2)));
         }
-        z += n * 0.85;
+        z += n * step;
       } else if (roll < 0.68) {
-        cartMats.push(place(across(1.3), FOOTPATH_H, -z, rng.range(-0.3, 0.3)));
+        cartMats.push(place(across(1.45), FOOTPATH_H, -z, rng.range(-0.3, 0.3)));
         cartCols.push(new THREE.Color(UMBRELLAS[rng.int(0, UMBRELLAS.length - 1)]));
       } else if (roll < 0.72) {
         treeMats.push(place(across(1.6), FOOTPATH_H, -z, rng.range(0, 6.28), 1, rng.range(0.9, 1.2), 1));
@@ -384,7 +433,7 @@ export function buildSaddar(group: THREE.Group, buildings: SaddarBuilding[], low
   }
   instanced(group, personBody, new THREE.MeshLambertMaterial(), bodyMats, bodyCols);
   instanced(group, personHead, new THREE.MeshLambertMaterial({ color: '#8d5a3c' }), headMats);
-  instanced(group, bikeGeo, vcMat(), bikeMats, bikeCols);
+  for (let i = 0; i < bikeGeos.length; i++) instanced(group, bikeGeos[i], vcMat(), bikeLists[i], undefined, shadow);
   instanced(group, cartGeo, vcMat(), cartMats, cartCols);
   instanced(group, treeGeo, new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true }), treeMats, undefined, shadow);
 }
