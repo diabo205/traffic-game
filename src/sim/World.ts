@@ -2,34 +2,24 @@ import { HazardManager } from './HazardManager';
 import type { Hazard } from './HazardManager';
 import { LevelManager } from './LevelManager';
 import { clamp, obbOverlap, pointObbDistance } from './math';
-import { ALTO, MOVES, PlayerCar, WALL } from './PlayerCar';
+import { MOVES, PlayerCar, WALL } from './PlayerCar';
 import { ZONES, elevationAt, sampleRoad } from './road';
 import { NPC_SPECS, TrafficManager } from './TrafficManager';
-import type { InputFrame, NpcView, SimEvent } from './types';
+import { DT, TICK_RATE, trafficDamage } from './types';
+import type { InputFrame, NpcView, PlayerVehicle, SimEvent } from './types';
 
-export const TICK_RATE = 60;
-export const DT = 1 / TICK_RATE;
+export { DT, TICK_RATE, trafficDamage };
 
 /** Restitution for car-vs-thing impacts. */
 const RESTITUTION = 0.25;
 /** Hits closer together than this (ticks) don't stack damage. */
 const HIT_COOLDOWN = 36;
-/** Max fraction of the zone top speed you can hold while grinding the barrier. */
-const BARRIER_RIDE_CAP = 0.6;
+/** Max fraction of the zone top speed you can hold while grinding the barrier long-term. */
+const BARRIER_RIDE_CAP = 0.45;
 /** Extra rolling drag on the dirt shoulder (m/s^2): caps you around 75% of zone speed. */
 const SHOULDER_DRAG = 2.0;
 /** Player-vs-traffic bounce: lower than walls so a rear-end doesn't fling you backwards. */
 const TRAFFIC_RESTITUTION = 0.1;
-
-/**
- * Damage from hitting traffic. Soft at city-traffic closing speeds (a
- * nudge at 15 km/h is a few HP), still brutal for a head-on at speed.
- */
-export function trafficDamage(impact: number, kindDamage: number): number {
-  if (impact <= 2.5) return 0;
-  const x = impact - 2.5;
-  return Math.min(35, x * (0.35 + x * 0.06) * kindDamage);
-}
 
 /**
  * The whole game state. Advance with step() at a fixed rate; read the public
@@ -48,10 +38,12 @@ export class World {
   private onWater = false;
   private lastWallHitTick = -1e9;
   private lastScrapeTick = -1e9;
+  private barrierRideTime = 0;
 
   /** @param startZ debug: start further along the route (default 0). */
-  constructor(seed: number, startZ = 0) {
+  constructor(seed: number, startZ = 0, vehicle: PlayerVehicle = 'alto') {
     this.seed = seed >>> 0;
+    this.player.setVehicle(vehicle);
     this.hazards = new HazardManager(this.seed);
     this.traffic = new TrafficManager(this.seed);
     const road = sampleRoad(startZ);
@@ -80,12 +72,12 @@ export class World {
   }
 
   topSpeed(): number {
-    return sampleRoad(this.player.z).topSpeed;
+    return sampleRoad(this.player.z).topSpeed * this.player.spec.topSpeedMul;
   }
 
-  /** 0..1 camera speed-rush on the expressway. */
+  /** 0..1 camera speed-rush at high speed or while boosting. */
   speedRush(): number {
-    const rush = ZONES[sampleRoad(this.player.z).zoneIndex].elevated ? clamp((this.player.speed - 20) / 14, 0, 1) : 0;
+    const rush = clamp((this.player.speed - 20) / 11, 0, 1);
     return Math.max(rush, this.player.boostTime > 0 ? 1 : 0);
   }
 
@@ -106,8 +98,9 @@ export class World {
 
   private damage(amount: number): void {
     if (amount <= 0 || this.level.phase !== 'running') return;
-    this.player.integrity = Math.max(0, this.player.integrity - amount);
-    this.level.stats.damageTaken += amount;
+    const scaled = amount * this.player.spec.damageRes;
+    this.player.integrity = Math.max(0, this.player.integrity - scaled);
+    this.level.stats.damageTaken += scaled;
   }
 
   step(input: InputFrame): void {
@@ -128,7 +121,7 @@ export class World {
     const road = sampleRoad(p.z);
 
     this.applySurface();
-    p.update(input, road.topSpeed, DT, running);
+    p.update(input, road.topSpeed * p.spec.topSpeedMul, DT, running);
     if (p.boostFired) this.events.push({ type: 'boost', kind: p.boostFired });
     if (p.driftEnded > 1) this.events.push({ type: 'drift', seconds: p.driftEnded });
     p.settle(elevationAt(p.z), DT);
@@ -138,7 +131,9 @@ export class World {
     this.traffic.update(DT, p, this.hazards, this.tick);
     this.trafficCollisions();
 
+    const prevCp = this.level.nextCheckpoint;
     this.level.update(DT, p.z, Math.max(0, p.speed), p.integrity, this.events);
+    if (this.level.nextCheckpoint > prevCp && running) p.integrity = Math.min(100, p.integrity + 15);
   }
 
   // ---------------------------------------------------------------------
@@ -160,13 +155,13 @@ export class World {
     this.onWater = wet;
     // The dirt shoulder is rough: drivable for dodging, never the fast line.
     const road = sampleRoad(p.z);
-    if (p.x < road.left - ALTO.halfWidth * 0.5) p.extraDrag += SHOULDER_DRAG;
+    if (p.x < road.left - p.spec.halfWidth * 0.5) p.extraDrag += SHOULDER_DRAG;
   }
 
   private constrainToRoad(): void {
     const p = this.player;
     const road = sampleRoad(p.z);
-    const reach = ALTO.halfWidth * Math.abs(Math.cos(p.heading)) + ALTO.halfLength * Math.abs(Math.sin(p.heading));
+    const reach = p.spec.halfWidth * Math.abs(Math.cos(p.heading)) + p.spec.halfLength * Math.abs(Math.sin(p.heading));
     const minX = road.left - road.shoulder + reach;
     const maxX = road.right - 0.25 - reach;
     let side = 0;
@@ -181,20 +176,28 @@ export class World {
       p.z = -15;
       if (p.speed < 0) p.speed = 0;
     }
-    if (side === 0) return;
+    if (side === 0) {
+      this.barrierRideTime = Math.max(0, this.barrierRideTime - DT * 2);
+      return;
+    }
 
     const { vx, vz } = p.velocity();
     const into = vx * side; // >0 = moving into the wall
-    // Grinding along the barrier is a scrape, not a fresh crash every time you lean on it.
+    const prevSpeed = p.speed;
     const fresh = p.wallContact === 0;
     p.wallContact = WALL.memoryTicks;
     if (into > 0) {
-      // Kill the push into the barrier, keep the speed along it, and swing
-      // the nose parallel so a graze slides instead of grabbing the car.
+      const fx = Math.sin(p.heading);
+      const intoNorm = prevSpeed < -0.15 ? fx * -side : -(fx * -side);
+      const preMag = Math.hypot(vx, vz);
       p.setVelocity(-vx * 0.15, vz);
+      if (prevSpeed > 1.5 && intoNorm < 0.88) {
+        if (p.speed < 0) p.speed = Math.abs(p.speed);
+        if (intoNorm <= 0.72 && preMag > 4) p.speed = Math.max(p.speed, preMag * (1 - intoNorm * 0.25));
+      }
       p.scrapeWall(-side, 0);
-      if (fresh && into > 4 && this.tick - this.lastWallHitTick > HIT_COOLDOWN) {
-        const dmg = (into - 4) * 1.8;
+      if (fresh && into > 4.5 && this.tick - this.lastWallHitTick > HIT_COOLDOWN) {
+        const dmg = (into - 4.5) * 1.4;
         this.damage(dmg);
         this.lastWallHitTick = this.tick;
         this.level.stats.crashes++;
@@ -202,10 +205,15 @@ export class World {
         p.kick(-0.25);
       }
     }
-    // Riding the barrier is never the fast line: grinding caps you well
-    // below lane speed (no free traffic-proof wall ride).
-    const cap = sampleRoad(p.z).topSpeed * BARRIER_RIDE_CAP;
-    if (p.speed > cap) p.speed -= (p.speed - cap) * 0.2;
+    // Brief shallow grazes scrub gently; sustained wall-riding (>0.45s) drags speed down and wears HP.
+    this.barrierRideTime += DT;
+    if (this.barrierRideTime < 0.45) {
+      p.speed *= 0.994;
+    } else {
+      const cap = sampleRoad(p.z).topSpeed * BARRIER_RIDE_CAP;
+      if (p.speed > cap) p.speed -= (p.speed - cap) * 0.08;
+      this.damage(4 * DT);
+    }
     if (Math.abs(vz) > 3 && this.tick - this.lastScrapeTick > 6) {
       this.lastScrapeTick = this.tick;
       this.events.push({ type: 'scrape', intensity: clamp(Math.abs(vz) / 25, 0.1, 1) });
@@ -251,7 +259,7 @@ export class World {
     p.speed *= 1 - 0.05 * severity;
     let dmg = 0;
     if (v > 7 && input.brake < 0.35) {
-      dmg = Math.round(3 + 5 * clamp((v - 7) / 18, 0, 1));
+      dmg = Math.round(2 + 3 * clamp((v - 7) / 18, 0, 1));
       this.damage(dmg);
     }
     this.level.stats.potholes++;
@@ -264,8 +272,8 @@ export class World {
     if (pointObbDistance(h.x, h.z, p.obb()) > h.hw * 0.8) return;
     h.lastHitTick = this.tick;
     const v = Math.abs(p.speed);
-    // Hurts and jolts, but no longer halves your speed: one hole shouldn't decide the run.
-    const dmg = v > 3 ? Math.round(6 + 8 * clamp(v / 25, 0, 1)) : 2;
+    // Hurts and jolts, without cheap one-shot wipes.
+    const dmg = v > 3 ? Math.round(4 + 5 * clamp(v / 25, 0, 1)) : 2;
     this.damage(dmg);
     p.kick(-1.3);
     p.speed *= 0.78;
@@ -280,12 +288,33 @@ export class World {
     p.x += mtv.nx * mtv.depth;
     p.z += mtv.nz * mtv.depth;
     p.wallContact = WALL.memoryTicks;
+    const prevSpeed = p.speed;
+    const fx = Math.sin(p.heading), fz = Math.cos(p.heading);
+    const intoNorm = prevSpeed < -0.15 ? fx * mtv.nx + fz * mtv.nz : -(fx * mtv.nx + fz * mtv.nz);
     const { vx, vz } = p.velocity();
     const rel = vx * mtv.nx + vz * mtv.nz;
     if (rel >= 0) return;
+    const preMag = Math.hypot(vx, vz);
     const j = -(1 + RESTITUTION) * rel;
     p.setVelocity(vx + mtv.nx * j, vz + mtv.nz * j);
-    p.scrapeWall(mtv.nx, mtv.nz);
+    if (prevSpeed > 1.5 && intoNorm < 0.88) {
+      if (p.speed < 0) p.speed = Math.abs(p.speed);
+      if (intoNorm <= 0.72 && preMag > 4) p.speed = Math.max(p.speed, preMag * (1 - intoNorm * 0.25));
+    } else if (prevSpeed > 1.5 && intoNorm >= 0.88 && p.throttle > 0.3 && p.speed < -3.5) {
+      p.speed = -3.5;
+    }
+    // Nudge nose slightly toward the open side of the road so edge barrier clips don't glue you.
+    if (Math.abs(mtv.nz) > 0.5 && Math.abs(vx) < 2) {
+      const road = sampleRoad(p.z);
+      const nearLeft = h.x - h.hw < road.left - road.shoulder + 2.8;
+      const nearRight = h.x + h.hw > road.right - 2.8;
+      const awayX = nearLeft ? 1 : nearRight ? -1 : p.x >= h.x ? 1 : -1;
+      p.x += awayX * 0.08;
+      p.heading += awayX * 0.14;
+      p.setVelocity(vx + awayX * 2.2, vz * 0.85);
+    } else {
+      p.scrapeWall(mtv.nx, mtv.nz);
+    }
     const impact = -rel;
     if (impact > 2 && this.tick - h.lastHitTick > HIT_COOLDOWN && this.tick - this.lastWallHitTick > HIT_COOLDOWN) {
       h.lastHitTick = this.tick;
@@ -309,7 +338,7 @@ export class World {
       if (n.speed < 1.5) p.wallContact = WALL.memoryTicks;
       const spec = NPC_SPECS[n.kind];
       // Mass share: how much of the correction the player takes.
-      const mr = spec.mass / (spec.mass + ALTO.mass);
+      const mr = spec.mass / (spec.mass + p.spec.mass);
       p.x += mtv.nx * mtv.depth * mr;
       p.z += mtv.nz * mtv.depth * mr;
       n.x -= mtv.nx * mtv.depth * (1 - mr);
@@ -323,9 +352,13 @@ export class World {
       if (rel >= 0) continue;
       const j = -(1 + TRAFFIC_RESTITUTION) * rel;
       p.setVelocity(vx + mtv.nx * j * mr, vz + mtv.nz * j * mr);
-      const newNvz = nvz - mtv.nz * j * (1 - mr);
+      const shove = j * (1 - mr);
+      const newNvz = nvz - mtv.nz * shove;
       n.speed = Math.max(0, newNvz * n.dir);
-      n.targetX -= mtv.nx * j * (1 - mr) * 0.3;
+      const road = sampleRoad(n.z);
+      const sideShove = clamp(-mtv.nx * shove * 0.55, -2.5, 2.5);
+      n.x = clamp(n.x + sideShove * 0.25, road.left + spec.hw, road.right - spec.hw);
+      n.targetX = clamp(n.targetX + sideShove, road.left + spec.hw, road.right - spec.hw);
 
       const impact = -rel;
       if (impact > 1.5 && this.tick - n.lastHitTick > HIT_COOLDOWN) {

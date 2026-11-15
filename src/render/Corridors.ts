@@ -58,14 +58,14 @@ function add(group: THREE.Object3D, geos: THREE.BufferGeometry[], mat: THREE.Mat
   group.add(m);
 }
 
-export function buildCorridors(group: THREE.Group, lowSpec: boolean): void {
+export function buildCorridors(group: THREE.Group, lowSpec: boolean, litMats: THREE.MeshLambertMaterial[] = []): void {
   const shadow = !lowSpec;
   buildRiver(group);
-  buildTollPlaza(group, shadow);
-  buildCrescentLights(group);
+  buildTollPlaza(group, shadow, litMats);
+  buildCrescentLights(group, litMats);
   buildTrees(group, lowSpec);
   buildPlanter(group, lowSpec);
-  for (const z of FOOTBRIDGES) buildFootbridge(group, z, shadow);
+  for (const z of FOOTBRIDGES) buildFootbridge(group, z, shadow, litMats);
 }
 
 // ---- Lyari river: silt bed, a thin dark stream, concrete bank walls --------------
@@ -127,7 +127,7 @@ function buildRiver(group: THREE.Group): void {
 
 // ---- Toll plaza: white canopy, booths on the islands, rate board -------------------
 
-function buildTollPlaza(group: THREE.Group, shadow: boolean): void {
+function buildTollPlaza(group: THREE.Group, shadow: boolean, litMats: THREE.MeshLambertMaterial[]): void {
   const z = TOLL_Z;
   const y = elevationAt(z);
   const r = sampleRoad(z);
@@ -150,8 +150,16 @@ function buildTollPlaza(group: THREE.Group, shadow: boolean): void {
 
   // Blue fascia with the expressway name, both faces.
   const fascia = signTexture(['LYARI EXPRESSWAY · TOLL PLAZA', 'لیاری ایکسپریس وے'], '#123f8c', '#ffffff', 1024, 128);
+  const fasciaMat = new THREE.MeshLambertMaterial({
+    color: '#ffffff',
+    map: fascia,
+    emissiveMap: fascia,
+    emissive: new THREE.Color('#fff4db'),
+    emissiveIntensity: 0,
+  });
+  litMats.push(fasciaMat);
   for (const s of [1, -1]) {
-    const f = new THREE.Mesh(new THREE.PlaneGeometry(Math.min(30, x1 - x0 - 2), 1.6), lam('#ffffff', fascia));
+    const f = new THREE.Mesh(new THREE.PlaneGeometry(Math.min(30, x1 - x0 - 2), 1.6), fasciaMat);
     f.position.set((x0 + x1) / 2 - 3, y + H + 0.5, -z + s * (depth / 2 + 0.03));
     if (s < 0) f.rotation.y = Math.PI;
     group.add(f);
@@ -185,7 +193,16 @@ function buildTollPlaza(group: THREE.Group, shadow: boolean): void {
   arm.position.set(r.left - r.shoulder - 0.4, y + 2.6, -z + 2.6);
   arm.rotation.z = -0.25;
   group.add(arm);
-  const board = new THREE.Mesh(new THREE.PlaneGeometry(1.6, 2), lam('#ffffff', tollBoardTexture()));
+  const rateTex = tollBoardTexture();
+  const rateMat = new THREE.MeshLambertMaterial({
+    color: '#ffffff',
+    map: rateTex,
+    emissiveMap: rateTex,
+    emissive: new THREE.Color('#fff4db'),
+    emissiveIntensity: 0,
+  });
+  litMats.push(rateMat);
+  const board = new THREE.Mesh(new THREE.PlaneGeometry(1.6, 2), rateMat);
   board.position.set(x0 + 0.5, y + 2.2, -z + depth / 2 + 6);
   board.rotation.y = 0.45;
   group.add(board);
@@ -196,18 +213,23 @@ function buildTollPlaza(group: THREE.Group, shadow: boolean): void {
 
 // ---- Lyari median lights: black poles with a small hooked top ------------------------
 
-function buildCrescentLights(group: THREE.Group): void {
+function buildCrescentLights(group: THREE.Group, litMats: THREE.MeshLambertMaterial[]): void {
   const pole = new THREE.CylinderGeometry(0.11, 0.17, 7.2, 6).translate(0, 3.6, 0);
   // A small open hook bending over the carriageway, lamp at its tip.
   const hook = new THREE.TorusGeometry(0.32, 0.07, 4, 10, Math.PI * 1.25);
   hook.rotateZ(-Math.PI * 0.25);
   hook.translate(-0.32, 7.2, 0);
-  const lamp = new THREE.BoxGeometry(0.22, 0.12, 0.3).translate(-0.55, 6.95, 0);
   paint(pole, '#1d1e1f');
   paint(hook, '#1d1e1f');
-  paint(lamp, '#e9e6d6');
-  const geo = mergeGeometries([pole, hook, lamp].map((g) => (g.index ? g.toNonIndexed() : g)));
+  const geo = mergeGeometries([pole, hook].map((g) => (g.index ? g.toNonIndexed() : g)));
   if (!geo) return;
+  const lampGeo = new THREE.BoxGeometry(0.22, 0.12, 0.3).translate(-0.55, 6.95, 0);
+  const bulbMat = new THREE.MeshLambertMaterial({
+    color: '#e9e6d6',
+    emissive: new THREE.Color('#ffcc66'),
+    emissiveIntensity: 0,
+  });
+  litMats.push(bulbMat);
   const mats: THREE.Matrix4[] = [];
   const d = new THREE.Object3D();
   let k = 0;
@@ -220,9 +242,13 @@ function buildCrescentLights(group: THREE.Group): void {
     mats.push(d.matrix.clone());
   }
   const m = new THREE.InstancedMesh(geo, new THREE.MeshLambertMaterial({ vertexColors: true }), mats.length);
-  mats.forEach((mm, i) => m.setMatrixAt(i, mm));
+  const bulbs = new THREE.InstancedMesh(lampGeo, bulbMat, mats.length);
+  mats.forEach((mm, i) => {
+    m.setMatrixAt(i, mm);
+    bulbs.setMatrixAt(i, mm);
+  });
   m.castShadow = true;
-  group.add(m);
+  group.add(m, bulbs);
 }
 
 // ---- Leafy neem / ficus trees crowding the verges ----------------------------------------
@@ -338,7 +364,7 @@ const HOARDINGS: ReadonlyArray<{ lines: string[]; bg: string; fg: string }> = [
   { lines: ['KADAK CHAI · SINCE 1972', 'کڑک چائے'], bg: '#f9a825', fg: '#3e2723' },
 ];
 
-function buildFootbridge(group: THREE.Group, z: number, shadow: boolean): void {
+function buildFootbridge(group: THREE.Group, z: number, shadow: boolean, litMats: THREE.MeshLambertMaterial[]): void {
   const y = elevationAt(z);
   const r = sampleRoad(z);
   const x0 = r.left - r.shoulder - 4;
@@ -368,8 +394,15 @@ function buildFootbridge(group: THREE.Group, z: number, shadow: boolean): void {
   // Hoarding panels on both faces.
   const h = HOARDINGS[FOOTBRIDGES.indexOf(z) % HOARDINGS.length];
   const tex = signTexture(h.lines, h.bg, h.fg, 1024, 128);
+  const hMat = new THREE.MeshLambertMaterial({
+    map: tex,
+    emissiveMap: tex,
+    emissive: new THREE.Color('#ffffff'),
+    emissiveIntensity: 0,
+  });
+  litMats.push(hMat);
   for (const s of [1, -1]) {
-    const p = new THREE.Mesh(new THREE.PlaneGeometry(Math.min(len - 2, 34), trussH + 0.3), lam('#ffffff', tex));
+    const p = new THREE.Mesh(new THREE.PlaneGeometry(Math.min(len - 2, 34), trussH + 0.3), hMat);
     p.position.set(cx - 2, deckY + trussH / 2, -z + s * (depth / 2 + 0.12));
     if (s < 0) p.rotation.y = Math.PI;
     group.add(p);

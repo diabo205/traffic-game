@@ -11,6 +11,8 @@ export interface ChaseInput {
   slide: number;
   /** speed (m/s) at which the FOV is fully widened */
   topSpeed: number;
+  /** optional camera collision push-in so buildings/awnings never clip view */
+  clip?: (camPos: THREE.Vector3, target: THREE.Vector3) => void;
 }
 
 const smoothstep = (a: number, b: number, x: number) => {
@@ -29,7 +31,8 @@ const noise = (t: number, seed: number) =>
  *    lags on launch and swings out a touch in corners before settling.
  *  - Orbit yaw follows a blend of heading and travel direction, so in a
  *    slide the camera looks where the car is going, not where it points.
- *  - FOV widens smoothly with speed; the camera drops a little and pulls back.
+ *  - Dolly-compensated speed FOV: FOV widens while distance stays tight,
+ *    preserving car legibility on phones while boosting peripheral speed flow.
  *  - Shake = impact trauma + a subtle speed rumble + drift rumble, plus a
  *    slight roll into turns.
  */
@@ -54,6 +57,8 @@ export class ChaseCamera {
   baseFov = 62;
   /** Player setting: 1 = near, >1 pulls the camera further back. */
   zoom = 1;
+  /** Vehicle scale multiplier (1 for Alto/rickshaw, >1 for tall minibus). */
+  vehicleScale = 1;
   /** Extra degrees of FOV at full speed. */
   speedFov = 14;
 
@@ -83,6 +88,7 @@ export class ChaseCamera {
   update(dt: number, target: THREE.Vector3, heading: number, speed: number, o: ChaseInput): void {
     this.time += dt;
     const fwd = Math.max(0, speed);
+    const reversing = speed < -0.5;
     const ratio = Math.min(1.2, fwd / Math.max(1, o.topSpeed));
 
     // ---- Orbit yaw: spring toward heading, biased into the slide ---------------------
@@ -96,22 +102,28 @@ export class ChaseCamera {
     // Sub-step the springs: frame dt can be large on slow devices.
     const steps = Math.max(1, Math.ceil(dt / (1 / 120)));
     const h = dt / steps;
+    const yawK = reversing ? 16 : 38;
+    const yawC = reversing ? 9 : 11.5;
     for (let i = 0; i < steps; i++) {
       const err = wrap(yawTarget - this.yaw);
-      this.yawVel += (38 * err - 11.5 * this.yawVel) * h;
+      this.yawVel += (yawK * err - yawC * this.yawVel) * h;
       this.yaw += this.yawVel * h;
     }
     const turnRate = (this.yaw - prevYaw) / Math.max(dt, 1e-4);
 
-    // ---- Desired position: further back and a bit lower at speed -----------------------
-    const back = speed < -0.5 ? -0.6 : 1; // keep looking forward when reversing slowly
-    const dist = (this.distance + ratio * 0.8) * this.zoom;
-    const height = (this.height - ratio * 0.25) * (1 + (this.zoom - 1) * 0.8);
+    // ---- Desired position: dolly-compensated FOV + steady reverse sightline ------------
+    const revPush = reversing ? 1.15 : 1;
+    const dist = Math.max(3.6, (this.distance - ratio * 0.28) * this.zoom * this.vehicleScale * revPush);
+    const height = (this.height - ratio * 0.22 + (reversing ? 0.45 : 0)) * (1 + (this.zoom - 1) * 0.8) * (1 + (this.vehicleScale - 1) * 0.7);
     this.desired.set(
-      target.x - Math.sin(this.yaw) * dist * back,
+      target.x - Math.sin(this.yaw) * dist,
       target.y + height,
-      target.z + Math.cos(this.yaw) * dist * back,
+      target.z + Math.cos(this.yaw) * dist,
     );
+    if (o.clip) {
+      o.clip(this.desired, target);
+      this.desired.y = Math.max(this.desired.y, target.y + 1.0);
+    }
     if (!this.initialised) {
       this.pos.copy(this.desired);
       this.vel.set(0, 0, 0);
@@ -140,12 +152,13 @@ export class ChaseCamera {
       const s = 2.2 / lag;
       this.pos.set(this.desired.x + lagX * s, this.desired.y + lagY * s, this.desired.z + lagZ * s);
     }
+    if (o.clip) o.clip(this.pos, target);
     // Keep above the ground / kerb.
     this.pos.y = Math.max(this.pos.y, target.y + 0.9);
 
-    // Look ahead of the car, further at speed.
-    const ahead = 6 + ratio * 4;
-    this.lookAhead.set(target.x + Math.sin(this.yaw) * ahead, target.y + 1.1, target.z - Math.cos(this.yaw) * ahead);
+    // Look ahead of the car, further at speed (or closer when reversing).
+    const ahead = reversing ? 3 : 6 + ratio * 4;
+    this.lookAhead.set(target.x + Math.sin(this.yaw) * ahead, target.y + 1.05 * this.vehicleScale, target.z - Math.cos(this.yaw) * ahead);
     this.look.lerp(this.lookAhead, 1 - Math.exp(-dt * 12));
 
     // ---- Shake ------------------------------------------------------------------------------
@@ -165,9 +178,9 @@ export class ChaseCamera {
     this.roll += (rollTarget - this.roll) * (1 - Math.exp(-dt * 5));
     this.camera.rotateZ(this.roll + noise(t * 9, 2.2) * 0.03 * impact);
 
-    // ---- FOV: widens smoothly with speed, extra push on the expressway -------------------
-    const targetFov = this.baseFov + this.speedFov * smoothstep(0.15, 1, ratio) + o.fovKick * 7 + o.slide * 2;
-    this.fov += (targetFov - this.fov) * (1 - Math.exp(-dt * 2.5));
+    // ---- FOV: widens smoothly with speed, extra push on the expressway / boost -------------------
+    const targetFov = this.baseFov + this.speedFov * smoothstep(0.15, 1, ratio) + o.fovKick * 8 + o.slide * 2;
+    this.fov += (targetFov - this.fov) * (1 - Math.exp(-dt * 3.0));
     if (Math.abs(this.camera.fov - this.fov) > 0.01) {
       this.camera.fov = this.fov;
       this.camera.updateProjectionMatrix();

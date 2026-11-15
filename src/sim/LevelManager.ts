@@ -7,7 +7,7 @@ export interface CheckpointDef {
   bonus: number;
 }
 
-export const START_TIME = 100;
+export const START_TIME = 105;
 
 export const CHECKPOINTS: readonly CheckpointDef[] = [
   { z: 1100, label: 'LYARI EXPRESSWAY ON-RAMP', bonus: 35 },

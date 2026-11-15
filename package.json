@@ -6,7 +6,11 @@
   "scripts": {
     "dev": "vite --host",
     "build": "tsc --noEmit && vite build",
-    "preview": "vite preview --host"
+    "pack": "SINGLE_FILE=1 vite build && node tools/pack_html.mjs",
+    "preview": "vite preview --host",
+    "playtest:sim": "node tools/playtest/sim.mjs",
+    "playtest:metrics": "bash tools/playtest/metrics.sh",
+    "playtest:browser": "node tools/playtest/browser.mjs"
   },
   "dependencies": {
     "@fontsource/barlow-condensed": "^5.2.6",

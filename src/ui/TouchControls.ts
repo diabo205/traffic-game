@@ -1,16 +1,18 @@
-import type { TouchInputState } from '../input/InputManager';
+import type { TouchInputState, TouchSteerMode } from '../input/InputManager';
 
 /**
  * On-screen controls for touch devices. Pure DOM; writes into TouchInputState.
- * Bottom-left: steering buttons or a virtual joystick (toggleable).
+ * Bottom-left: steering buttons, a virtual joystick, or tilt re-center pill.
  * Bottom-right: gas / brake pedals + horn / dipper.
  */
 export class TouchControls {
   readonly root: HTMLDivElement;
+  readonly calBtn: HTMLButtonElement;
   private buttonsPad: HTMLDivElement;
   private stickPad: HTMLDivElement;
   private knob: HTMLDivElement;
-  private mode: 'buttons' | 'joystick' = 'buttons';
+  private gasBtn: HTMLButtonElement;
+  private mode: TouchSteerMode = 'buttons';
   private stickPointer: number | null = null;
   private stickOrigin = 0;
 
@@ -29,7 +31,11 @@ export class TouchControls {
     this.knob = el('div', 'stick-knob');
     this.stickPad.appendChild(this.knob);
     this.bindStick();
-    left.append(this.buttonsPad, this.stickPad);
+    this.calBtn = document.createElement('button');
+    this.calBtn.className = 'tbtn small tilt-cal hidden';
+    this.calBtn.textContent = 'ZERO TILT';
+    this.calBtn.setAttribute('aria-label', 'Recalibrate tilt steering');
+    left.append(this.buttonsPad, this.stickPad, this.calBtn);
 
     // ---- Right: pedals + horn/dipper ---------------------------------------
     const right = el('div', 'touch-right');
@@ -40,14 +46,23 @@ export class TouchControls {
       this.hold('DRIFT', 'tbtn small drift', (on) => (state.drift = on), 'Handbrake drift'),
     );
     const pedals = el('div', 'pedals');
+    this.gasBtn = this.hold('GAS', 'tbtn pedal gas', (on) => (state.gas = on), 'Accelerate');
     pedals.append(
       this.hold('BRAKE', 'tbtn pedal brake', (on) => (state.brake = on), 'Brake / reverse'),
-      this.hold('GAS', 'tbtn pedal gas', (on) => (state.gas = on), 'Accelerate'),
+      this.gasBtn,
     );
     right.append(aux, pedals);
 
     this.root.append(left, right);
     this.setMode('buttons');
+  }
+
+  setPedalCues(launchReady: boolean, dashReady: boolean, autoGas: boolean): void {
+    this.gasBtn.classList.toggle('launch-ready', launchReady);
+    this.gasBtn.classList.toggle('dash-ready', dashReady);
+    this.gasBtn.classList.toggle('auto-on', autoGas);
+    const cue = launchReady ? 'launch' : dashReady ? 'dash' : autoGas ? 'auto' : '';
+    if (this.gasBtn.dataset.cue !== cue) this.gasBtn.dataset.cue = cue;
   }
 
   setVisible(v: boolean): void {
@@ -59,15 +74,16 @@ export class TouchControls {
     return !this.root.classList.contains('hidden');
   }
 
-  setMode(mode: 'buttons' | 'joystick'): void {
+  setMode(mode: TouchSteerMode): void {
     this.mode = mode;
     this.buttonsPad.classList.toggle('hidden', mode !== 'buttons');
     this.stickPad.classList.toggle('hidden', mode !== 'joystick');
+    this.calBtn.classList.toggle('hidden', mode !== 'tilt');
     this.state.left = this.state.right = false;
     this.state.joystick = 0;
   }
 
-  get currentMode(): 'buttons' | 'joystick' {
+  get currentMode(): TouchSteerMode {
     return this.mode;
   }
 

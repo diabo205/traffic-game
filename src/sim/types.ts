@@ -30,7 +30,24 @@ export const EMPTY_INPUT: Readonly<InputFrame> = Object.freeze({
   dipper: false,
 });
 
+export const TICK_RATE = 60;
+export const DT = 1 / TICK_RATE;
+/** Seconds to land the next stunt before the combo banks. */
+export const COMBO_WINDOW = 3;
+
+/**
+ * Damage from hitting traffic. Soft at city-traffic closing speeds (a
+ * nudge at 15 km/h is a few HP), still brutal for a head-on at speed.
+ */
+export function trafficDamage(impact: number, kindDamage: number): number {
+  if (impact <= 2.5) return 0;
+  const x = impact - 2.5;
+  return Math.min(8 + kindDamage * 6.5, x * (0.2 + x * 0.032) * kindDamage);
+}
+
 export type NpcKind = 'bike' | 'minibus' | 'rickshaw' | 'cart' | 'car' | 'truck';
+
+export type PlayerVehicle = 'alto' | 'rickshaw' | 'minibus';
 
 export type HazardKind = 'pothole' | 'manhole' | 'water' | 'barrier' | 'checkpoint';
 
@@ -81,8 +98,8 @@ export type SimEvent =
   | { type: 'street'; name: string }
   | { type: 'shiftStart'; time: number }
   | { type: 'shiftOver'; earned: number; fares: number }
-  | { type: 'pickup'; name: string; time: number; distance: number }
-  | { type: 'dropoff'; name: string; pay: number; tip: number; bonus: number; rating: number }
+  | { type: 'pickup'; name: string; time: number; distance: number; kind?: 'standard' | 'vip' | 'party'; stops?: number }
+  | { type: 'dropoff'; name: string; pay: number; tip: number; bonus: number; rating: number; chain?: number; kind?: 'standard' | 'vip' | 'party'; nextStop?: string }
   | { type: 'fareFailed'; name: string; reason: 'time' | 'shift' | 'towed' }
   | { type: 'towed'; cost: number }
   | { type: 'boost'; kind: 'launch' | 'dash' | 'drift' }
@@ -94,5 +111,6 @@ export type SimEvent =
   | { type: 'comboEnd'; total: number; mult: number; tip: number }
   | { type: 'comboBroken'; lost: number }
   | { type: 'honk'; cleared: number }
+  | { type: 'pedDodge'; count: number }
   | { type: 'gameover'; reason: Exclude<GameOverReason, null> }
   | { type: 'complete' };

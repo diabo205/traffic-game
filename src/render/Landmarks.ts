@@ -53,17 +53,17 @@ function tiled(tex: THREE.Texture, rx: number, ry: number): THREE.Texture {
   return t;
 }
 
-export function buildLandmarks(group: THREE.Group, lowSpec: boolean): void {
-  buildEmpressMarket(group, !lowSpec);
+export function buildLandmarks(group: THREE.Group, lowSpec: boolean, litMats: THREE.MeshLambertMaterial[] = []): void {
+  buildEmpressMarket(group, !lowSpec, litMats);
   buildMazar(group, !lowSpec);
-  for (const f of FLYOVERS) buildFlyover(group, f.z, f.name, !lowSpec);
+  for (const f of FLYOVERS) buildFlyover(group, f.z, f.name, !lowSpec, litMats);
   buildTeenTalwar(group, !lowSpec);
 }
 
 // ---- Empress Market (Saddar, left side) -----------------------------------------
 
-function buildEmpressMarket(group: THREE.Group, shadow: boolean): void {
-  buildEmpressMarketAt(group, shadow, corridorEdges(EMPRESS_Z).left - FOOTPATH_W - 1.5, -EMPRESS_Z, 72);
+function buildEmpressMarket(group: THREE.Group, shadow: boolean, litMats: THREE.MeshLambertMaterial[] = []): void {
+  buildEmpressMarketAt(group, shadow, corridorEdges(EMPRESS_Z).left - FOOTPATH_W - 1.5, -EMPRESS_Z, 72, litMats);
 }
 
 /**
@@ -72,7 +72,14 @@ function buildEmpressMarket(group: THREE.Group, shadow: boolean): void {
  * @param zc three-space z of the hall's centre
  * @param len length along z
  */
-export function buildEmpressMarketAt(group: THREE.Group, shadow: boolean, face: number, zc: number, len: number): void {
+export function buildEmpressMarketAt(
+  group: THREE.Group,
+  shadow: boolean,
+  face: number,
+  zc: number,
+  len: number,
+  litMats: THREE.MeshLambertMaterial[] = [],
+): void {
   const g = new THREE.Group();
   group.add(g);
   const depth = 26, h = 12;
@@ -115,7 +122,15 @@ export function buildEmpressMarketAt(group: THREE.Group, shadow: boolean, face: 
   const shaft = mesh(g, new THREE.BoxGeometry(8, tH, 8), lam('#ffffff', tiled(wall, 0.66, 2.5)), tx, tH / 2, zc, shadow);
   void shaft;
   mesh(g, new THREE.BoxGeometry(9, 1.2, 9), darkStone, tx, tH + 0.6, zc, shadow);
-  const clock = lam('#ffffff', clockFaceTexture());
+  const clockTex = clockFaceTexture();
+  const clock = new THREE.MeshLambertMaterial({
+    color: '#ffffff',
+    map: clockTex,
+    emissiveMap: clockTex,
+    emissive: new THREE.Color('#fff2c4'),
+    emissiveIntensity: 0,
+  });
+  litMats.push(clock);
   for (let i = 0; i < 4; i++) {
     const a = (i / 4) * Math.PI * 2;
     const c = mesh(g, new THREE.PlaneGeometry(3.4, 3.4), clock, tx + Math.sin(a) * 4.05, tH - 3.5, zc + Math.cos(a) * 4.05, false);
@@ -183,7 +198,7 @@ function buildMazar(group: THREE.Group, shadow: boolean): void {
 
 // ---- Flyovers crossing Shahrah-e-Faisal ----------------------------------------------
 
-function buildFlyover(group: THREE.Group, zc: number, name: string, shadow: boolean): void {
+function buildFlyover(group: THREE.Group, zc: number, name: string, shadow: boolean, litMats: THREE.MeshLambertMaterial[]): void {
   const H = 7.8, thick = 1.3, halfW = 6.5;
   const xL = -150, xR = 170, flatL = -55, flatR = 75;
   const height = (x: number) => {
@@ -234,10 +249,15 @@ function buildFlyover(group: THREE.Group, zc: number, name: string, shadow: bool
     group.add(m);
   }
   // Name painted on the side facing oncoming drivers.
-  const sign = new THREE.Mesh(
-    new THREE.PlaneGeometry(16, 1.6),
-    new THREE.MeshLambertMaterial({ map: signTexture([name], '#0b6e3a', '#ffffff', 768, 80) }),
-  );
+  const signTex = signTexture([name], '#0b6e3a', '#ffffff', 768, 80);
+  const signMat = new THREE.MeshLambertMaterial({
+    map: signTex,
+    emissiveMap: signTex,
+    emissive: new THREE.Color('#fff4db'),
+    emissiveIntensity: 0,
+  });
+  litMats.push(signMat);
+  const sign = new THREE.Mesh(new THREE.PlaneGeometry(16, 1.6), signMat);
   sign.position.set((road.left + road.right) / 2 + 2, H - 0.3, z1 + 0.06);
   group.add(sign);
 }

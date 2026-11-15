@@ -1,7 +1,19 @@
+import type { TouchSteerMode } from '../input/InputManager';
+import type { TimeOfDay } from '../render/Renderer';
+import type { FareKind, ShiftRank } from '../sim/city/Fares';
 import type { RunStats } from '../sim/LevelManager';
-import type { GameOverReason } from '../sim/types';
+import { VEHICLE_COST, VEHICLE_SPECS } from '../sim/PlayerCar';
+import { FINISH_Z } from '../sim/road';
+import type { GameOverReason, PlayerVehicle } from '../sim/types';
 
 type Mode = 'route' | 'city';
+
+const VEHICLES: readonly PlayerVehicle[] = ['alto', 'rickshaw', 'minibus'];
+const VEHICLE_PERK: Readonly<Record<PlayerVehicle, string>> = {
+  alto: 'BALANCED',
+  rickshaw: 'AGILE',
+  minibus: 'TANK',
+};
 
 /**
  * Arcade HUD + menus. DOM only; the Game pushes values in and wires the
@@ -14,6 +26,8 @@ export class Hud {
   readonly root: HTMLDivElement;
 
   // ---- In-game HUD -----------------------------------------------------------
+  private speedLines: HTMLDivElement;
+  private integLabel: HTMLSpanElement;
   private statA: HTMLSpanElement;
   private statAKey: HTMLSpanElement;
   private statB: HTMLSpanElement;
@@ -27,10 +41,12 @@ export class Hud {
   private boostFill: HTMLDivElement;
   private boostLabel: HTMLSpanElement;
   private farePanel: HTMLDivElement;
+  private fareMeta: HTMLDivElement;
   private fareName: HTMLDivElement;
   private fareInfo: HTMLDivElement;
   private fareFill: HTMLDivElement;
   private arrow: HTMLDivElement;
+  private arrowPath: SVGPathElement;
   private comboBox: HTMLDivElement;
   private comboMult: HTMLDivElement;
   private comboPts: HTMLDivElement;
@@ -50,24 +66,33 @@ export class Hud {
   private startScreen: HTMLDivElement;
   private heroTitle: HTMLHeadingElement;
   private heroText: HTMLParagraphElement;
+  private bankBadge: HTMLDivElement;
+  private bestHint: HTMLDivElement;
+  readonly rideBtns: Record<PlayerVehicle, HTMLButtonElement>;
   readonly cityBtn: HTMLButtonElement;
   /** route-run mode tile (kept under its old name) */
   readonly startBtn: HTMLButtonElement;
   readonly playBtn: HTMLButtonElement;
+  readonly dailyBtn: HTMLButtonElement;
   private settingsScreen: HTMLDivElement;
   private tabSound: HTMLButtonElement;
   private tabControls: HTMLButtonElement;
   private paneSound: HTMLDivElement;
   private paneControls: HTMLDivElement;
+  readonly rideBtn: HTMLButtonElement;
   readonly muteBtn: HTMLButtonElement;
+  readonly camBtn: HTMLButtonElement;
+  readonly todBtn: HTMLButtonElement;
   readonly touchBtn: HTMLButtonElement;
   readonly stickBtn: HTMLButtonElement;
-  readonly camBtn: HTMLButtonElement;
+  readonly autoGasBtn: HTMLButtonElement;
+  readonly hapticsBtn: HTMLButtonElement;
   private pauseScreen: HTMLDivElement;
   private pauseZone: HTMLDivElement;
   private pauseGoals: HTMLDivElement;
   readonly resumeBtn: HTMLButtonElement;
   readonly pauseCamBtn: HTMLButtonElement;
+  readonly pauseSteerBtn: HTMLButtonElement;
   readonly pauseControlsBtn: HTMLButtonElement;
   readonly pauseSoundBtn: HTMLButtonElement;
   readonly quitBtn: HTMLButtonElement;
@@ -78,6 +103,7 @@ export class Hud {
   readonly restartBtn: HTMLButtonElement;
 
   private mode: Mode = 'city';
+  private vehicleLabel = 'ALTO';
   private settingsBack: (() => void) | null = null;
   private bannerTimer = 0;
   private toastTimer = 0;
@@ -85,16 +111,22 @@ export class Hud {
   private lastSpeed = -1;
   private lastIntegrity = -1;
   private lastFareKey = '';
-  private lastMoney = -1;
+  private targetMoney = 0;
+  private shownMoney = Number.NaN;
+  private lastMoneyShown = Number.NaN;
   private lastScore = -1;
   private lastCombo = '';
-  private lastProgress = -1;
+  private lastDistLeft = -1;
+  private lastNextDist = -1;
+  private lastUrgency = '';
 
   constructor(parent: HTMLElement) {
     this.root = div('hud');
     parent.appendChild(this.root);
 
-    // ---- Top-left: pause + stat block + car integrity ------------------------------
+    this.speedLines = div('speed-lines');
+
+    // ---- Top-left: pause + stats + car integrity ------------------------------
     this.pauseBtn = button('', 'pause-btn', 'Pause (Esc)');
     this.pauseBtn.innerHTML = '<i></i><i></i>';
     const stats = div('stat-block');
@@ -113,13 +145,13 @@ export class Hud {
     this.statB = vb;
     stats.append(ra, rb);
     const integ = div('integrity');
-    const iLabel = span('integ-label');
-    iLabel.textContent = 'ALTO';
+    this.integLabel = span('integ-label');
+    this.integLabel.textContent = 'ALTO';
     const bar = div('integ-bar');
     this.integrityFill = div('integ-fill');
     bar.appendChild(this.integrityFill);
     this.integrityText = span('integ-text');
-    integ.append(iLabel, bar, this.integrityText);
+    integ.append(this.integLabel, bar, this.integrityText);
     const tl = div('hud-tl');
     const tlTop = div('tl-top');
     tlTop.append(this.pauseBtn, stats);
@@ -132,14 +164,16 @@ export class Hud {
     this.boostLabel = span('boost-label');
     this.boost.append(this.boostFill, this.boostLabel);
     this.farePanel = div('fare hidden');
+    this.fareMeta = div('fare-meta hidden');
     this.fareName = div('fare-name');
     this.fareInfo = div('fare-info');
     const fbar = div('fare-bar');
     this.fareFill = div('fare-fill');
     fbar.appendChild(this.fareFill);
-    this.farePanel.append(this.fareName, this.fareInfo, fbar);
+    this.farePanel.append(this.fareMeta, this.fareName, this.fareInfo, fbar);
     this.arrow = div('guide-arrow hidden');
     this.arrow.innerHTML = '<svg viewBox="0 0 40 40" width="100%" height="100%"><path d="M20 3 L36 34 L20 26 L4 34 Z" fill="#c6f432" stroke="#0b1530" stroke-width="2.5" stroke-linejoin="round"/></svg>';
+    this.arrowPath = this.arrow.querySelector('path')!;
     const tc = div('hud-tc');
     tc.append(this.boost, this.farePanel, this.arrow);
 
@@ -187,18 +221,43 @@ export class Hud {
     this.startScreen = div('screen start');
     const topbar = div('topbar');
     topbar.innerHTML = `<div class="brand"><span class="brand-mark">KT</span><span class="brand-name">KARACHI<br>TRAFFIC 3D</span></div>`;
+    const topRight = div('topbar-right');
+    this.bankBadge = div('bank-badge');
     const startSettings = button('', 'topbar-btn', 'Game options');
     startSettings.innerHTML = gearIcon();
-    topbar.appendChild(startSettings);
+    topRight.append(this.bankBadge, startSettings);
+    topbar.appendChild(topRight);
+
     const hero = div('hero');
     this.heroTitle = document.createElement('h1');
     this.heroText = document.createElement('p');
     hero.append(div('hero-rule'), this.heroTitle, this.heroText);
+
+    const garage = div('garage-strip');
+    const makeRideBtn = (v: PlayerVehicle) => {
+      const sp = VEHICLE_SPECS[v];
+      const cost = VEHICLE_COST[v];
+      const b = button('', 'garage-btn', `${sp.label} — ${sp.tag}`);
+      b.innerHTML = `<span class="g-name">${sp.label}</span><span class="g-perk">${VEHICLE_PERK[v]}</span><span class="g-sub">${cost === 0 ? 'FREE' : `RS ${cost}`}</span>`;
+      garage.appendChild(b);
+      return b;
+    };
+    this.rideBtns = {
+      alto: makeRideBtn('alto'),
+      rickshaw: makeRideBtn('rickshaw'),
+      minibus: makeRideBtn('minibus'),
+    };
+
     this.playBtn = button('PLAY', 'go-btn play', 'Play');
+    this.dailyBtn = button('', 'daily-btn', 'Daily Saddar challenge');
+    this.dailyBtn.innerHTML = `<span class="d-top">DAILY</span><span class="d-sub">SADDAR</span>`;
+    const playActions = div('play-actions');
+    playActions.append(this.playBtn, this.dailyBtn);
     const playWrap = div('play-wrap');
-    const playHint = div('hint');
-    playHint.textContent = 'ENTER / A';
-    playWrap.append(this.playBtn, playHint);
+    this.bestHint = div('hint best-hint');
+    this.bestHint.textContent = 'ENTER / A';
+    playWrap.append(garage, playActions, this.bestHint);
+
     const tiles = div('tiles');
     this.cityBtn = tile('FREE ROAM', 'SADDAR', 'Free roam in Saddar');
     this.startBtn = tile('ROUTE', 'RUN', 'Route run to Clifton');
@@ -219,11 +278,17 @@ export class Hud {
     this.tabControls = button('CONTROLS', 'tab', 'Controls');
     tabs.append(this.tabSound, this.tabControls);
     this.paneSound = div('card-grid');
+    this.rideBtn = cardBtn('RIDE', 'ALTO', 'Switch vehicle');
+    this.rideBtn.classList.add('wide');
     this.muteBtn = cardBtn('SOUND', 'ON', 'Toggle sound (M)');
     this.camBtn = cardBtn('CAMERA', 'NEAR', 'Camera distance');
+    this.todBtn = cardBtn('TIME OF DAY', 'NOON', 'Noon, sunset, or night');
     this.touchBtn = cardBtn('TOUCH CONTROLS', 'OFF', 'Show or hide touch controls');
-    this.stickBtn = cardBtn('STEERING', 'BUTTONS', 'Steering buttons or joystick');
-    this.paneSound.append(this.muteBtn, this.camBtn, this.touchBtn, this.stickBtn);
+    this.stickBtn = cardBtn('STEERING', 'BUTTONS', 'Steering buttons, joystick, or tilt');
+    this.autoGasBtn = cardBtn('AUTO-GAS', 'OFF', 'Auto-accelerate on touch');
+    this.hapticsBtn = cardBtn('HAPTICS', 'ON', 'Vibration feedback on supported devices');
+    this.hapticsBtn.classList.add('wide');
+    this.paneSound.append(this.rideBtn, this.muteBtn, this.camBtn, this.todBtn, this.touchBtn, this.stickBtn, this.autoGasBtn, this.hapticsBtn);
     this.paneControls = div('controls-pane hidden');
     this.paneControls.innerHTML = `
       <div class="ctl kb"><h3>KEYBOARD</h3>
@@ -235,14 +300,16 @@ export class Hud {
         <p><b>LEFT STICK</b> steer · <b>B</b> drift</p>
         <p><b>A</b> horn · <b>X</b> dipper · <b>START</b> pause</p></div>
       <div class="ctl tc"><h3>TOUCH</h3>
-        <p><b>◀ ▶</b> or joystick to steer</p>
+        <p><b>◀ ▶</b>, joystick or tilt · <b>ZERO TILT</b> centers</p>
         <p><b>GAS / BRAKE</b> pedals · <b>DRIFT</b></p>
         <p><b>📯</b> horn · <b>💡</b> dipper · <b>II</b> pause</p></div>
       <div class="ctl moves"><h3>MOVES</h3>
         <p><b>DRIFT</b> gas + brake while turning — power out for a boost</p>
-        <p><b>LAUNCH</b> hold brake + gas when stopped, let go of the brake</p>
-        <p><b>DASH</b> tap the gas twice quickly · <b>HORN</b> clears the lane</p></div>`;
-    this.settingsScreen.append(sBack, sHead, tabs, this.paneSound, this.paneControls);
+        <p><b>LAUNCH</b> hold brake + gas when stopped, release brake</p>
+        <p><b>DASH</b> double-tap gas (&lt; 55% top speed) · <b>DONUT</b> spin tight · <b>HORN</b> clears traffic & pedestrians</p></div>`;
+    const osmCredit = div('osm-credit');
+    osmCredit.textContent = 'Map data © OpenStreetMap contributors';
+    this.settingsScreen.append(sBack, sHead, tabs, this.paneSound, this.paneControls, osmCredit);
 
     // ---- Pause --------------------------------------------------------------------------------------
     this.pauseScreen = div('screen pause hidden');
@@ -257,11 +324,12 @@ export class Hud {
     menuTag.textContent = 'GAME MENU';
     this.resumeBtn = cardBtn('RESUME', '', 'Resume');
     this.pauseCamBtn = cardBtn('CAMERA', 'NEAR', 'Camera distance');
+    this.pauseSteerBtn = cardBtn('STEERING', 'BUTTONS', 'Touch steering mode');
     this.pauseControlsBtn = cardBtn('CONTROLS', '', 'Controls');
     this.pauseSoundBtn = cardBtn('SOUND', 'ON', 'Sound');
     this.quitBtn = cardBtn('QUIT TO MENU', '', 'Quit to menu');
     const pRight = div('pause-right');
-    pRight.append(menuTag, this.resumeBtn, this.pauseCamBtn, this.pauseControlsBtn, this.pauseSoundBtn, this.quitBtn);
+    pRight.append(menuTag, this.resumeBtn, this.pauseCamBtn, this.pauseSteerBtn, this.pauseControlsBtn, this.pauseSoundBtn, this.quitBtn);
     this.pauseScreen.append(pLeft, pRight);
 
     // ---- Results --------------------------------------------------------------------------------------
@@ -277,7 +345,7 @@ export class Hud {
     endCard.append(this.endTitle, this.endSub, this.endStats, this.restartBtn, endHint);
     this.endScreen.appendChild(endCard);
 
-    this.root.append(tl, tc, tr, right, this.banner, this.toast, this.flash, this.shiftCard, this.startScreen, this.settingsScreen, this.pauseScreen, this.endScreen);
+    this.root.append(this.speedLines, tl, tc, tr, right, this.banner, this.toast, this.flash, this.shiftCard, this.startScreen, this.settingsScreen, this.pauseScreen, this.endScreen);
 
     // Menu navigation that needs no game logic.
     const openSettings = (back: () => void, controls = false) => this.openSettings(back, controls);
@@ -290,6 +358,7 @@ export class Hud {
     this.tabControls.addEventListener('click', () => this.setTab(true));
 
     this.setMode('city');
+    this.setVehicle('alto', 0);
     this.showStart(true);
   }
 
@@ -302,16 +371,18 @@ export class Hud {
     this.startBtn.classList.toggle('chosen', mode === 'route');
     if (mode === 'city') {
       this.heroTitle.innerHTML = 'PICK UP FARES.<br><em>OWN</em> SADDAR.';
-      this.heroText.textContent = 'Drive anywhere in Saddar. Stop beside passengers, race them across town before their meter runs out, and chain drifts, jumps and near misses for tips.';
+      this.heroText.innerHTML = 'Stop beside passengers across Saddar, beat the meter, and chain drifts, jumps &amp; near misses for bonus&nbsp;tips.';
       this.statAKey.textContent = 'RS';
       this.statBKey.textContent = '★';
     } else {
       this.heroTitle.innerHTML = 'SADDAR TO <em>CLIFTON</em><br>AGAINST THE CLOCK.';
-      this.heroText.textContent = 'Lyari Expressway, Shahrah-e-Faisal, Teen Talwar. Beat each checkpoint timer and keep the 660cc Alto in one piece.';
-      this.statAKey.textContent = 'DIST';
-      this.statBKey.textContent = 'HP';
+      this.heroText.textContent = '4.2 km dash via Lyari Expressway & Shahrah-e-Faisal to Teen Talwar. Hit checkpoints before the clock hits zero and keep your ride intact.';
+      this.statAKey.textContent = 'LEFT';
+      this.statBKey.textContent = 'NEXT';
     }
-    this.lastProgress = this.lastMoney = this.lastScore = -1;
+    this.lastDistLeft = this.lastNextDist = this.lastScore = this.lastIntegrity = -1;
+    this.targetMoney = 0;
+    this.shownMoney = this.lastMoneyShown = Number.NaN;
     if (mode !== 'city') {
       this.setFare(null);
       this.setArrow(null);
@@ -320,18 +391,61 @@ export class Hud {
     }
   }
 
+  setDailyInfo(label: string, bestEarned: number, bestRank?: ShiftRank): void {
+    const sub = bestEarned > 0 ? `BEST RS ${bestEarned.toLocaleString('en-PK')}${bestRank ? ` · ${bestRank}` : ''}` : 'SAME SEED WORLDWIDE';
+    this.dailyBtn.innerHTML = `<span class="d-top">DAILY · ${escapeHtml(label)}</span><span class="d-sub">${sub}</span>`;
+  }
+
+  setBestSummary(text: string | null): void {
+    this.bestHint.textContent = text ? `ENTER / A · ${text}` : 'ENTER / A';
+  }
+
+  setVehicle(v: PlayerVehicle, bank: number): void {
+    const sp = VEHICLE_SPECS[v];
+    this.vehicleLabel = sp.label;
+    this.integLabel.textContent = sp.label;
+    this.bankBadge.textContent = `BANK RS ${bank.toLocaleString('en-PK')}`;
+    setCard(this.rideBtn, `${sp.label} · ${sp.tag}`);
+    for (const k of VEHICLES) {
+      const btn = this.rideBtns[k];
+      const cost = VEHICLE_COST[k];
+      const unlocked = bank >= cost;
+      btn.classList.toggle('chosen', k === v);
+      btn.classList.toggle('locked', !unlocked);
+      const sub = btn.querySelector('.g-sub');
+      if (sub) {
+        sub.textContent = k === v ? 'ACTIVE' : unlocked ? 'UNLOCKED' : `LOCKED · RS ${cost}`;
+      }
+    }
+  }
+
+  setTimeOfDay(tod: TimeOfDay): void {
+    setCard(this.todBtn, tod.toUpperCase());
+  }
+
+  setAutoGas(on: boolean): void {
+    setCard(this.autoGasBtn, on ? 'ON' : 'OFF');
+  }
+
+  setHaptics(on: boolean): void {
+    setCard(this.hapticsBtn, on ? 'ON' : 'OFF');
+  }
+
   setMuted(m: boolean): void {
     setCard(this.muteBtn, m ? 'OFF' : 'ON');
     setCard(this.pauseSoundBtn, m ? 'OFF' : 'ON');
   }
 
-  setStickMode(joystick: boolean): void {
-    setCard(this.stickBtn, joystick ? 'JOYSTICK' : 'BUTTONS');
+  setSteerMode(mode: TouchSteerMode): void {
+    setCard(this.stickBtn, mode.toUpperCase());
+    setCard(this.pauseSteerBtn, mode.toUpperCase());
   }
 
   setTouchVisible(v: boolean): void {
     setCard(this.touchBtn, v ? 'ON' : 'OFF');
     this.stickBtn.classList.toggle('disabled', !v);
+    this.autoGasBtn.classList.toggle('disabled', !v);
+    this.pauseSteerBtn.classList.toggle('hidden', !v);
   }
 
   setCamera(far: boolean): void {
@@ -343,6 +457,11 @@ export class Hud {
 
   private menu(open: boolean): void {
     this.root.classList.toggle('in-menu', open);
+    document.body.classList.toggle('in-menu', open);
+    if (open) {
+      this.toast.classList.remove('show');
+      this.toastTimer = 0;
+    }
   }
 
   showStart(v: boolean): void {
@@ -402,19 +521,19 @@ export class Hud {
   }
 
   showEnd(win: boolean, reason: GameOverReason, stats: RunStats, integrity: number, timeLeft: number, progress: number): void {
-    this.endTitle.textContent = win ? 'PAHUNCH GAYE!' : reason === 'wrecked' ? 'ALTO WRECKED' : 'OUT OF TIME';
+    this.endTitle.textContent = win ? 'PAHUNCH GAYE!' : reason === 'wrecked' ? `${this.vehicleLabel} WRECKED` : 'OUT OF TIME';
     this.endTitle.className = `screen-title ${win ? 'win' : 'lose'}`;
     this.endSub.textContent = win
       ? 'You made it to Clifton. Karachi traffic: conquered (for today).'
       : reason === 'wrecked'
-        ? 'The Alto gave up. Mechanic in Saddar says: "Bas ho gaya, sahab."'
+        ? `The ${this.vehicleLabel} gave up. Mechanic in Saddar says: "Bas ho gaya, sahab."`
         : `Stuck in traffic — ${Math.round(progress * 100)}% of the way to Clifton.`;
-    if (this.mode === 'city') this.endSub.textContent = 'The Alto gave up in the middle of Saddar. Mechanic says: "Bas ho gaya, sahab."';
+    if (this.mode === 'city') this.endSub.textContent = `The ${this.vehicleLabel} gave up in the middle of Saddar. Mechanic says: "Bas ho gaya, sahab."`;
     const fmt = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
     const rows: [string, string][] = [
       ['TIME DRIVEN', fmt(stats.elapsed)],
       ...(this.mode === 'route' ? [['ROUTE COVERED', `${Math.round(progress * 100)}%`] as [string, string]] : []),
-      ['CAR INTEGRITY', `${Math.round(integrity)} HP`],
+      ['VEHICLE HP', `${Math.round(integrity)} HP`],
       ['TOP SPEED', `${Math.round(stats.topSpeed * 3.6)} KM/H`],
       ['CRASHES', String(stats.crashes)],
       ...(this.mode === 'route'
@@ -459,9 +578,18 @@ export class Hud {
   }
 
   setMoney(rs: number): void {
-    if (rs === this.lastMoney) return;
-    this.lastMoney = rs;
-    if (this.mode === 'city') this.statA.textContent = rs.toLocaleString('en-PK');
+    this.targetMoney = rs;
+    if (Number.isNaN(this.shownMoney) || rs < this.shownMoney) {
+      this.shownMoney = rs;
+      this.syncMoneyDisplay();
+    }
+  }
+
+  private syncMoneyDisplay(): void {
+    const shown = Math.round(this.shownMoney);
+    if (shown === this.lastMoneyShown) return;
+    this.lastMoneyShown = shown;
+    if (this.mode === 'city') this.statA.textContent = shown.toLocaleString('en-PK');
   }
 
   setScore(points: number): void {
@@ -470,24 +598,76 @@ export class Hud {
     if (this.mode === 'city') this.statB.textContent = points.toLocaleString('en-PK');
   }
 
+  setSpeedRush(rush: number): void {
+    this.speedLines.style.opacity = rush > 0.42 ? String(Math.min(0.65, (rush - 0.42) * 1.15)) : '0';
+  }
+
   /**
    * Boost meter. charge 0..1 (1 = ready), active = boosting now (fill shows
-   * what's left), drifting shows the drift tag.
+   * what's left), drifting shows the drift tag, launchFrac shows Launch charge.
    */
-  setBoost(charge: number, active: boolean, drifting: boolean): void {
-    const c = Math.max(0, Math.min(1, charge));
+  setBoost(
+    charge: number,
+    active: boolean,
+    drifting: boolean,
+    launchFrac = 0,
+    dashReady = false,
+    stopped = false,
+    launchReady = false,
+    driftFrac = 0,
+  ): void {
+    const launchShown = !active && !drifting && launchFrac > 0;
+    const c = Math.max(0, Math.min(1, drifting ? driftFrac : launchShown ? launchFrac : charge));
     this.boostFill.style.width = `${(c * 100).toFixed(1)}%`;
-    const state = active ? 'active' : drifting ? 'drift' : c >= 1 ? 'ready' : 'charging';
-    if (this.boost.dataset.state !== state) {
+    const state = active
+      ? 'active'
+      : drifting
+        ? 'drift'
+        : launchShown
+          ? launchReady
+            ? 'launch-ready'
+            : 'launch'
+          : c >= 1
+            ? 'ready'
+            : 'charging';
+    const label = active
+      ? 'BOOST!'
+      : drifting
+        ? driftFrac >= 1
+          ? 'FULL DRIFT · RELEASE!'
+          : driftFrac >= 0.635
+            ? 'MINI DRIFT · RELEASE'
+            : 'DRIFTING · TURN'
+        : launchShown
+          ? launchFrac >= 1
+            ? 'MAX LAUNCH · RELEASE!'
+            : launchReady
+              ? 'LAUNCH READY · HOLD'
+              : 'CHARGING LAUNCH'
+          : c >= 1
+            ? dashReady
+              ? 'DASH READY · 2× GAS'
+              : stopped
+                ? 'LAUNCH · BRAKE + GAS'
+                : 'BOOST READY'
+            : 'BOOST';
+    if (this.boost.dataset.state !== state || this.boostLabel.textContent !== label) {
       this.boost.dataset.state = state;
-      this.boostLabel.textContent = active ? 'BOOST!' : drifting ? 'DRIFTING' : c >= 1 ? 'BOOST READY' : 'BOOST';
+      this.boostLabel.textContent = label;
     }
   }
 
   /** Current fare (or a hint when looking for one); null hides the plate. */
-  setFare(f: { name: string; distance: number; timeLeft: number; limit: number } | { hint: string } | null): void {
+  setFare(
+    f:
+      | { name: string; distance: number; timeLeft: number; limit: number; kind?: FareKind; stop?: number; stops?: number; chain?: number }
+      | { hint: string }
+      | null,
+  ): void {
     if (!f) {
       this.farePanel.classList.add('hidden');
+      this.farePanel.classList.remove('vip', 'party');
+      this.fareMeta.classList.add('hidden');
       this.lastFareKey = '';
       return;
     }
@@ -496,15 +676,32 @@ export class Hud {
       if (this.lastFareKey !== f.hint) {
         this.fareName.textContent = f.hint;
         this.fareInfo.textContent = '';
+        this.fareMeta.classList.add('hidden');
+        this.farePanel.classList.remove('vip', 'party');
         this.farePanel.classList.add('looking');
         this.lastFareKey = f.hint;
       }
       return;
     }
     this.farePanel.classList.remove('looking');
-    const key = `${f.name}|${Math.round(f.distance / 10)}|${Math.ceil(f.timeLeft)}`;
+    this.farePanel.classList.toggle('vip', f.kind === 'vip');
+    this.farePanel.classList.toggle('party', f.kind === 'party');
+    const key = `${f.name}|${Math.round(f.distance / 10)}|${Math.ceil(f.timeLeft)}|${f.kind ?? 'standard'}|${f.stop ?? 1}|${f.chain ?? 0}`;
     if (key !== this.lastFareKey) {
       this.lastFareKey = key;
+      const parts: string[] = [];
+      if (f.kind === 'vip') parts.push('VIP · 2× PAY');
+      else if (f.kind === 'party') parts.push(`PARTY · STOP ${f.stop ?? 1}/${f.stops ?? 2}`);
+      if ((f.chain ?? 0) >= 2) {
+        const mul = (1 + Math.min(4, (f.chain ?? 0) - 1) * 0.25).toFixed(2).replace(/\.?0+$/, '');
+        parts.push(`FEVER ×${mul}`);
+      }
+      if (parts.length > 0) {
+        this.fareMeta.textContent = parts.join(' · ');
+        this.fareMeta.classList.remove('hidden');
+      } else {
+        this.fareMeta.classList.add('hidden');
+      }
       this.fareName.textContent = f.name.toUpperCase();
       const d = f.distance < 1000 ? `${Math.round(f.distance / 10) * 10} M` : `${(f.distance / 1000).toFixed(1)} KM`;
       this.fareInfo.innerHTML = `${d} <span class="dot">·</span> <b>${Math.ceil(f.timeLeft)} S</b>`;
@@ -515,16 +712,35 @@ export class Hud {
   }
 
   /** Guide arrow rotation relative to the car (radians, 0 = straight ahead), null hides. */
-  setArrow(angle: number | null): void {
+  setArrow(angle: number | null, urgency: 'ok' | 'warn' | 'hot' = 'ok'): void {
     this.arrow.classList.toggle('hidden', angle === null);
-    if (angle !== null) this.arrow.style.transform = `perspective(300px) rotateX(38deg) rotate(${angle.toFixed(3)}rad)`;
+    if (angle !== null) {
+      this.arrow.style.transform = `perspective(300px) rotateX(38deg) rotate(${angle.toFixed(3)}rad)`;
+      if (urgency !== this.lastUrgency) {
+        this.lastUrgency = urgency;
+        this.arrowPath.setAttribute('fill', urgency === 'hot' ? '#ff2d6f' : urgency === 'warn' ? '#ffc61a' : '#c6f432');
+      }
+    }
   }
 
-  showShiftOver(info: { earned: number; fares: number; total: number; score: number; best: number } | null): void {
+  showShiftOver(
+    info: {
+      earned: number;
+      fares: number;
+      total: number;
+      score: number;
+      best: number;
+      rank: ShiftRank;
+      bestEarned: number;
+      isNewBest: boolean;
+      bestChain: number;
+    } | null,
+  ): void {
     this.shiftCard.classList.toggle('hidden', !info);
     if (info) {
       const n = (x: number) => x.toLocaleString('en-PK');
-      this.shiftText.innerHTML = `<div class="shift-tag">SHIFT OVER</div><div class="shift-earned">RS ${n(info.earned)}</div><div class="shift-rows"><div><span>FARES</span><b>${info.fares}</b></div><div><span>IN YOUR POCKET</span><b>RS ${n(info.total)}</b></div><div><span>STUNT POINTS</span><b>${n(info.score)}</b></div><div><span>BEST COMBO</span><b>${n(info.best)}</b></div></div>`;
+      const badge = info.isNewBest ? `<span class="new-best">NEW BEST!</span>` : `<span class="shift-best">BEST RS ${n(info.bestEarned)}</span>`;
+      this.shiftText.innerHTML = `<div class="shift-head"><span class="shift-tag">SHIFT OVER</span><span class="shift-rank rank-${info.rank}">RANK ${info.rank}</span>${badge}</div><div class="shift-earned">RS ${n(info.earned)}</div><div class="shift-rows"><div><span>FARES</span><b>${info.fares}</b></div><div><span>FEVER CHAIN</span><b>${info.bestChain}</b></div><div><span>STUNT POINTS</span><b>${n(info.score)}</b></div><div><span>BEST COMBO</span><b>${n(info.best)}</b></div></div>`;
     }
   }
 
@@ -555,7 +771,13 @@ export class Hud {
     window.setTimeout(() => el.remove(), 2000);
   }
 
-  update(dt: number, speedKmh: number, integrity: number, timeLeft: number, progress: number): void {
+  update(dt: number, speedKmh: number, integrity: number, timeLeft: number, progress: number, nextCpDist = 0): void {
+    if (this.mode === 'city' && this.shownMoney < this.targetMoney) {
+      const step = Math.max(dt * 120, (this.targetMoney - this.shownMoney) * Math.min(1, dt * 10));
+      this.shownMoney = Math.min(this.targetMoney, this.shownMoney + step);
+      this.syncMoneyDisplay();
+    }
+
     const s = Math.round(Math.abs(speedKmh));
     if (s !== this.lastSpeed) {
       this.speed.textContent = String(s);
@@ -567,7 +789,6 @@ export class Hud {
       this.integrityFill.className = `integ-fill ${hp > 60 ? 'ok' : hp > 30 ? 'warn' : 'crit'}`;
       this.integrityText.textContent = `${hp}%`;
       this.lastIntegrity = hp;
-      if (this.mode === 'route') this.statB.textContent = String(hp);
     }
     const tt = `${String(Math.floor(timeLeft / 60)).padStart(2, '0')}:${String(Math.floor(timeLeft % 60)).padStart(2, '0')}.${Math.floor((timeLeft % 1) * 10)}`;
     if (tt !== this.lastClock) {
@@ -575,10 +796,17 @@ export class Hud {
       this.clock.classList.toggle('low', timeLeft < 10);
       this.lastClock = tt;
     }
-    const pct = Math.round(progress * 100);
-    if (this.mode === 'route' && pct !== this.lastProgress) {
-      this.lastProgress = pct;
-      this.statA.textContent = `${pct}%`;
+    if (this.mode === 'route') {
+      const rem = Math.max(0, Math.round((1 - progress) * FINISH_Z));
+      if (rem !== this.lastDistLeft) {
+        this.lastDistLeft = rem;
+        this.statA.textContent = rem >= 1000 ? `${(rem / 1000).toFixed(1)} KM` : `${rem} M`;
+      }
+      const nxt = Math.max(0, Math.round(nextCpDist));
+      if (nxt !== this.lastNextDist) {
+        this.lastNextDist = nxt;
+        this.statB.textContent = nxt >= 1000 ? `${(nxt / 1000).toFixed(1)} KM` : `${nxt} M`;
+      }
     }
 
     if (this.bannerTimer > 0) {

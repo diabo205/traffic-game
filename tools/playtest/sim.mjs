@@ -96,10 +96,11 @@ function autoSteer(world, mode, road) {
   if (mode === 'city') {
     const l = world.map.linkAt(p.x, p.z, p.heading);
     want = l ? l.heading : p.heading;
-    // also pull toward the lane centre a bit
     if (l) {
-      const lane = world.map.laneOffset?.(l, l.lanes - 1);
-      void lane;
+      const off = world.map.laneOffset?.(l, l.lanes - 1) ?? 0;
+      const rx = p.x - l.sx, rz = p.z - l.sz;
+      const cur = -rx * l.dz + rz * l.dx;
+      want = l.heading - Math.max(-0.35, Math.min(0.35, (off - cur) * 0.08));
     }
   } else {
     const r = road.sampleRoad(p.z);

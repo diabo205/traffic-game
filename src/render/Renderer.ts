@@ -1,27 +1,90 @@
 import * as THREE from 'three';
 import type { CityWorld } from '../sim/city/CityWorld';
-import type { SimEvent } from '../sim/types';
+import { pointObbDistance } from '../sim/math';
+import type { PlayerVehicle, SimEvent } from '../sim/types';
 import type { World } from '../sim/World';
 import { Birds } from './Birds';
 import { ChaseCamera } from './ChaseCamera';
-import { CityScenery } from './CityScenery';
+import type { CityScenery } from './CityScenery';
 import { Effects } from './Effects';
-import { Environment } from './Environment';
-import { FareVisuals } from './FareVisuals';
-import { PropVisuals } from './PropVisuals';
+import type { Environment } from './Environment';
+import type { FareVisuals } from './FareVisuals';
+import type { PropVisuals } from './PropVisuals';
 import { TyreFx } from './TyreFx';
 import { VehicleFactory } from './VehicleFactory';
 import type { VehicleVisual, VisualKind } from './VehicleFactory';
 
 export type AnyWorld = World | CityWorld;
+export type TimeOfDay = 'noon' | 'sunset' | 'night';
 
 interface Scenery {
   group: THREE.Group;
+  visibleChunks?: number;
+  setTimeOfDay?(tod: TimeOfDay): void;
   update(time: number, x: number, z: number): void;
+  dispose?(): void;
 }
 
 /** Dusty, bleached Karachi horizon. */
 const HORIZON = new THREE.Color('#d3d5cc');
+
+const FLAME_POS: Record<PlayerVehicle, readonly [number, number, number]> = {
+  alto: [-0.42, 0.3, 1.72],
+  rickshaw: [-0.28, 0.25, 1.38],
+  minibus: [-0.75, 0.42, 4.15],
+};
+
+interface LightingPreset {
+  top: string;
+  mid: string;
+  bottom: string;
+  sunDir: readonly [number, number, number];
+  hemiSky: string;
+  hemiGround: string;
+  hemiIntensity: number;
+  sunColor: string;
+  sunIntensity: number;
+  exposure: number;
+}
+
+const LIGHTING: Record<TimeOfDay, LightingPreset> = {
+  noon: {
+    top: '#9ec0d8',
+    mid: '#dde1db',
+    bottom: '#d3d5cc',
+    sunDir: [-0.49, 0.73, 0.49],
+    hemiSky: '#e6edf1',
+    hemiGround: '#a8977a',
+    hemiIntensity: 1.5,
+    sunColor: '#fff1d6',
+    sunIntensity: 2.6,
+    exposure: 1.0,
+  },
+  sunset: {
+    top: '#32386b',
+    mid: '#df7b5c',
+    bottom: '#e7ab7f',
+    sunDir: [-0.82, 0.22, -0.52],
+    hemiSky: '#ffd3aa',
+    hemiGround: '#72524c',
+    hemiIntensity: 1.25,
+    sunColor: '#ffa25b',
+    sunIntensity: 2.4,
+    exposure: 1.06,
+  },
+  night: {
+    top: '#091129',
+    mid: '#19294c',
+    bottom: '#202d45',
+    sunDir: [-0.4, 0.65, 0.5],
+    hemiSky: '#5874b0',
+    hemiGround: '#2d282c',
+    hemiIntensity: 1.05,
+    sunColor: '#a6c2ff',
+    sunIntensity: 0.9,
+    exposure: 1.18,
+  },
+};
 
 /**
  * Reads World state (never writes it) and draws it with Three.js.
@@ -31,9 +94,13 @@ export class Renderer {
   readonly gl: THREE.WebGLRenderer;
   readonly scene = new THREE.Scene();
   readonly chase: ChaseCamera;
+  private hemi: THREE.HemisphereLight;
   private sun: THREE.DirectionalLight;
+  private skyMat: THREE.ShaderMaterial;
+  private timeOfDay: TimeOfDay = 'noon';
   private env: Scenery | null = null;
   private envKey = '';
+  private attachSeq = 0;
   private fares: FareVisuals | null = null;
   private props: PropVisuals | null = null;
   private flame: THREE.Mesh;
@@ -41,9 +108,17 @@ export class Renderer {
   private birds = new Birds();
   private tyres = new TyreFx();
   private player: VehicleVisual | null = null;
+  private playerVehicle: PlayerVehicle = 'alto';
   private npcVisuals = new Map<number, VehicleVisual>();
   private pool = new Map<string, VehicleVisual[]>();
   private time = 0;
+  private avgDt = 1 / 60;
+  private slowFrames = 0;
+  private perfEl: HTMLDivElement | null = null;
+  private perfTimer = 0;
+  private perfFrames = 0;
+  private perfMsAcc = 0;
+  private perfFps = 60;
   private tmp = new THREE.Vector3();
 
   private constructor(
@@ -60,18 +135,29 @@ export class Renderer {
     this.gl.shadowMap.type = THREE.PCFShadowMap;
     container.appendChild(this.gl.domElement);
 
+    if (new URLSearchParams(window.location.search).has('perf')) {
+      const el = document.createElement('div');
+      el.className = 'perf-hud';
+      el.textContent = 'FPS -- · CALLS -- · TRIS --';
+      document.body.appendChild(el);
+      this.perfEl = el;
+    }
+
     this.chase = new ChaseCamera(1);
     const flameGeo = new THREE.ConeGeometry(0.11, 0.7, 8).rotateX(Math.PI / 2).translate(0, 0, 0.35);
     this.flame = new THREE.Mesh(flameGeo, new THREE.MeshBasicMaterial({ color: '#7fd3ff', transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false }));
-    this.flame.position.set(-0.42, 0.3, 1.72);
+    this.flame.position.set(...FLAME_POS.alto);
     this.flame.visible = false;
 
     // Pale, dusty Karachi afternoon: hazy white-blue sky, harsh high sun.
     this.scene.background = HORIZON.clone();
     // Heavy coastal dust haze: distance washes out to pale grey-blue.
     this.scene.fog = new THREE.Fog(HORIZON, 25, 330);
-    this.scene.add(makeSky());
-    this.scene.add(new THREE.HemisphereLight('#e6edf1', '#a8977a', 1.5));
+    const sky = makeSky();
+    this.skyMat = sky.material as THREE.ShaderMaterial;
+    this.scene.add(sky);
+    this.hemi = new THREE.HemisphereLight('#e6edf1', '#a8977a', 1.5);
+    this.scene.add(this.hemi);
     this.sun = new THREE.DirectionalLight('#fff1d6', 2.6);
     this.sun.position.set(-40, 60, 40);
     this.sun.castShadow = !lowSpec;
@@ -98,43 +184,111 @@ export class Renderer {
     return new Renderer(container, factory, lowSpec);
   }
 
-  /** (Re)bind to a world. Rebuilds static scenery only if the seed changed. */
-  attach(world: AnyWorld): void {
+  setTimeOfDay(tod: TimeOfDay): void {
+    this.timeOfDay = tod;
+    const p = LIGHTING[tod];
+    this.skyMat.uniforms.top.value.set(p.top);
+    this.skyMat.uniforms.mid.value.set(p.mid);
+    this.skyMat.uniforms.bottom.value.set(p.bottom);
+    this.skyMat.uniforms.sunDir.value.set(p.sunDir[0], p.sunDir[1], p.sunDir[2]).normalize();
+    (this.scene.background as THREE.Color).set(p.bottom);
+    if (this.scene.fog instanceof THREE.Fog) this.scene.fog.color.set(p.bottom);
+    this.hemi.color.set(p.hemiSky);
+    this.hemi.groundColor.set(p.hemiGround);
+    this.hemi.intensity = p.hemiIntensity;
+    this.sun.color.set(p.sunColor);
+    this.sun.intensity = p.sunIntensity;
+    this.gl.toneMappingExposure = p.exposure;
+    this.env?.setTimeOfDay?.(tod);
+  }
+
+  /** (Re)bind to a world. Dynamically imports scenery modules and rebuilds static scenery only if the seed changed. */
+  async attach(world: AnyWorld): Promise<void> {
+    const seq = ++this.attachSeq;
     const key = `${world.mode}:${world.seed}`;
-    if (this.envKey !== key) {
-      if (this.env) this.scene.remove(this.env.group);
-      if (world.mode === 'route') {
-        const env = new Environment(world.hazards, this.factory, this.lowSpec);
-        this.env = { group: env.group, update: (t, _x, z) => env.update(t, z) };
-      } else {
-        this.env = new CityScenery(this.lowSpec);
+    let loadedEnv: Environment | null = null;
+    let loadedScenery: CityScenery | null = null;
+    let LoadedFares: (typeof FareVisuals) | null = null;
+    let LoadedProps: (typeof PropVisuals) | null = null;
+
+    if (world.mode === 'route') {
+      if (this.envKey !== key) {
+        const { Environment } = await import('./Environment');
+        if (seq !== this.attachSeq) return;
+        loadedEnv = new Environment(world.hazards, this.factory, this.lowSpec);
       }
-      this.scene.add(this.env.group);
+    } else {
+      const needScenery = this.envKey !== key;
+      const [sceneryMod, fareMod, propMod] = await Promise.all([
+        needScenery ? import('./CityScenery') : Promise.resolve(null),
+        import('./FareVisuals'),
+        import('./PropVisuals'),
+      ]);
+      if (seq !== this.attachSeq) return;
+      if (sceneryMod) loadedScenery = new sceneryMod.CityScenery(this.lowSpec);
+      LoadedFares = fareMod.FareVisuals;
+      LoadedProps = propMod.PropVisuals;
+    }
+
+    if (this.envKey !== key) {
+      if (this.env) {
+        this.scene.remove(this.env.group);
+        this.env.dispose?.();
+      }
+      if (loadedEnv) {
+        this.env = {
+          group: loadedEnv.group,
+          setTimeOfDay: (tod) => loadedEnv.setTimeOfDay(tod),
+          update: (t, _x, z) => loadedEnv.update(t, z),
+          dispose: () => loadedEnv.dispose(),
+        };
+      } else if (loadedScenery) {
+        this.env = loadedScenery;
+      }
+      if (this.env) this.scene.add(this.env.group);
       this.envKey = key;
     }
-    if (this.fares) this.scene.remove(this.fares.group);
-    if (this.props) this.scene.remove(this.props.group);
+    if (this.fares) {
+      this.scene.remove(this.fares.group);
+      this.fares.dispose();
+    }
+    if (this.props) {
+      this.scene.remove(this.props.group);
+      this.props.dispose();
+    }
     this.fares = null;
     this.props = null;
-    if (world.mode === 'city') {
-      this.fares = new FareVisuals();
+    if (world.mode === 'city' && LoadedFares && LoadedProps) {
+      this.fares = new LoadedFares();
       this.scene.add(this.fares.group);
-      this.props = new PropVisuals(world.props, !this.lowSpec);
+      this.props = new LoadedProps(world.props, !this.lowSpec);
       this.scene.add(this.props.group);
     }
-    if (!this.player) {
-      this.player = this.factory.create('alto', 0);
+    const veh = world.player.vehicle;
+    if (!this.player || this.playerVehicle !== veh) {
+      if (this.player) {
+        this.player.body.remove(this.flame);
+        this.scene.remove(this.player.root);
+      }
+      this.playerVehicle = veh;
+      this.player = this.factory.create(veh, 0, true);
       this.scene.add(this.player.root);
       // Exhaust flame for boosts (tailpipe under the rear bumper, driver's side).
+      this.flame.position.set(...FLAME_POS[veh]);
       this.player.body.add(this.flame);
     }
+    this.chase.vehicleScale = veh === 'minibus' ? 1.48 : 1.0;
     for (const [id, v] of this.npcVisuals) this.release(v, id);
     this.npcVisuals.clear();
     this.chase.reset();
     this.tyres.clear();
+    this.setTimeOfDay(this.timeOfDay);
     // Compile every shader now, so nothing pops in (or hitches) the first
     // time it is drawn: a new road material, the first skid, the first puff.
     this.gl.compile(this.scene, this.chase.camera);
+    this.perfTimer = 0.25;
+    this.perfFrames = 0;
+    this.perfMsAcc = 0;
   }
 
   resize(): void {
@@ -196,7 +350,7 @@ export class Renderer {
 
   private acquire(kind: VisualKind, variant: number): VehicleVisual {
     const list = this.pool.get(this.visualKey(kind, variant));
-    const v = list?.pop() ?? this.factory.create(kind, variant);
+    const v = list?.pop() ?? this.factory.create(kind, variant, false);
     v.root.visible = true;
     this.scene.add(v.root);
     return v;
@@ -218,10 +372,47 @@ export class Renderer {
     return Math.atan2(world.groundY(x + fx, z + fz) - world.groundY(x - fx, z - fz), 2.4);
   }
 
+  /** Pull chase camera inside building OBBs in Saddar so awnings/walls never occlude the car. */
+  private clipCamera(world: CityWorld, camPos: THREE.Vector3, target: THREE.Vector3): void {
+    let bestT = 1;
+    for (const t of [0.35, 0.55, 0.72, 0.86, 1.0]) {
+      const x = target.x + (camPos.x - target.x) * t;
+      const y = target.y + (camPos.y - target.y) * t;
+      const z = target.z + (camPos.z - target.z) * t;
+      let hit = false;
+      world.map.forEachSolidNear(x, -z, 2.5, (b) => {
+        if (y < 10 && pointObbDistance(x, -z, b) < 1.85) hit = true;
+      });
+      if (hit) {
+        bestT = Math.min(bestT, Math.max(0.35, t - 0.14));
+        break;
+      }
+    }
+    if (bestT < 1) {
+      camPos.x = target.x + (camPos.x - target.x) * bestT;
+      camPos.z = target.z + (camPos.z - target.z) * bestT;
+      camPos.y = Math.min(target.y + 2.25, Math.max(camPos.y, target.y + 1.65) + (1 - bestT) * 0.25);
+    }
+  }
+
   render(world: AnyWorld, alpha: number, dt: number): void {
     this.time += dt;
+    if (dt > 0 && dt < 0.1) {
+      this.avgDt = this.avgDt * 0.96 + dt * 0.04;
+      if (this.avgDt > 1 / 34) {
+        this.slowFrames++;
+        if (this.slowFrames > 90 && this.gl.getPixelRatio() > 1) {
+          this.gl.setPixelRatio(1);
+          this.resize();
+          this.slowFrames = 0;
+        }
+      } else {
+        this.slowFrames = Math.max(0, this.slowFrames - 1);
+      }
+    }
     const p = world.player;
     const lerp = (a: number, b: number) => a + (b - a) * alpha;
+    const lowLight = this.timeOfDay !== 'noon';
 
     // ---- Player -----------------------------------------------------------
     const px = lerp(p.prevX, p.x);
@@ -237,7 +428,7 @@ export class Renderer {
       v.body.rotation.set(lerp(p.prevPitch, p.pitch), 0, -lerp(p.prevRoll, p.roll));
       v.body.position.y = lerp(p.prevBump, p.bump) * 0.6;
       v.setBrake(p.braking || p.reversing);
-      v.setHeadlights(p.dipper ? 2 : 1);
+      v.setHeadlights(p.dipper || this.timeOfDay === 'night' ? 2 : 1, lowLight);
       v.setHazard(world.phase === 'gameover' && Math.floor(this.time * 3) % 2 === 0);
       for (const w of v.wheels) {
         w.rotation.order = 'YXZ';
@@ -268,6 +459,7 @@ export class Renderer {
       v.body.rotation.z = Math.max(-0.35, Math.min(0.35, lean));
       v.setBrake(n.brakeLights);
       v.setHazard(n.hazardLights && blink);
+      v.setHeadlights(lowLight ? 1 : 0, lowLight);
     }
     for (const [id, v] of this.npcVisuals) {
       if (!seen.has(id)) {
@@ -286,15 +478,17 @@ export class Renderer {
       bump: lerp(p.prevBump, p.bump),
       slide: Math.max(slide.front, slide.rear),
       topSpeed: world.topSpeed(),
+      clip: world.mode === 'city' ? (camPos, target) => this.clipCamera(world, camPos, target) : undefined,
     });
 
-    this.sun.position.set(px - 40, elev + 60, -pz + 25);
+    const pLight = LIGHTING[this.timeOfDay];
+    this.sun.position.set(px + pLight.sunDir[0] * 75, elev + pLight.sunDir[1] * 85, -pz + pLight.sunDir[2] * 75);
     this.birds.update(dt, pz, elev, this.time);
     this.sun.target.position.set(px, elev, -pz - 15);
     this.env?.update(this.time, px, pz);
     if (world.mode === 'city') {
-      this.fares?.update(world.fares, px, pz, this.time);
-      this.props?.update(world.props);
+      this.fares?.update(world.fares, px, pz, this.time, world.pedestrians.peds);
+      this.props?.update(world.props, px, pz);
     }
     // Boost flame flicker.
     this.flame.visible = p.boostTime > 0;
@@ -305,7 +499,64 @@ export class Renderer {
     }
     this.effects.update(dt);
 
+    const t0 = performance.now();
     this.gl.render(this.scene, this.chase.camera);
+    const renderMs = performance.now() - t0;
+
+    if (dt > 0) {
+      this.perfFrames++;
+      this.perfMsAcc += dt;
+      this.perfTimer += dt;
+      if (this.perfTimer >= 0.25) {
+        this.perfFps = this.perfFrames / Math.max(1e-3, this.perfMsAcc);
+        const info = this.gl.info.render;
+        const chunks = this.env?.visibleChunks ?? null;
+        const snap = {
+          fps: +this.perfFps.toFixed(1),
+          ms: +(1000 / Math.max(1, this.perfFps)).toFixed(1),
+          renderMs: +renderMs.toFixed(2),
+          calls: info.calls,
+          triangles: info.triangles,
+          geometries: this.gl.info.memory.geometries,
+          textures: this.gl.info.memory.textures,
+          dpr: +this.gl.getPixelRatio().toFixed(2),
+          visibleChunks: chunks,
+          mode: world.mode,
+          timeOfDay: this.timeOfDay,
+        };
+        (window as unknown as { __KT3D_PERF__?: typeof snap }).__KT3D_PERF__ = snap;
+        if (this.perfEl) {
+          const chStr = chunks !== null ? ` · CHUNKS ${chunks}` : '';
+          this.perfEl.textContent =
+            `${snap.fps.toFixed(0)} FPS (${snap.ms.toFixed(1)} ms) · CALLS ${snap.calls} · TRIS ${(snap.triangles / 1000).toFixed(1)}k · DPR ${snap.dpr}${chStr}`;
+        }
+        this.perfFrames = 0;
+        this.perfMsAcc = 0;
+        this.perfTimer = 0;
+      }
+    } else if (this.perfEl || !(window as unknown as { __KT3D_PERF__?: unknown }).__KT3D_PERF__) {
+      const info = this.gl.info.render;
+      const chunks = this.env?.visibleChunks ?? null;
+      const snap = {
+        fps: +this.perfFps.toFixed(1),
+        ms: +(1000 / Math.max(1, this.perfFps)).toFixed(1),
+        renderMs: +renderMs.toFixed(2),
+        calls: info.calls,
+        triangles: info.triangles,
+        geometries: this.gl.info.memory.geometries,
+        textures: this.gl.info.memory.textures,
+        dpr: +this.gl.getPixelRatio().toFixed(2),
+        visibleChunks: chunks,
+        mode: world.mode,
+        timeOfDay: this.timeOfDay,
+      };
+      (window as unknown as { __KT3D_PERF__?: typeof snap }).__KT3D_PERF__ = snap;
+      if (this.perfEl) {
+        const chStr = chunks !== null ? ` · CHUNKS ${chunks}` : '';
+        this.perfEl.textContent =
+          `PAUSED · CALLS ${snap.calls} · TRIS ${(snap.triangles / 1000).toFixed(1)}k · DPR ${snap.dpr}${chStr}`;
+      }
+    }
   }
 }
 

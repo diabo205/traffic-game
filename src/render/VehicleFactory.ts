@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import type { NpcKind } from '../sim/types';
-import { routeBoardTexture, truckArtTexture, windscreenArtTexture } from './textures';
+import { headlightPoolTexture, routeBoardTexture, truckArtTexture, windscreenArtTexture } from './textures';
 
 /**
  * Builds low-poly procedural vehicles.
@@ -10,8 +10,8 @@ import { routeBoardTexture, truckArtTexture, windscreenArtTexture } from './text
  * Model convention: front faces local -Z, right is +X, wheels sit on y = 0.
  * Every model is wrapped as root (position + yaw) -> body (roll/pitch/bump).
  *
- * The factory is async (`preload`) so .glb assets can replace the procedural
- * prototypes later: load them in preload(), then return clones from create().
+ * Preloads Blender/GLTF .glb models for all 7 vehicles (with procedural
+ * fallbacks), then returns pooled clones from create().
  * Gameplay never depends on mesh geometry — collision sizes live in src/sim/.
  */
 
@@ -25,8 +25,8 @@ export interface VehicleVisual {
   wheelRadius: number;
   setBrake(on: boolean): void;
   setHazard(on: boolean): void;
-  /** 0 = off, 1 = normal, 2 = flash (dipper) */
-  setHeadlights(level: number): void;
+  /** 0 = off, 1 = normal, 2 = flash (dipper). Pass pool=true at sunset/night. */
+  setHeadlights(level: number, pool?: boolean): void;
 }
 
 /** glTF UVs expect flipY=false; canvas textures default to true. Cached clone. */
@@ -113,10 +113,45 @@ const M = {
   brakeOn: () => lambert('#ff2020', { emissive: '#ff1a1a' }),
   hazardOff: () => lambert('#8a5a12'),
   hazardOn: () => lambert('#ffb020', { emissive: '#ff9900' }),
+  poolDim: () => {
+    let m = matCache.get('poolDim') as THREE.MeshBasicMaterial | undefined;
+    if (!m) {
+      m = new THREE.MeshBasicMaterial({
+        map: headlightPoolTexture(),
+        color: '#ffeec2',
+        transparent: true,
+        opacity: 0.28,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+        polygonOffset: true,
+        polygonOffsetFactor: -4,
+      });
+      matCache.set('poolDim', m);
+    }
+    return m;
+  },
+  poolBright: () => {
+    let m = matCache.get('poolBright') as THREE.MeshBasicMaterial | undefined;
+    if (!m) {
+      m = new THREE.MeshBasicMaterial({
+        map: headlightPoolTexture(),
+        color: '#fff9e6',
+        transparent: true,
+        opacity: 0.5,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+        polygonOffset: true,
+        polygonOffsetFactor: -4,
+      });
+      matCache.set('poolBright', m);
+    }
+    return m;
+  },
 };
 
 const SHIRT_COLORS = ['#e9e4d4', '#3a6ea5', '#6b8e23', '#b5651d', '#7a7a7a', '#2f4f4f', '#c2b280', '#8b0000'];
-const CAR_COLORS = ['#f2f2f2', '#c9ccd1', '#1f1f22', '#7a1d24', '#2c4a7a', '#d8d2c0', '#5b6168', '#f2f2f2'];
+const CAR_COLORS = ['#f2f2f2', '#c9ccd1', '#1f1f22', '#7a1d24', '#2c4a7a', '#d8d2c0', '#5b6168', '#3c6e71'];
+const ROUTE_BOARDS = ['W-11', 'W-22', 'D-7', 'G-19', '1-C', 'S-1'];
 
 function wheel(parent: THREE.Object3D, r: number, w: number, x: number, z: number, list: THREE.Object3D[]): void {
   const pivot = new THREE.Group();
@@ -145,6 +180,7 @@ interface Lights {
   hazard: THREE.Mesh[];
   head: THREE.Mesh[];
   beam?: THREE.Mesh;
+  pool?: THREE.Mesh;
 }
 
 interface Proto {
@@ -156,6 +192,19 @@ interface Proto {
 }
 
 const LIGHT_NAMES = ['brake', 'hazard', 'head'] as const;
+
+function attachHeadlightPool(body: THREE.Group, lights: Lights, frontZ: number, width: number, len: number): void {
+  const geo = new THREE.PlaneGeometry(width, len);
+  geo.rotateX(-Math.PI / 2);
+  const pool = new THREE.Mesh(geo, M.poolDim());
+  pool.name = 'pool';
+  pool.position.set(0, 0.055, frontZ - len * 0.5 + 0.35);
+  pool.visible = false;
+  pool.castShadow = false;
+  pool.renderOrder = 2;
+  body.add(pool);
+  lights.pool = pool;
+}
 
 /** Merge a list of meshes into one mesh in `body` space. */
 function mergeMeshes(body: THREE.Object3D, meshes: THREE.Mesh[], material: THREE.Material, name: string): THREE.Mesh | null {
@@ -192,6 +241,7 @@ function finalize(p: Proto, keepWheels: boolean): void {
   body.updateMatrixWorld(true);
   const lightSet = new Set<THREE.Object3D>([...lights.brake, ...lights.hazard, ...lights.head]);
   if (lights.beam) lightSet.add(lights.beam);
+  if (lights.pool) lightSet.add(lights.pool);
   const wheelSet = new Set<THREE.Object3D>();
   if (keepWheels) for (const w of p.wheels) w.traverse((o) => wheelSet.add(o));
 
@@ -215,11 +265,12 @@ function finalize(p: Proto, keepWheels: boolean): void {
   body.traverse((o) => {
     if (o === body || o.parent !== body) return;
     if (o.name === 'part' || LIGHT_NAMES.includes(o.name as (typeof LIGHT_NAMES)[number])) return;
-    if (o === lights.beam || (keepWheels && wheelSet.has(o))) return;
+    if (o === lights.beam || o === lights.pool || (keepWheels && wheelSet.has(o))) return;
     remove.push(o);
   });
   for (const o of remove) body.remove(o);
   if (lights.beam) lights.beam.name = 'beam';
+  if (lights.pool) lights.pool.name = 'pool';
   for (const w of p.wheels) w.name = 'wheel';
   if (!keepWheels) p.wheels = [];
 }
@@ -231,8 +282,9 @@ function bind(kind: VisualKind, root: THREE.Group, wheelRadius: number): Vehicle
   const hazardMesh = find('hazard');
   const headMesh = find('head');
   const beam = find('beam');
+  const poolMesh = find('pool');
   const wheels = body.children.filter((c) => c.name === 'wheel');
-  let brake = false, hazard = false, head = -1;
+  let brake = false, hazard = false, head = -1, poolOn = false;
   return {
     kind, root, body, wheels, wheelRadius,
     setBrake(on) {
@@ -245,21 +297,27 @@ function bind(kind: VisualKind, root: THREE.Group, wheelRadius: number): Vehicle
       hazard = on;
       hazardMesh.material = on ? M.hazardOn() : M.hazardOff();
     },
-    setHeadlights(level) {
-      if (level === head) return;
+    setHeadlights(level, pool = false) {
+      if (level === head && pool === poolOn) return;
       head = level;
+      poolOn = pool;
       if (headMesh) headMesh.material = level > 0 ? M.headOn() : M.headOff();
       if (beam) beam.visible = level >= 2;
+      if (poolMesh) {
+        const showPool = level > 0 && (pool || level >= 2);
+        poolMesh.visible = showPool;
+        if (showPool) poolMesh.material = level >= 2 ? M.poolBright() : M.poolDim();
+      }
     },
   };
 }
 
 export class VehicleFactory {
   private beamMaterial: THREE.MeshBasicMaterial | null = null;
-  /** Blender-built models (tools/blender/*.py); procedural fallback if missing. */
+  /** Blender/GLTF .glb models; procedural fallback if missing. */
   private models = new Map<string, THREE.Group>();
 
-  /** Load / build any assets up front. Swap in GLTFLoader here later. */
+  /** Load all .glb assets and warm shared textures up front. */
   async preload(): Promise<void> {
     this.beamMaterial = new THREE.MeshBasicMaterial({
       color: '#fff7d6',
@@ -271,7 +329,7 @@ export class VehicleFactory {
     });
     const loader = new GLTFLoader();
     await Promise.all(
-      ['alto', 'rickshaw', 'minibus'].map(async (name) => {
+      ['alto', 'rickshaw', 'minibus', 'bike', 'cart', 'car', 'truck'].map(async (name) => {
         try {
           const gltf = await loader.loadAsync(`${import.meta.env.BASE_URL}models/${name}.${(import.meta.env.VITE_MODEL_EXT as string | undefined) ?? 'glb'}`);
           this.models.set(name, gltf.scene);
@@ -281,34 +339,35 @@ export class VehicleFactory {
       }),
     );
     // Warm the texture caches so first spawns don't hitch.
-    for (let i = 0; i < 4; i++) truckArtTexture(i);
-    routeBoardTexture('W-11');
+    for (let i = 0; i < 10; i++) truckArtTexture(i);
+    for (const r of ROUTE_BOARDS) routeBoardTexture(r);
+    headlightPoolTexture();
   }
 
   private protos = new Map<string, Proto>();
 
-  create(kind: VisualKind, variant: number): VehicleVisual {
-    const key = `${kind}:${variant}`;
+  create(kind: VisualKind, variant: number, keepWheels = kind === 'alto'): VehicleVisual {
+    const key = `${kind}:${variant}:${keepWheels ? 'p' : 'n'}`;
     let proto = this.protos.get(key);
     if (!proto) {
       proto = this.build(kind, variant);
-      finalize(proto, kind === 'alto');
+      finalize(proto, keepWheels);
       this.protos.set(key, proto);
     }
     const v = bind(kind, proto.root.clone(true), proto.wheelRadius);
-    if (kind === 'alto') v.setHeadlights(1);
+    if (keepWheels) v.setHeadlights(1, false);
     return v;
   }
 
   private build(kind: VisualKind, variant: number): Proto {
     switch (kind) {
       case 'alto': return this.models.has('alto') ? this.fromModel('alto', 0.28) : this.alto();
-      case 'car': return this.car(variant);
-      case 'bike': return this.bike(variant);
+      case 'car': return this.models.has('car') ? this.carModel(variant) : this.car(variant);
+      case 'bike': return this.models.has('bike') ? this.bikeModel(variant) : this.bike(variant);
       case 'minibus': return this.models.has('minibus') ? this.minibusModel(variant) : this.minibus(variant);
       case 'rickshaw': return this.models.has('rickshaw') ? this.rickshawModel(variant) : this.rickshaw(variant);
-      case 'cart': return this.cart(variant);
-      case 'truck': return this.truck(variant);
+      case 'cart': return this.models.has('cart') ? this.cartModel(variant) : this.cart(variant);
+      case 'truck': return this.models.has('truck') ? this.truckModel(variant) : this.truck(variant);
       case 'police': return this.police();
     }
   }
@@ -327,7 +386,14 @@ export class VehicleFactory {
    * Node names carry meaning: head_, brake_ and hazard_ nodes are lights; wheel_ nodes spin.
    * glTF PBR materials become smooth Lambert to match the scene's lighting.
    */
-  private fromModel(name: string, wheelRadius: number, paint?: string, maps: Record<string, THREE.Texture> = {}): Proto {
+  private fromModel(
+    name: string,
+    wheelRadius: number,
+    paint?: string,
+    maps: Record<string, THREE.Texture> = {},
+    matColors: Record<string, string> = {},
+    poolSize: readonly [number, number] = [4.6, 11],
+  ): Proto {
     const { root, body } = this.shell();
     const src = this.models.get(name);
     const wheels: THREE.Object3D[] = [];
@@ -342,7 +408,8 @@ export class VehicleFactory {
       let lm = mats.get(m.name);
       if (!lm) {
         const map = maps[m.name] ? gltfTexture(maps[m.name]) : null;
-        const color = map ? new THREE.Color('#ffffff') : paint && m.name === 'paint' ? new THREE.Color(paint) : m.color;
+        const override = matColors[m.name] ?? (m.name === 'paint' ? paint : undefined);
+        const color = map ? new THREE.Color('#ffffff') : override ? new THREE.Color(override) : m.color;
         lm = new THREE.MeshLambertMaterial({ color, map, name: m.name });
         mats.set(m.name, lm);
       }
@@ -364,29 +431,128 @@ export class VehicleFactory {
         lights.hazard.push(mesh);
       }
     }
-    if (this.beamMaterial && lights.head.length) {
-      const beamGeo = new THREE.ConeGeometry(2.2, 14, 12, 1, true);
-      beamGeo.translate(0, -7, 0);
-      beamGeo.rotateX(-Math.PI / 2);
-      const beam = new THREE.Mesh(beamGeo, this.beamMaterial);
-      beam.position.copy(lights.head[0].position).setX(0);
-      beam.visible = false;
-      beam.castShadow = false;
-      body.add(beam);
-      lights.beam = beam;
+    if (lights.head.length) {
+      body.updateMatrixWorld(true);
+      const box3 = new THREE.Box3();
+      const headCenter = new THREE.Vector3();
+      box3.setFromObject(lights.head[0]).getCenter(headCenter);
+      if (this.beamMaterial) {
+        const beamGeo = new THREE.ConeGeometry(2.2, 14, 12, 1, true);
+        beamGeo.translate(0, -7, 0);
+        beamGeo.rotateX(-Math.PI / 2);
+        const beam = new THREE.Mesh(beamGeo, this.beamMaterial);
+        beam.position.set(0, headCenter.y, headCenter.z);
+        beam.visible = false;
+        beam.castShadow = false;
+        body.add(beam);
+        lights.beam = beam;
+      }
+      attachHeadlightPool(body, lights, headCenter.z, poolSize[0], poolSize[1]);
     }
     return { root, body, wheels, wheelRadius, lights };
   }
 
-  /** Karachi route minibus from Blender: truck art per variant, people on the doors and roof. */
+  /** Honda CD-70 motorcycle from .glb, with rider & optional pillion or delivery box. */
+  private bikeModel(variant: number): Proto {
+    const PAINTS = ['#c0161c', '#c0161c', '#1c1d20', '#164ea6', '#216e39', '#3c4043'];
+    const p = this.fromModel('bike', 0.3, PAINTS[variant % PAINTS.length], {}, {}, [2.8, 8.5]);
+    rider(p.body, SHIRT_COLORS[variant % SHIRT_COLORS.length], 0, 0.86, 0.22, variant % 5 === 0);
+    if (variant % 4 === 1) {
+      rider(p.body, SHIRT_COLORS[(variant + 3) % SHIRT_COLORS.length], 0, 0.9, 0.62, false);
+    } else if (variant % 6 === 3) {
+      const bagCols = ['#d32f2f', '#1b5e20', '#ef6c00'];
+      box(p.body, 0.36, 0.3, 0.36, lambert(bagCols[variant % bagCols.length]), 0, 0.96, 0.64);
+    }
+    return p;
+  }
+
+  /** Wooden Karachi rehri/cart from .glb: donkey haul vs fruit push-thela. */
+  private cartModel(variant: number): Proto {
+    const RAIL = ['#d32f2f', '#1976d2', '#2e7d32', '#f9a825', '#7b1fa2'];
+    const p = this.fromModel('cart', 0.48, RAIL[variant % RAIL.length], {}, {}, [3.0, 6.5]);
+    const darkWood = lambert('#5d3a1a');
+    if (variant % 2 === 0) {
+      const grey = lambert('#8e8a86');
+      for (const sx of [-0.3, 0.3]) box(p.body, 0.06, 0.06, 1.6, darkWood, sx, 0.84, -1.0);
+      box(p.body, 0.42, 0.5, 1.0, grey, 0, 0.95, -1.35);
+      add(p.body, boxGeo(0.24, 0.5, 0.26), grey, 0, 1.3, -1.85, -0.5);
+      box(p.body, 0.2, 0.22, 0.4, grey, 0, 1.38, -2.05);
+      for (const sx of [-0.06, 0.06]) box(p.body, 0.05, 0.28, 0.05, grey, sx, 1.66, -1.9);
+      for (const [x, z] of [[-0.14, -1.7], [0.14, -1.7], [-0.14, -1.0], [0.14, -1.0]] as const) box(p.body, 0.1, 0.62, 0.1, grey, x, 0.36, z);
+      rider(p.body, SHIRT_COLORS[variant % SHIRT_COLORS.length], 0, 0.88, -0.04, false);
+      box(p.body, 0.9, 0.42, 0.86, lambert('#d7c7a0'), 0, 0.96, 0.9);
+    } else {
+      const fruit = [lambert('#f57c00'), lambert('#c62828'), lambert('#fbc02d'), lambert('#7cb342')];
+      for (let i = 0; i < 12; i++) {
+        add(p.body, sphereGeo(0.17, 5), fruit[(i + variant) % 4], -0.38 + (i % 3) * 0.38, 0.88 + Math.floor(i / 6) * 0.15, -0.15 + (Math.floor(i / 3) % 4) * 0.44);
+      }
+      if (variant % 4 === 3) {
+        const canopyCols = ['#d32f2f', '#1976d2', '#2e7d32'];
+        add(p.body, cylGeo(0.025, 0.025, 1.5, 5), darkWood, 0, 1.55, 0.52);
+        add(p.body, new THREE.ConeGeometry(0.95, 0.32, 8), lambert(canopyCols[variant % canopyCols.length]), 0, 2.38, 0.52);
+      }
+      box(p.body, 0.06, 0.06, 0.78, darkWood, -0.5, 0.92, 1.82);
+      box(p.body, 0.06, 0.06, 0.78, darkWood, 0.5, 0.92, 1.82);
+      const g = new THREE.Group();
+      g.position.set(0, 0.55, 2.24);
+      p.body.add(g);
+      rider(g, SHIRT_COLORS[(variant + 1) % SHIRT_COLORS.length], 0, 0, 0, false);
+    }
+    return p;
+  }
+
+  /** Karachi sedan (Corolla / City / Yellow-Black Taxi) from .glb. */
+  private carModel(variant: number): Proto {
+    const taxi = variant % 10 === 7;
+    const p = this.fromModel('car', 0.32, taxi ? '#f2c200' : CAR_COLORS[variant % CAR_COLORS.length], {}, {}, [4.6, 11.5]);
+    if (taxi) {
+      box(p.body, 1.75, 0.11, 3.6, M.black(), 0, 0.79, 0);
+      box(p.body, 0.42, 0.14, 0.22, lambert('#ffe066', { emissive: '#ffaa00' }), 0, 1.44, -0.12);
+    }
+    return p;
+  }
+
+  /** Decorated Bedford J6 truck from .glb with Taj crown & truck-art panels. */
+  private truckModel(variant: number): Proto {
+    const CAB = ['#1565c0', '#c62828', '#2e7d32', '#ef6c00', '#00695c', '#5e35b1'];
+    return this.fromModel(
+      'truck',
+      0.5,
+      CAB[variant % CAB.length],
+      {
+        art_side: truckArtTexture(variant + 4),
+        art_top: truckArtTexture(variant + 7),
+        art_rear: truckArtTexture(variant + 9),
+        art_screen: windscreenArtTexture(variant + 2),
+      },
+      {},
+      [6.4, 15],
+    );
+  }
+
+  /** Karachi route minibus from Blender: truck art & route board per variant, riders on doors/roof. */
   private minibusModel(variant: number): Proto {
-    const BASE = ['#1f4fa8', '#e9e2cf', '#1f7a4d', '#b3261e', '#1565c0', '#6a1b9a'];
-    const p = this.fromModel('minibus', 0.42, BASE[variant % BASE.length], {
-      art_side: truckArtTexture(variant),
-      art_top: truckArtTexture(variant + 3),
-      art_rear: truckArtTexture(variant + 5),
-      art_screen: windscreenArtTexture(variant),
-    });
+    const BASE = ['#1f4fa8', '#e9e2cf', '#1f7a4d', '#b3261e', '#1565c0', '#6a1b9a', '#00796b', '#d84315'];
+    const CREAM = ['#f3ecd8', '#fff8e1', '#e8eef5', '#f2e8cf'];
+    const RED = ['#c62828', '#ad1457', '#ef6c00', '#1565c0'];
+    const p = this.fromModel(
+      'minibus',
+      0.42,
+      BASE[variant % BASE.length],
+      {
+        art_side: truckArtTexture(variant),
+        art_top: truckArtTexture(variant + 3),
+        art_rear: truckArtTexture(variant + 5),
+        art_screen: windscreenArtTexture(variant),
+      },
+      {
+        cream: CREAM[variant % CREAM.length],
+        red: RED[(variant >> 1) % RED.length],
+      },
+      [6.2, 14.5],
+    );
+    const route = ROUTE_BOARDS[variant % ROUTE_BOARDS.length];
+    box(p.body, 1.12, 0.24, 0.04, lambert('#ffffff', { map: routeBoardTexture(route), emissive: '#ffd400' }), 0, 2.74, -3.58);
     const shirt = (k: number) => SHIRT_COLORS[(variant + k) % SHIRT_COLORS.length];
     // Hanging off the kerb-side doors (model doors at y 1.62 / -2.62 -> three z).
     rider(p.body, shirt(1), -1.22, 0.95, -1.62, false);
@@ -397,10 +563,24 @@ export class VehicleFactory {
     return p;
   }
 
-  /** Sazgar auto-rickshaw from Blender, in Karachi's common liveries, with a driver. */
+  /** Sazgar auto-rickshaw from Blender, in Karachi's common liveries & canopies, with driver. */
   private rickshawModel(variant: number): Proto {
-    const LIVERY = ['#e8731c', '#e8731c', '#2e7d32', '#f2b51c', '#e8731c', '#c9461c'];
-    const p = this.fromModel('rickshaw', 0.24, LIVERY[variant % LIVERY.length]);
+    const LIVERY = ['#e8731c', '#f2b51c', '#2e7d32', '#e8731c', '#c9461c', '#00796b', '#ef6c00', '#1b5e20'];
+    const CANOPY = ['#151517', '#1f2329', '#1e3f20', '#2b1b17'];
+    const CURTAIN = ['#b71c1c', '#1565c0', '#2e7d32', '#6a1b9a'];
+    const STRIPE = ['#ffd600', '#ffffff', '#ff5722', '#00e676'];
+    const p = this.fromModel(
+      'rickshaw',
+      0.24,
+      LIVERY[variant % LIVERY.length],
+      {},
+      {
+        canopy: CANOPY[variant % CANOPY.length],
+        curtain: CURTAIN[(variant + 1) % CURTAIN.length],
+        trim_stripe: STRIPE[variant % STRIPE.length],
+      },
+      [4.0, 9.5],
+    );
     rider(p.body, SHIRT_COLORS[variant % SHIRT_COLORS.length], 0, 0.91, -0.32, false);
     return p;
   }
@@ -513,6 +693,7 @@ export class VehicleFactory {
       body.add(beam);
       lights.beam = beam;
     }
+    attachHeadlightPool(body, lights, front, 4.6, 11);
     return { root, body, wheels, wheelRadius: 0.29, lights };
   }
 
@@ -535,6 +716,7 @@ export class VehicleFactory {
     box(body, 1.74, 0.18, 0.15, M.darkGrey(), 0, 0.42, -2.22);
     box(body, 1.74, 0.18, 0.15, M.darkGrey(), 0, 0.42, 2.22);
     for (const [x, z] of [[-0.78, -1.4], [0.78, -1.4], [-0.78, 1.4], [0.78, 1.4]] as const) wheel(body, 0.32, 0.22, x, z, wheels);
+    attachHeadlightPool(body, lights, -2.21, 4.6, 11.5);
     return { root, body, wheels, wheelRadius: 0.32, lights };
   }
 
@@ -571,6 +753,7 @@ export class VehicleFactory {
     lights.brake.push(box(body, 0.12, 0.08, 0.05, M.brakeOff(), 0, 0.82, 0.62));
     rider(body, SHIRT_COLORS[variant % SHIRT_COLORS.length], 0, 0.86, 0.22, variant % 5 === 0);
     if (variant % 4 === 1) rider(body, SHIRT_COLORS[(variant + 3) % SHIRT_COLORS.length], 0, 0.9, 0.62, false);
+    attachHeadlightPool(body, lights, -0.66, 2.8, 8.5);
     return { root, body, wheels, wheelRadius: 0.3, lights };
   }
 
@@ -608,6 +791,7 @@ export class VehicleFactory {
       lights.hazard.push(box(body, 0.2, 0.14, 0.07, M.hazardOff(), sx * 1.32, 1.4, L / 2 + 0.05));
     }
     for (const z of [-2.9, 2.6]) for (const x of [-1.0, 1.0]) wheel(body, 0.45, 0.32, x, z, wheels);
+    attachHeadlightPool(body, lights, -L / 2 - 0.06, 6.2, 14.5);
     return { root, body, wheels, wheelRadius: 0.45, lights };
   }
 
@@ -639,6 +823,7 @@ export class VehicleFactory {
     wheel(body, 0.26, 0.14, 0, -1.15, wheels);
     wheel(body, 0.26, 0.14, -0.62, 0.95, wheels);
     wheel(body, 0.26, 0.14, 0.62, 0.95, wheels);
+    attachHeadlightPool(body, lights, -1.56, 4.0, 9.5);
     return { root, body, wheels, wheelRadius: 0.26, lights };
   }
 
@@ -715,6 +900,7 @@ export class VehicleFactory {
       lights.hazard.push(box(body, 0.16, 0.12, 0.06, M.hazardOff(), sx * 1.4, 1.35, -4.53));
     }
     for (const z of [-3.6, 1.2, 2.6]) for (const x of [-1.0, 1.0]) wheel(body, 0.5, 0.36, x, z, wheels);
+    attachHeadlightPool(body, lights, -4.53, 6.4, 15);
     return { root, body, wheels, wheelRadius: 0.5, lights };
   }
 }
