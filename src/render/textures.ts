@@ -798,3 +798,230 @@ export function tollBoardTexture(): THREE.Texture {
     return finish(c);
   });
 }
+
+// ---------------------------------------------------------------------------
+// Saddar Free-Roam Landmark Textures
+// ---------------------------------------------------------------------------
+
+/** Gothic Revival front facade of St. Patrick's Cathedral: rose window + triple arched portal. */
+export function stPatricksFrontTexture(): THREE.Texture {
+  return cached('stPatricksFront', () => {
+    const [c, ctx] = canvas(256, 256);
+    ctx.fillStyle = '#d8b77c';
+    ctx.fillRect(0, 0, 256, 256);
+    // Stone courses
+    ctx.strokeStyle = 'rgba(110,75,38,0.32)';
+    ctx.lineWidth = 1;
+    for (let y = 0; y < 256; y += 10) {
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(256, y);
+      ctx.stroke();
+    }
+    // Terracotta / red-sandstone Gothic trim bands
+    ctx.fillStyle = '#9e4733';
+    ctx.fillRect(0, 148, 256, 6);
+    ctx.fillRect(16, 0, 10, 256);
+    ctx.fillRect(230, 0, 10, 256);
+
+    // Grand Rose Window in the upper centre
+    const rcx = 128, rcy = 76, rr = 46;
+    ctx.fillStyle = '#9e4733';
+    ctx.beginPath();
+    ctx.arc(rcx, rcy, rr + 6, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#1f1c24';
+    ctx.beginPath();
+    ctx.arc(rcx, rcy, rr, 0, Math.PI * 2);
+    ctx.fill();
+    const glassCols = ['#d32f2f', '#1976d2', '#fbc02d', '#388e3c', '#8e24aa', '#f57c00'];
+    for (let i = 0; i < 12; i++) {
+      const a0 = (i / 12) * Math.PI * 2;
+      const a1 = ((i + 0.82) / 12) * Math.PI * 2;
+      ctx.fillStyle = glassCols[i % glassCols.length];
+      ctx.beginPath();
+      ctx.moveTo(rcx, rcy);
+      ctx.arc(rcx, rcy, rr - 4, a0, a1);
+      ctx.closePath();
+      ctx.fill();
+    }
+    ctx.fillStyle = '#ffeb3b';
+    ctx.beginPath();
+    ctx.arc(rcx, rcy, 12, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = '#d8b77c';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(rcx, rcy, rr * 0.58, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // Triple pointed-arch entrance portals at the bottom
+    const portals: ReadonlyArray<[number, number, number]> = [
+      [62, 24, 78],
+      [128, 34, 96],
+      [194, 24, 78],
+    ];
+    for (const [px, hw, h] of portals) {
+      ctx.fillStyle = '#9e4733';
+      archPath(ctx, px, 256, hw + 5, h + 6);
+      ctx.fill();
+      ctx.fillStyle = '#3b2416';
+      archPath(ctx, px, 256, hw, h);
+      ctx.fill();
+      ctx.strokeStyle = '#d8b77c';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(px, 256 - h + 10);
+      ctx.lineTo(px, 256);
+      ctx.stroke();
+    }
+    return finish(c);
+  });
+}
+
+/** Tiled stained-glass lancet windows + Gizri stone buttresses for St. Patrick's nave & towers. */
+export function stainedLancetTexture(): THREE.Texture {
+  return cached('stainedLancet', () => {
+    const [c, ctx] = canvas(256, 256);
+    ctx.fillStyle = '#d8b77c';
+    ctx.fillRect(0, 0, 256, 256);
+    ctx.strokeStyle = 'rgba(110,75,38,0.3)';
+    for (let y = 0; y < 256; y += 12) {
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(256, y);
+      ctx.stroke();
+    }
+    // Buttress piers
+    ctx.fillStyle = '#bfa065';
+    ctx.fillRect(0, 0, 18, 256);
+    ctx.fillRect(119, 0, 18, 256);
+    ctx.fillRect(238, 0, 18, 256);
+    const cols = ['#1565c0', '#c62828', '#f9a825', '#2e7d32'];
+    for (const [idx, cx] of [[0, 68], [1, 188]] as const) {
+      ctx.fillStyle = '#9e4733';
+      archPath(ctx, cx, 214, 34, 168);
+      ctx.fill();
+      ctx.fillStyle = '#221f26';
+      archPath(ctx, cx, 210, 27, 156);
+      ctx.fill();
+      // Stained glass diamond panes
+      for (let y = 78; y < 204; y += 18) {
+        ctx.fillStyle = cols[(idx + (y / 18 | 0)) % cols.length];
+        ctx.fillRect(cx - 20, y, 17, 14);
+        ctx.fillStyle = cols[(idx + (y / 18 | 0) + 2) % cols.length];
+        ctx.fillRect(cx + 3, y, 17, 14);
+      }
+      ctx.fillStyle = '#d8b77c';
+      ctx.fillRect(cx - 2, 62, 4, 148);
+    }
+    return finish(c, true);
+  });
+}
+
+/** Colonial stone arcade + timber-louvred verandah (Saddar Dawakhana, Pakistan Chowk, Burns Rd). */
+export function colonialVerandahTexture(wallHex = '#dfc388', shutterHex = '#2e6b4e'): THREE.Texture {
+  return cached(`verandah:${wallHex}:${shutterHex}`, () => {
+    const [c, ctx] = canvas(256, 256);
+    ctx.fillStyle = wallHex;
+    ctx.fillRect(0, 0, 256, 256);
+    // Cornice bands
+    ctx.fillStyle = 'rgba(90,65,35,0.35)';
+    ctx.fillRect(0, 82, 256, 6);
+    ctx.fillRect(0, 166, 256, 8);
+    // Upper two floors: timber-louvred verandah shutters + arched fanlights
+    for (const fy of [12, 94]) {
+      for (let x = 14; x < 246; x += 60) {
+        ctx.fillStyle = shutterHex;
+        ctx.fillRect(x, fy, 44, 64);
+        ctx.fillStyle = 'rgba(0,0,0,0.28)';
+        for (let ly = fy + 6; ly < fy + 48; ly += 5) ctx.fillRect(x + 4, ly, 36, 2);
+        // Balustrade railing at bottom of bay
+        ctx.fillStyle = '#f2ede2';
+        ctx.fillRect(x + 2, fy + 50, 40, 12);
+        ctx.fillStyle = '#262421';
+        for (let bx = x + 6; bx < x + 40; bx += 6) ctx.fillRect(bx, fy + 52, 3, 8);
+      }
+    }
+    // Ground floor: deep stone arches
+    for (const cx of [44, 128, 212]) {
+      ctx.fillStyle = 'rgba(80,55,30,0.4)';
+      archPath(ctx, cx, 256, 32, 76);
+      ctx.fill();
+      ctx.fillStyle = '#241f1b';
+      archPath(ctx, cx, 256, 26, 68);
+      ctx.fill();
+    }
+    return finish(c, true);
+  });
+}
+
+/** Hand-painted Pakistani cinema hoarding billboard (0 = Paradise Cinema, 1 = Capri Cinema). */
+export function cinemaPosterTexture(variant: 0 | 1): THREE.Texture {
+  return cached(`cinemaPoster:${variant}`, () => {
+    const [c, ctx] = canvas(512, 256);
+    const g = ctx.createLinearGradient(0, 0, 512, 256);
+    if (variant === 0) {
+      g.addColorStop(0, '#1a237e');
+      g.addColorStop(0.5, '#b71c1c');
+      g.addColorStop(1, '#f57f17');
+    } else {
+      g.addColorStop(0, '#880e4f');
+      g.addColorStop(0.5, '#004d40');
+      g.addColorStop(1, '#e65100');
+    }
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, 512, 256);
+    // Sunburst rays
+    ctx.fillStyle = 'rgba(255,235,59,0.18)';
+    for (let i = 0; i < 16; i += 2) {
+      const a0 = (i / 16) * Math.PI * 2;
+      const a1 = ((i + 1) / 16) * Math.PI * 2;
+      ctx.beginPath();
+      ctx.moveTo(256, 128);
+      ctx.arc(256, 128, 320, a0, a1);
+      ctx.closePath();
+      ctx.fill();
+    }
+    // Painted dramatic portrait silhouettes/medallions
+    for (const [px, py, r, col] of [[115, 130, 68, '#ffcc80'], [395, 130, 64, '#ffe0b2']] as const) {
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.arc(px, py, r + 5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = col as string;
+      ctx.beginPath();
+      ctx.arc(px, py, r, 0, Math.PI * 2);
+      ctx.fill();
+      // Hair & sunglasses
+      ctx.fillStyle = '#1b1b1b';
+      ctx.beginPath();
+      ctx.arc(px, py - 14, r * 0.85, Math.PI, Math.PI * 2);
+      ctx.fill();
+      ctx.fillRect(px - 36, py - 12, 30, 16);
+      ctx.fillRect(px + 6, py - 12, 30, 16);
+      ctx.fillRect(px - 6, py - 7, 12, 4);
+    }
+    // Bold border frame
+    ctx.strokeStyle = '#ffd600';
+    ctx.lineWidth = 10;
+    ctx.strokeRect(8, 8, 496, 240);
+    // Film Title Banner
+    ctx.fillStyle = '#fff176';
+    ctx.strokeStyle = '#000000';
+    ctx.lineWidth = 6;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = '900 44px system-ui, sans-serif';
+    const title = variant === 0 ? 'SHOLAY · PARADISE' : 'MAULA JATT · CAPRI';
+    ctx.strokeText(title, 256, 68);
+    ctx.fillText(title, 256, 68);
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '800 30px system-ui, sans-serif';
+    const sub = variant === 0 ? 'DAILY 3 · 6 · 9 PM · AIR CONDITIONED' : 'SUPER HIT · 70MM CINEMASCOPE';
+    ctx.strokeText(sub, 256, 208);
+    ctx.fillText(sub, 256, 208);
+    return finish(c);
+  });
+}
+

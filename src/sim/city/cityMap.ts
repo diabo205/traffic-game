@@ -157,11 +157,35 @@ export interface Building {
   seed: number;
 }
 
+export type LandmarkKind =
+  | 'empress'
+  | 'st_patricks'
+  | 'dawakhana'
+  | 'bohri_bazaar'
+  | 'zainab_market'
+  | 'regal_chowk'
+  | 'paradise_cinema'
+  | 'capri_cinema'
+  | 'jahangir_park'
+  | 'pakistan_chowk'
+  | 'burns_road'
+  | 'sindh_secretariat'
+  | 'cantt_station'
+  | 'lucky_star';
+
 export interface Landmark {
-  kind: 'empress';
+  kind: LandmarkKind;
+  name: string;
   rect: Rect;
-  /** x of the street facade (faces +x) */
+  /** coordinate of the street facade (x for E/W, z for N/S) */
   face: number;
+  /** outward normal direction toward the street */
+  facing: 'N' | 'S' | 'E' | 'W';
+  /** target kerbside point where taxi fares drop off */
+  stopX: number;
+  stopZ: number;
+  /** solid building/monument colliders inside rect */
+  colliders: Rect[];
 }
 
 export interface Island {
@@ -331,7 +355,6 @@ export class CityMap {
     for (const [c, r] of NO_COLUMN_SEGMENT) unite((r + 1) * cellsX + c, (r + 1) * cellsX + c + 1);
     for (const [r, c] of NO_ROW_SEGMENT) unite(r * cellsX + c + 1, (r + 1) * cellsX + c + 1);
 
-    const empressCell = { cx: 3, cz: 1 }; // between Zaibunnisa / Abdullah Haroon, Shahrah-e-Iraq / Kutchery
     const yardCell = { cx: 6, cz: 4 }; // between Raja Ghazanfar Ali / Sarwar Shaheed, Club / Strachen
     for (let iz = 0; iz < cellsZ; iz++) {
       for (let ix = 0; ix < cellsX; ix++) {
@@ -361,13 +384,13 @@ export class CityMap {
         let lots = [lot];
         for (const h of holes) lots = lots.flatMap((s) => subtract(s, expand(h, SIDEWALK)));
 
-        if (ix === empressCell.cx && iz === empressCell.cz) {
-          this.empress(lot, rng);
-          continue;
-        }
         if (ix === yardCell.cx && iz === yardCell.cz) {
           this.yard(lot);
           continue;
+        }
+        const carved = this.placeLandmark(ix, iz, lot);
+        if (carved) {
+          lots = lots.flatMap((s) => subtract(s, expand(carved, 4)));
         }
         const outer = outerX(ix) || outerX(ix + 1) || outerZ(iz) || outerZ(iz + 1);
         for (const l of lots) this.fillLot(l, rng, outer, ROWS[Math.min(iz, ROWS.length - 1)].cls === 'arterial' || ROWS[Math.max(0, iz - 1)].cls === 'arterial');
@@ -379,13 +402,17 @@ export class CityMap {
       const x = COLUMNS[c].at, hw = colHw[c];
       const za = ROWS[r].at + rowHw[r], zb = ROWS[r + 1].at - rowHw[r + 1];
       this.slabs.push({ x0: x - hw, x1: x + hw, z0: za, z1: zb });
-      this.fillLot({ x0: x - hw - SIDEWALK, x1: x + hw + SIDEWALK, z0: za + SIDEWALK, z1: zb - SIDEWALK }, rng, false, false);
+      let mLots: Rect[] = [{ x0: x - hw - SIDEWALK, x1: x + hw + SIDEWALK, z0: za + SIDEWALK, z1: zb - SIDEWALK }];
+      for (const lm of this.landmarks) mLots = mLots.flatMap((s) => subtract(s, expand(lm.rect, 3)));
+      for (const ml of mLots) this.fillLot(ml, rng, false, false);
     }
     for (const [r, c] of NO_ROW_SEGMENT) {
       const z = ROWS[r].at, hw = rowHw[r];
       const xa = COLUMNS[c].at + colHw[c], xb = COLUMNS[c + 1].at - colHw[c + 1];
       this.slabs.push({ x0: xa, x1: xb, z0: z - hw, z1: z + hw });
-      this.fillLot({ x0: xa + SIDEWALK, x1: xb - SIDEWALK, z0: z - hw - SIDEWALK, z1: z + hw + SIDEWALK }, rng, false, false);
+      let mLots: Rect[] = [{ x0: xa + SIDEWALK, x1: xb - SIDEWALK, z0: z - hw - SIDEWALK, z1: z + hw + SIDEWALK }];
+      for (const lm of this.landmarks) mLots = mLots.flatMap((s) => subtract(s, expand(lm.rect, 3)));
+      for (const ml of mLots) this.fillLot(ml, rng, false, false);
     }
 
     // Outer walls keep the car inside the map.
@@ -397,7 +424,7 @@ export class CityMap {
       { x0: x1, x1: x1 + t, z0: z0, z1: z1 },
     );
     for (const b of this.buildings) this.solids.push({ x0: b.x - b.hw, x1: b.x + b.hw, z0: b.z - b.hl, z1: b.z + b.hl });
-    for (const l of this.landmarks) this.solids.push(l.rect);
+    for (const l of this.landmarks) this.solids.push(...l.colliders);
 
     this.streetRamps();
     const rampBoxes = this.ramps.map((r) => {
@@ -413,15 +440,265 @@ export class CityMap {
 
   // ---- Map building --------------------------------------------------------
 
-  private empress(lot: Rect, rng: Rng): void {
-    // Empress Market: gothic hall facing Abdullah Haroon Road, open plaza around it.
-    const depth = 26;
-    const len = Math.min(50, lot.z1 - lot.z0 - 10);
-    const face = lot.x1 - 6;
+  /**
+   * Places one of the 14 iconic Saddar landmarks in cell (ix, iz) and returns
+   * the carved plot Rect so procedural buildings leave it clear.
+   */
+  private placeLandmark(ix: number, iz: number, lot: Rect): Rect | null {
+    const xc = (lot.x0 + lot.x1) / 2;
     const zc = (lot.z0 + lot.z1) / 2;
-    this.landmarks.push({ kind: 'empress', face, rect: { x0: face - depth, x1: face, z0: zc - len / 2, z1: zc + len / 2 } });
-    // Stalls and shops on the far side of the plaza.
-    this.fillLot({ x0: lot.x0, x1: face - depth - 12, z0: lot.z0, z1: lot.z1 }, rng, false, false);
+    const kerb = SIDEWALK - 1.4;
+
+    // 1. Empress Market: Indo-Gothic sandstone hall + clock tower facing Abdullah Haroon Rd
+    if (ix === 3 && iz === 1) {
+      const depth = 26;
+      const len = Math.min(50, lot.z1 - lot.z0 - 10);
+      const face = lot.x1 - 6;
+      const rect: Rect = { x0: face - depth, x1: face, z0: zc - len / 2, z1: zc + len / 2 };
+      this.landmarks.push({
+        kind: 'empress',
+        name: 'Empress Market',
+        face,
+        facing: 'E',
+        rect,
+        stopX: lot.x1 + kerb,
+        stopZ: zc,
+        colliders: [rect],
+      });
+      return { x0: face - depth - 8, x1: lot.x1, z0: lot.z0, z1: lot.z1 };
+    }
+
+    // 2. St. Patrick's Cathedral: Gothic Revival twin-spire church + Christ the King monument on Shahrah-e-Iraq
+    if (ix === 4 && iz === 1) {
+      const depth = 50;
+      const rect: Rect = { x0: lot.x0 + 2, x1: lot.x1 - 2, z0: lot.z0, z1: lot.z0 + depth };
+      const monument: Rect = { x0: xc - 3.2, x1: xc + 3.2, z0: lot.z0 + 5.5, z1: lot.z0 + 11.5 };
+      const nave: Rect = { x0: xc - 12.5, x1: xc + 12.5, z0: lot.z0 + 16, z1: lot.z0 + depth - 2 };
+      const transept: Rect = { x0: xc - 18.5, x1: xc + 18.5, z0: lot.z0 + 31, z1: lot.z0 + 41 };
+      this.landmarks.push({
+        kind: 'st_patricks',
+        name: "St. Patrick's Cathedral",
+        face: lot.z0,
+        facing: 'S',
+        rect,
+        stopX: xc,
+        stopZ: lot.z0 - kerb,
+        colliders: [monument, nave, transept],
+      });
+      return { x0: lot.x0, x1: lot.x1, z0: lot.z0, z1: lot.z0 + depth + 2 };
+    }
+
+    // 3. Saddar Dawakhana (Jehangir Kothari / Hamdard): colonial verandah block on Zaibunnisa St
+    if (ix === 2 && iz === 1) {
+      const depth = 22, len = 46;
+      const rect: Rect = { x0: lot.x1 - depth, x1: lot.x1, z0: zc - len / 2, z1: zc + len / 2 };
+      this.landmarks.push({
+        kind: 'dawakhana',
+        name: 'Saddar Dawakhana',
+        face: lot.x1,
+        facing: 'E',
+        rect,
+        stopX: lot.x1 + kerb,
+        stopZ: zc,
+        colliders: [rect],
+      });
+      return rect;
+    }
+
+    // 4. Bohri Bazaar: arched bazaar gate + fabric canopy arcade on Bohri Bazaar Lane
+    if (ix === 3 && iz === 2) {
+      const depth = 22, len = 46;
+      const rect: Rect = { x0: xc - len / 2, x1: xc + len / 2, z0: lot.z1 - depth, z1: lot.z1 };
+      const leftWing: Rect = { x0: xc - len / 2, x1: xc - 3.6, z0: lot.z1 - depth, z1: lot.z1 };
+      const rightWing: Rect = { x0: xc + 3.6, x1: xc + len / 2, z0: lot.z1 - depth, z1: lot.z1 };
+      this.landmarks.push({
+        kind: 'bohri_bazaar',
+        name: 'Bohri Bazaar',
+        face: lot.z1,
+        facing: 'N',
+        rect,
+        stopX: xc,
+        stopZ: lot.z1 + kerb,
+        colliders: [leftWing, rightWing],
+      });
+      return rect;
+    }
+
+    // 5. Zainab Market: export-surplus & handicraft atrium complex on Abdullah Haroon Rd
+    if (ix === 4 && iz === 2) {
+      const depth = 24;
+      const rect: Rect = { x0: lot.x0, x1: lot.x0 + depth, z0: lot.z0 + 24, z1: lot.z1 - 2 };
+      this.landmarks.push({
+        kind: 'zainab_market',
+        name: 'Zainab Market',
+        face: lot.x0,
+        facing: 'W',
+        rect,
+        stopX: lot.x0 - kerb,
+        stopZ: (rect.z0 + rect.z1) / 2,
+        colliders: [rect],
+      });
+      return rect;
+    }
+
+    // 6. Regal Chowk: 1930s heritage block with twin rooftop lions & bridal mannequins on Abdullah Haroon Rd
+    if (ix === 3 && iz === 3) {
+      const depth = 22, len = 46;
+      const rect: Rect = { x0: lot.x1 - depth, x1: lot.x1, z0: zc - len / 2, z1: zc + len / 2 };
+      this.landmarks.push({
+        kind: 'regal_chowk',
+        name: 'Regal Chowk',
+        face: lot.x1,
+        facing: 'E',
+        rect,
+        stopX: lot.x1 + kerb,
+        stopZ: zc,
+        colliders: [rect],
+      });
+      return rect;
+    }
+
+    // 7. Paradise Cinema: Art Deco cinema with vertical neon fin & curved marquee on Zaibunnisa St
+    if (ix === 2 && iz === 3) {
+      const depth = 24, len = 42;
+      const rect: Rect = { x0: lot.x1 - depth, x1: lot.x1, z0: zc - len / 2, z1: zc + len / 2 };
+      this.landmarks.push({
+        kind: 'paradise_cinema',
+        name: 'Paradise Cinema',
+        face: lot.x1,
+        facing: 'E',
+        rect,
+        stopX: lot.x1 + kerb,
+        stopZ: zc,
+        colliders: [rect],
+      });
+      return rect;
+    }
+
+    // 8. Capri Cinema: 1968 modernist brise-soleil cinema + painted film hoarding on M.A. Jinnah Rd
+    if (ix === 4 && iz === 5) {
+      const depth = 24, len = 46;
+      const rect: Rect = { x0: xc - len / 2, x1: xc + len / 2, z0: lot.z1 - depth, z1: lot.z1 };
+      this.landmarks.push({
+        kind: 'capri_cinema',
+        name: 'Capri Cinema',
+        face: lot.z1,
+        facing: 'N',
+        rect,
+        stopX: xc,
+        stopZ: lot.z1 + kerb,
+        colliders: [rect],
+      });
+      return rect;
+    }
+
+    // 9. Jahangir Park: walled green park with sandstone pavilion on Raja Ghazanfar Ali Rd
+    if (ix === 5 && iz === 4) {
+      const pavilion: Rect = { x0: xc - 6.5, x1: xc + 6.5, z0: zc - 6.5, z1: zc + 6.5 };
+      this.landmarks.push({
+        kind: 'jahangir_park',
+        name: 'Jahangir Park',
+        face: lot.x1,
+        facing: 'E',
+        rect: lot,
+        stopX: lot.x1 + kerb,
+        stopZ: zc,
+        colliders: [pavilion],
+      });
+      return lot;
+    }
+
+    // 10. Pakistan Chowk: open square with stone obelisk monument & colonial balconies on Kutchery Rd
+    if (ix === 1 && iz === 2) {
+      const depth = 26;
+      const rect: Rect = { x0: lot.x0, x1: lot.x1, z0: lot.z0, z1: lot.z0 + depth };
+      const obelisk: Rect = { x0: xc - 2.8, x1: xc + 2.8, z0: lot.z0 + 5, z1: lot.z0 + 10.6 };
+      const westBldg: Rect = { x0: lot.x0, x1: xc - 12, z0: lot.z0 + 2, z1: lot.z0 + depth };
+      const eastBldg: Rect = { x0: xc + 12, x1: lot.x1, z0: lot.z0 + 2, z1: lot.z0 + depth };
+      this.landmarks.push({
+        kind: 'pakistan_chowk',
+        name: 'Pakistan Chowk',
+        face: lot.z0,
+        facing: 'S',
+        rect,
+        stopX: xc,
+        stopZ: lot.z0 - kerb,
+        colliders: [obelisk, westBldg, eastBldg],
+      });
+      return rect;
+    }
+
+    // 11. Burns Road Food Street: heritage buildings with lattice balconies, degh cauldrons & food signs
+    if (ix === 1 && iz === 5) {
+      const depth = 22, len = 54;
+      const rect: Rect = { x0: lot.x0, x1: lot.x0 + depth, z0: zc - len / 2, z1: zc + len / 2 };
+      this.landmarks.push({
+        kind: 'burns_road',
+        name: 'Burns Road Food Street',
+        face: lot.x0,
+        facing: 'W',
+        rect,
+        stopX: lot.x0 - kerb,
+        stopZ: zc,
+        colliders: [rect],
+      });
+      return rect;
+    }
+
+    // 12. Sindh Secretariat (Tughlaq House): neoclassical white government block & colonial barracks
+    if (ix === 3 && iz === 5) {
+      const depth = 32;
+      const rect: Rect = { x0: lot.x0 + 2, x1: lot.x1 - 2, z0: lot.z0, z1: lot.z0 + depth };
+      const body: Rect = { x0: lot.x0 + 4, x1: lot.x1 - 4, z0: lot.z0 + 7, z1: lot.z0 + depth };
+      this.landmarks.push({
+        kind: 'sindh_secretariat',
+        name: 'Sindh Secretariat',
+        face: lot.z0,
+        facing: 'S',
+        rect,
+        stopX: xc,
+        stopZ: lot.z0 - kerb,
+        colliders: [body],
+      });
+      return rect;
+    }
+
+    // 13. Cantt Station Bus Stop: arched sandstone railway station + minibus terminal shelter on Sarwar Shaheed Rd
+    if (ix === 6 && iz === 1) {
+      const depth = 26, len = 52;
+      const rect: Rect = { x0: lot.x1 - depth, x1: lot.x1, z0: zc - len / 2, z1: zc + len / 2 };
+      const stationHall: Rect = { x0: lot.x1 - depth, x1: lot.x1 - 7, z0: zc - len / 2, z1: zc + len / 2 };
+      this.landmarks.push({
+        kind: 'cantt_station',
+        name: 'Cantt Station Bus Stop',
+        face: lot.x1,
+        facing: 'E',
+        rect,
+        stopX: lot.x1 + kerb,
+        stopZ: zc,
+        colliders: [stationHall],
+      });
+      return rect;
+    }
+
+    // 14. Lucky Star Hotel: chamfered mid-century corner hotel with rooftop star neon sign on Sarwar Shaheed Rd
+    if (ix === 6 && iz === 3) {
+      const depth = 24, len = 38;
+      const rect: Rect = { x0: lot.x1 - depth, x1: lot.x1, z0: lot.z1 - len, z1: lot.z1 };
+      this.landmarks.push({
+        kind: 'lucky_star',
+        name: 'Lucky Star Hotel',
+        face: lot.x1,
+        facing: 'E',
+        rect,
+        stopX: lot.x1 + kerb,
+        stopZ: lot.z1 - len / 2,
+        colliders: [rect],
+      });
+      return rect;
+    }
+
+    return null;
   }
 
   /** A dirt construction yard with jumps instead of buildings. */

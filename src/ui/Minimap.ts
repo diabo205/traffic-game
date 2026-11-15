@@ -38,8 +38,16 @@ export class Minimap {
         g.arc((s.x - b.x0) * RES, (b.z1 - s.z) * RES, s.r * RES, 0, Math.PI * 2);
         g.fill();
       }
-      g.fillStyle = '#c9a25a';
-      for (const l of map.landmarks) g.fillRect((l.rect.x0 - b.x0) * RES, (b.z1 - l.rect.z1) * RES, (l.rect.x1 - l.rect.x0) * RES, (l.rect.z1 - l.rect.z0) * RES);
+      for (const l of map.landmarks) {
+        if (l.kind === 'jahangir_park' || l.kind === 'st_patricks') {
+          g.fillStyle = '#678c47';
+          g.fillRect((l.rect.x0 - b.x0) * RES, (b.z1 - l.rect.z1) * RES, (l.rect.x1 - l.rect.x0) * RES, (l.rect.z1 - l.rect.z0) * RES);
+        }
+        g.fillStyle = '#c9a25a';
+        for (const c of l.colliders) {
+          g.fillRect((c.x0 - b.x0) * RES, (b.z1 - c.z1) * RES, (c.x1 - c.x0) * RES, (c.z1 - c.z0) * RES);
+        }
+      }
     }
   }
 

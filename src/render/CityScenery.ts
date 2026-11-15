@@ -4,7 +4,7 @@ import { cityMap, halfWidth, KERB_H, SIDEWALK } from '../sim/city/cityMap';
 import type { CityLink, CityMap, Rect } from '../sim/city/cityMap';
 import { Rng } from '../sim/rng';
 import { makeFacadeMaterial } from './facadeMaterial';
-import { buildEmpressMarketAt } from './Landmarks';
+import { buildSaddarLandmark } from './SaddarLandmarks';
 import { asphaltTexture, dirtTexture, kerbStripeTexture, saddarFacadeAtlas, SHOP_SIGN_COUNT, shopSignTexture, signTexture } from './textures';
 
 type V3 = readonly [number, number, number];
@@ -98,7 +98,7 @@ export class CityScenery {
     this.yards(map);
     this.ramps(map, shadow);
     for (const l of map.landmarks) {
-      if (l.kind === 'empress') buildEmpressMarketAt(this.group, shadow, l.face, -(l.rect.z0 + l.rect.z1) / 2, l.rect.z1 - l.rect.z0);
+      buildSaddarLandmark(this.group, l, shadow);
     }
   }
 
@@ -427,6 +427,7 @@ export class CityScenery {
       for (let t = 6; t < len - 4; t += rng.range(14, 22)) add(alongX ? md.x0 + t : (md.x0 + md.x1) / 2, alongX ? (md.z0 + md.z1) / 2 : md.z0 + t);
     }
     for (const l of map.landmarks) {
+      if (l.kind !== 'empress') continue;
       const r = l.rect;
       for (let z = r.z0 - 4; z <= r.z1 + 4; z += 9) add(r.x1 + 3.5, z);
     }

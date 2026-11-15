@@ -1,0 +1,1048 @@
+import * as THREE from 'three';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import { KERB_H } from '../sim/city/cityMap';
+import type { Landmark } from '../sim/city/cityMap';
+import { buildEmpressMarketAt } from './Landmarks';
+import {
+  cinemaPosterTexture,
+  colonialVerandahTexture,
+  gothicWallTexture,
+  signTexture,
+  stainedLancetTexture,
+  stPatricksFrontTexture,
+  stripesTexture,
+} from './textures';
+
+const lam = (color: THREE.ColorRepresentation, map?: THREE.Texture, doubleSide = false) =>
+  new THREE.MeshLambertMaterial({
+    color,
+    map: map ?? null,
+    side: doubleSide ? THREE.DoubleSide : THREE.FrontSide,
+  });
+
+const basic = (color: THREE.ColorRepresentation, map?: THREE.Texture, doubleSide = false) =>
+  new THREE.MeshBasicMaterial({
+    color,
+    map: map ?? null,
+    side: doubleSide ? THREE.DoubleSide : THREE.FrontSide,
+  });
+
+function mesh(
+  parent: THREE.Object3D,
+  geo: THREE.BufferGeometry,
+  mat: THREE.Material,
+  x: number,
+  y: number,
+  z: number,
+  shadow = true,
+): THREE.Mesh {
+  const m = new THREE.Mesh(geo, mat);
+  m.position.set(x, y, z);
+  m.castShadow = shadow;
+  m.receiveShadow = true;
+  parent.add(m);
+  return m;
+}
+
+function tiled(tex: THREE.Texture, rx: number, ry: number): THREE.Texture {
+  const t = tex.clone();
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.repeat.set(rx, ry);
+  t.needsUpdate = true;
+  return t;
+}
+
+/**
+ * Builds all 14 named Saddar landmarks in Free Roam mode so every fare
+ * destination has an authentic, recognizable 3D architectural presence.
+ */
+export function buildSaddarLandmark(group: THREE.Group, l: Landmark, shadow: boolean): void {
+  switch (l.kind) {
+    case 'empress':
+      buildEmpressMarketAt(group, shadow, l.face, -(l.rect.z0 + l.rect.z1) / 2, l.rect.z1 - l.rect.z0);
+      break;
+    case 'st_patricks':
+      buildStPatricksCathedral(group, l, shadow);
+      break;
+    case 'dawakhana':
+      buildSaddarDawakhana(group, l, shadow);
+      break;
+    case 'bohri_bazaar':
+      buildBohriBazaar(group, l, shadow);
+      break;
+    case 'zainab_market':
+      buildZainabMarket(group, l, shadow);
+      break;
+    case 'regal_chowk':
+      buildRegalChowk(group, l, shadow);
+      break;
+    case 'paradise_cinema':
+      buildParadiseCinema(group, l, shadow);
+      break;
+    case 'capri_cinema':
+      buildCapriCinema(group, l, shadow);
+      break;
+    case 'jahangir_park':
+      buildJahangirPark(group, l, shadow);
+      break;
+    case 'pakistan_chowk':
+      buildPakistanChowk(group, l, shadow);
+      break;
+    case 'burns_road':
+      buildBurnsRoad(group, l, shadow);
+      break;
+    case 'sindh_secretariat':
+      buildSindhSecretariat(group, l, shadow);
+      break;
+    case 'cantt_station':
+      buildCanttStation(group, l, shadow);
+      break;
+    case 'lucky_star':
+      buildLuckyStarHotel(group, l, shadow);
+      break;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 2. St. Patrick's Cathedral (Shahrah-e-Iraq, Gothic Revival + Christ the King)
+// ---------------------------------------------------------------------------
+
+function buildStPatricksCathedral(group: THREE.Group, l: Landmark, shadow: boolean): void {
+  const g = new THREE.Group();
+  const cx = (l.rect.x0 + l.rect.x1) / 2;
+  const zFront = -l.rect.z0; // South edge facing Shahrah-e-Iraq (+z in three space)
+  g.position.set(cx, KERB_H, zFront);
+  group.add(g);
+
+  const w = l.rect.x1 - l.rect.x0;
+  const d = l.rect.z1 - l.rect.z0;
+  const stone = lam('#d8b77c');
+  const darkStone = lam('#b89352');
+  const redTrim = lam('#9e4733');
+  const roofMat = lam('#7d4e38');
+  const marble = lam('#f5f4ef');
+  const lancet = stainedLancetTexture();
+
+  // Courtyard lawn & paved central approach walk
+  const lawn = mesh(g, new THREE.PlaneGeometry(w, d), lam('#7e9958'), 0, 0.02, -d / 2, false);
+  lawn.rotation.x = -Math.PI / 2;
+  const walk = mesh(g, new THREE.PlaneGeometry(11, d - 4), lam('#dfd7c6'), 0, 0.03, -d / 2, false);
+  walk.rotation.x = -Math.PI / 2;
+
+  // Low stone compound wall + iron fence along Shahrah-e-Iraq with wide open gate
+  for (const side of [-1, 1]) {
+    const segW = (w - 12) / 2;
+    const sx = side * (6 + segW / 2);
+    mesh(g, new THREE.BoxGeometry(segW, 0.85, 0.5), stone, sx, 0.425, -0.25, false);
+    mesh(g, new THREE.BoxGeometry(segW, 0.9, 0.12), lam('#222426'), sx, 1.3, -0.25, false);
+    // Gate piers
+    mesh(g, new THREE.BoxGeometry(1.1, 2.6, 1.1), darkStone, side * 6, 1.3, -0.3, shadow);
+    mesh(g, new THREE.ConeGeometry(0.85, 1.1, 4).rotateY(Math.PI / 4), redTrim, side * 6, 3.15, -0.3, false);
+  }
+  // Entrance arch sign
+  const gateSign = mesh(
+    g,
+    new THREE.PlaneGeometry(9.5, 1.3),
+    lam('#ffffff', signTexture(["ST. PATRICK'S CATHEDRAL", 'ARCHDIOCESE OF KARACHI · 1881'], '#5d291e', '#f7e7c4', 512, 128), true),
+    0,
+    3.6,
+    -0.3,
+    false,
+  );
+  void gateSign;
+
+  // ---- Monument to Christ the King (1931) in the forecourt (z = -8.5) ----
+  const mz = -8.5;
+  mesh(g, new THREE.CylinderGeometry(3.4, 3.8, 0.8, 8), marble, 0, 0.4, mz, shadow);
+  mesh(g, new THREE.CylinderGeometry(2.5, 2.9, 1.1, 8), marble, 0, 1.35, mz, shadow);
+  // Four marble canopy pillars + octagonal cupola
+  for (const dx of [-1.2, 1.2]) {
+    for (const dz of [-1.2, 1.2]) {
+      mesh(g, new THREE.CylinderGeometry(0.22, 0.25, 3.2, 8), marble, dx, 3.5, mz + dz, shadow);
+    }
+  }
+  mesh(g, new THREE.BoxGeometry(3.2, 0.45, 3.2), marble, 0, 5.3, mz, shadow);
+  mesh(g, new THREE.SphereGeometry(1.45, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2), marble, 0, 5.5, mz, shadow);
+  // Statue of Christ the King with outstretched arms atop the dome
+  mesh(g, new THREE.CylinderGeometry(0.28, 0.36, 2.1, 8), marble, 0, 7.8, mz, shadow);
+  mesh(g, new THREE.BoxGeometry(1.75, 0.24, 0.26), marble, 0, 8.35, mz, shadow); // outstretched arms
+  mesh(g, new THREE.SphereGeometry(0.24, 8, 6), marble, 0, 9.05, mz, false);
+  mesh(g, new THREE.CylinderGeometry(0.35, 0.35, 0.06, 12).rotateX(Math.PI / 2), lam('#e0b94b'), 0, 9.15, mz - 0.1, false); // halo
+
+  // ---- Cathedral Nave, Side Aisles & Cruciform Transept (z = -16 to -48) ----
+  const naveLen = 32;
+  const naveW = 16.5;
+  const naveH = 14.5;
+  const naveZc = -16 - naveLen / 2;
+  mesh(g, new THREE.BoxGeometry(naveW, naveH, naveLen), stone, 0, naveH / 2, naveZc, shadow);
+  // Side aisles (lower flanking wings)
+  mesh(g, new THREE.BoxGeometry(24, 9.2, naveLen - 4), darkStone, 0, 4.6, naveZc - 1, shadow);
+  // Cruciform transept crossing
+  const tranW = 36, tranLen = 9.5, tranH = 14.0, tranZc = -36;
+  mesh(g, new THREE.BoxGeometry(tranW, tranH, tranLen), stone, 0, tranH / 2, tranZc, shadow);
+
+  // Pitched gable roofs over nave and transept
+  const naveRoof = new THREE.ConeGeometry(naveW * 0.62, naveLen, 3);
+  naveRoof.rotateX(Math.PI / 2);
+  naveRoof.scale(1, 0.45, 1);
+  mesh(g, naveRoof, roofMat, 0, naveH + 2.2, naveZc, shadow);
+
+  const tranRoof = new THREE.ConeGeometry(tranLen * 0.65, tranW, 3);
+  tranRoof.rotateZ(Math.PI / 2);
+  tranRoof.scale(1, 0.45, 1);
+  mesh(g, tranRoof, roofMat, 0, tranH + 2.0, tranZc, shadow);
+
+  // Front Gothic facade with Rose Window & triple portals
+  mesh(
+    g,
+    new THREE.PlaneGeometry(naveW, naveH),
+    lam('#ffffff', stPatricksFrontTexture()),
+    0,
+    naveH / 2,
+    -16 + 0.05,
+    false,
+  );
+  // Triangular front gable + central stone cross
+  const gableShape = new THREE.Shape();
+  gableShape.moveTo(-naveW / 2, 0);
+  gableShape.lineTo(naveW / 2, 0);
+  gableShape.lineTo(0, 5.2);
+  gableShape.closePath();
+  mesh(g, new THREE.ShapeGeometry(gableShape), stone, 0, naveH, -16 + 0.04, false);
+  mesh(g, new THREE.BoxGeometry(0.35, 2.4, 0.35), marble, 0, naveH + 6.0, -16, false);
+  mesh(g, new THREE.BoxGeometry(1.4, 0.35, 0.35), marble, 0, naveH + 6.4, -16, false);
+
+  // Stained-glass lancet side walls & buttresses
+  for (const s of [-1, 1]) {
+    const sidePlane = mesh(
+      g,
+      new THREE.PlaneGeometry(naveLen - 4, 9.0),
+      lam('#ffffff', tiled(lancet, 4, 1)),
+      s * 12.04,
+      4.5,
+      naveZc - 1,
+      false,
+    );
+    sidePlane.rotation.y = s > 0 ? Math.PI / 2 : -Math.PI / 2;
+    // Clerestory lancets
+    const clPlane = mesh(
+      g,
+      new THREE.PlaneGeometry(naveLen - 4, 5.0),
+      lam('#ffffff', tiled(lancet, 5, 1)),
+      s * (naveW / 2 + 0.04),
+      11.8,
+      naveZc,
+      false,
+    );
+    clPlane.rotation.y = s > 0 ? Math.PI / 2 : -Math.PI / 2;
+    // Stone buttresses along side aisle
+    for (let bz = -20; bz >= -44; bz -= 6) {
+      mesh(g, new THREE.BoxGeometry(0.9, 9.8, 1.1), redTrim, s * 12.3, 4.9, bz, false);
+    }
+  }
+
+  // ---- Twin Gothic Bell Towers & Spires flanking the South entrance ----
+  const towerH = 22.5;
+  for (const s of [-1, 1]) {
+    const tx = s * 9.8;
+    const tz = -17.5;
+    mesh(g, new THREE.BoxGeometry(5.6, towerH, 5.6), stone, tx, towerH / 2, tz, shadow);
+    // Terracotta cornice bands
+    for (const bh of [8, 15, towerH]) {
+      mesh(g, new THREE.BoxGeometry(6.1, 0.55, 6.1), redTrim, tx, bh, tz, false);
+    }
+    // Belfry lancet openings on all 4 faces of each tower
+    for (let f = 0; f < 4; f++) {
+      const a = (f / 4) * Math.PI * 2;
+      const bf = mesh(
+        g,
+        new THREE.PlaneGeometry(4.8, 6.5),
+        lam('#ffffff', tiled(lancet, 1, 1)),
+        tx + Math.sin(a) * 2.83,
+        towerH - 3.8,
+        tz + Math.cos(a) * 2.83,
+        false,
+      );
+      bf.rotation.y = a;
+    }
+    // Corner pinnacles + tall octagonal spire + cross
+    for (const dx of [-2.4, 2.4]) {
+      for (const dz of [-2.4, 2.4]) {
+        mesh(g, new THREE.ConeGeometry(0.55, 2.6, 4).rotateY(Math.PI / 4), redTrim, tx + dx, towerH + 1.3, tz + dz, false);
+      }
+    }
+    mesh(g, new THREE.ConeGeometry(3.1, 11.5, 8), roofMat, tx, towerH + 5.75, tz, shadow);
+    mesh(g, new THREE.BoxGeometry(0.24, 2.0, 0.24), marble, tx, towerH + 12.2, tz, false);
+    mesh(g, new THREE.BoxGeometry(1.1, 0.24, 0.24), marble, tx, towerH + 12.5, tz, false);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 3. Saddar Dawakhana (Jehangir Kothari Building / Hamdard, Zaibunnisa St)
+// ---------------------------------------------------------------------------
+
+function buildSaddarDawakhana(group: THREE.Group, l: Landmark, shadow: boolean): void {
+  const g = new THREE.Group();
+  const cx = (l.rect.x0 + l.rect.x1) / 2;
+  const cz = -(l.rect.z0 + l.rect.z1) / 2;
+  const w = l.rect.x1 - l.rect.x0;
+  const len = l.rect.z1 - l.rect.z0;
+  g.position.set(cx, KERB_H, cz);
+  group.add(g);
+
+  const h = 13.8;
+  const stone = lam('#dfc388');
+  const trim = lam('#8c583a');
+  const greenWood = lam('#1b5e20');
+  const tex = colonialVerandahTexture('#dfc388', '#1b5e20');
+
+  // Main heritage block
+  mesh(g, new THREE.BoxGeometry(w - 2.4, h, len), stone, -1.2, h / 2, 0, shadow);
+  // Street-facing colonial verandah texture
+  const front = mesh(g, new THREE.PlaneGeometry(len, h), lam('#ffffff', tiled(tex, len / 11, 1)), w / 2 - 2.35, h / 2, 0, false);
+  front.rotation.y = Math.PI / 2;
+
+  // Projecting two-tier timber verandah balcony along Zaibunnisa St (+x)
+  const vx = w / 2 - 1.1;
+  for (const vy of [4.6, 9.2, 13.6]) {
+    mesh(g, new THREE.BoxGeometry(2.4, 0.35, len + 0.4), trim, vx, vy, 0, shadow);
+  }
+  // Verandah balustrade railings
+  for (const vy of [5.25, 9.85]) {
+    mesh(g, new THREE.BoxGeometry(0.18, 1.0, len), greenWood, w / 2 - 0.05, vy, 0, false);
+  }
+  // Colonnade pillars from ground to roof
+  for (let z = -len / 2 + 1.5; z <= len / 2 - 1.5; z += 4.2) {
+    mesh(g, new THREE.CylinderGeometry(0.22, 0.26, h, 8), stone, w / 2 - 0.15, h / 2, z, shadow);
+  }
+
+  // Iconic chamfered corner turret with pyramidal roof & finial at the SE corner
+  const tx = w / 2 - 1.8, tz = len / 2 - 1.8;
+  mesh(g, new THREE.CylinderGeometry(3.2, 3.2, h + 3.5, 8), stone, tx, (h + 3.5) / 2, tz, shadow);
+  mesh(g, new THREE.ConeGeometry(3.8, 3.8, 8), trim, tx, h + 3.5 + 1.9, tz, shadow);
+
+  // Famous green & white HAMDARD / SADDAR DAWAKHANA signboards
+  const sign1 = mesh(
+    g,
+    new THREE.PlaneGeometry(len * 0.78, 1.55),
+    lam('#ffffff', signTexture(['SADDAR DAWAKHANA · صدر دواخانہ', 'HAMDARD MATAB & HERBAL DISPENSARY'], '#0b6e3a', '#ffffff', 768, 128)),
+    w / 2 + 0.08,
+    4.6,
+    0,
+    false,
+  );
+  sign1.rotation.y = Math.PI / 2;
+}
+
+// ---------------------------------------------------------------------------
+// 4. Bohri Bazaar (Arched Entry Gate + Covered Canopy Arcade on Bohri Bazaar Ln)
+// ---------------------------------------------------------------------------
+
+function buildBohriBazaar(group: THREE.Group, l: Landmark, shadow: boolean): void {
+  const g = new THREE.Group();
+  const cx = (l.rect.x0 + l.rect.x1) / 2;
+  const cz = -(l.rect.z0 + l.rect.z1) / 2;
+  const w = l.rect.x1 - l.rect.x0;
+  const d = l.rect.z1 - l.rect.z0;
+  g.position.set(cx, KERB_H, cz);
+  group.add(g);
+
+  const wingW = (w - 7.2) / 2;
+  const h = 11.5;
+  const ochre = lam('#e3c184');
+  const redStone = lam('#a13d2d');
+  const tex = colonialVerandahTexture('#e3c184', '#2e5d7c');
+
+  // Left and right bazaar wings flanking the central covered lane
+  for (const s of [-1, 1]) {
+    const wx = s * (3.6 + wingW / 2);
+    mesh(g, new THREE.BoxGeometry(wingW, h, d), ochre, wx, h / 2, 0, shadow);
+    const f = mesh(g, new THREE.PlaneGeometry(wingW, h), lam('#ffffff', tiled(tex, wingW / 10, 1)), wx, h / 2, -d / 2 - 0.04, false);
+    f.rotation.y = Math.PI;
+  }
+
+  // Ornate Bohri Bazaar Gateway Arch spanning the central bazaar lane at the street (-d/2)
+  const gz = -d / 2 + 0.6;
+  for (const s of [-1, 1]) {
+    mesh(g, new THREE.BoxGeometry(1.4, 9.5, 1.4), redStone, s * 3.5, 4.75, gz, shadow);
+    mesh(g, new THREE.SphereGeometry(0.85, 8, 6), lam('#f4d068'), s * 3.5, 10.0, gz, false);
+  }
+  // Arch lintel + stepped Indo-Saracenic crest
+  mesh(g, new THREE.BoxGeometry(8.6, 2.4, 1.3), redStone, 0, 8.2, gz, shadow);
+  mesh(g, new THREE.BoxGeometry(5.6, 1.2, 1.1), ochre, 0, 9.8, gz, false);
+  const archSign = mesh(
+    g,
+    new THREE.PlaneGeometry(8.0, 1.7),
+    lam('#ffffff', signTexture(['BOHRI BAZAAR · بوہری بازار', 'ESTD. 1939 · CLOTH & BANGLE MARKET'], '#8c1d18', '#ffd54f', 512, 128), true),
+    0,
+    8.2,
+    gz - 0.7,
+    false,
+  );
+  archSign.rotation.y = Math.PI;
+
+  // Colorful overhead fabric shade canopies (shamiana) & hanging dupattas across the alley
+  const canopyCols = ['#e53935', '#fbc02d', '#1e88e5', '#43a047', '#8e24aa', '#fb8c00'];
+  for (let i = 0; i < 6; i++) {
+    const az = -d / 2 + 3.2 + i * 3.1;
+    const m = mesh(
+      g,
+      new THREE.PlaneGeometry(7.0, 2.3),
+      lam(canopyCols[i % canopyCols.length], undefined, true),
+      0,
+      5.4 + (i % 2) * 0.3,
+      az,
+      false,
+    );
+    m.rotation.x = Math.PI / 2 + 0.08;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 5. Zainab Market (Export-Surplus & Handicraft Atrium on Abdullah Haroon Rd)
+// ---------------------------------------------------------------------------
+
+function buildZainabMarket(group: THREE.Group, l: Landmark, shadow: boolean): void {
+  const g = new THREE.Group();
+  const cx = (l.rect.x0 + l.rect.x1) / 2;
+  const cz = -(l.rect.z0 + l.rect.z1) / 2;
+  const d = l.rect.x1 - l.rect.x0;
+  const len = l.rect.z1 - l.rect.z0;
+  g.position.set(cx, KERB_H, cz);
+  group.add(g);
+
+  const h = 13.0;
+  const concrete = lam('#e5dfd3');
+  const tealBand = lam('#00695c');
+  const darkRecess = lam('#222629');
+
+  // Main market block facing West (-x) onto Abdullah Haroon Road
+  mesh(g, new THREE.BoxGeometry(d, h, len), concrete, 0, h / 2, 0, shadow);
+  // Deep recessed ground-floor shopping arcade
+  mesh(g, new THREE.BoxGeometry(1.2, 4.4, len - 3), darkRecess, -d / 2 + 0.5, 2.2, 0, false);
+  // Arcade pillars + hanging blue jeans / leather jacket displays
+  const rackCols = ['#1565c0', '#283593', '#4e342e', '#c62828', '#f9a825'];
+  for (let z = -len / 2 + 2.5; z <= len / 2 - 2.5; z += 4.2) {
+    mesh(g, new THREE.BoxGeometry(0.7, 4.5, 0.7), concrete, -d / 2 + 0.3, 2.25, z, false);
+    mesh(g, new THREE.BoxGeometry(0.2, 1.8, 2.4), lam(rackCols[Math.abs(z | 0) % rackCols.length]), -d / 2 + 0.2, 2.6, z + 1.8, false);
+  }
+  // Upper-floor horizontal window ribbons & vertical sun fins
+  for (const wy of [6.8, 10.2]) {
+    mesh(g, new THREE.BoxGeometry(0.3, 1.8, len - 2), lam('#37474f'), -d / 2 - 0.05, wy, 0, false);
+    mesh(g, new THREE.BoxGeometry(0.8, 0.6, len + 0.4), tealBand, -d / 2 - 0.2, wy - 1.3, 0, false);
+  }
+
+  // Stepped central entrance portal frame + large ZAINAB MARKET fascia board
+  mesh(g, new THREE.BoxGeometry(1.6, h + 2.8, 14), tealBand, -d / 2 - 0.4, (h + 2.8) / 2, 0, shadow);
+  const sign = mesh(
+    g,
+    new THREE.PlaneGeometry(len * 0.82, 2.1),
+    lam('#ffffff', signTexture(['ZAINAB MARKET · زینب مارکیٹ', 'EXPORT GARMENTS · LEATHER · HANDICRAFTS'], '#004d40', '#ffeb3b', 768, 128)),
+    -d / 2 - 1.25,
+    4.9,
+    0,
+    false,
+  );
+  sign.rotation.y = -Math.PI / 2;
+}
+
+// ---------------------------------------------------------------------------
+// 6. Regal Chowk (1930s Building with Twin Rooftop Lions & Bridal Mannequins)
+// ---------------------------------------------------------------------------
+
+function buildRegalChowk(group: THREE.Group, l: Landmark, shadow: boolean): void {
+  const g = new THREE.Group();
+  const cx = (l.rect.x0 + l.rect.x1) / 2;
+  const cz = -(l.rect.z0 + l.rect.z1) / 2;
+  const d = l.rect.x1 - l.rect.x0;
+  const len = l.rect.z1 - l.rect.z0;
+  g.position.set(cx, KERB_H, cz);
+  group.add(g);
+
+  const h = 13.5;
+  const stone = lam('#dfd1b4');
+  const trim = lam('#9c7b54');
+  const lionMat = lam('#f2ead8');
+  const tex = colonialVerandahTexture('#dfd1b4', '#5c4033');
+
+  // 1930s heritage block facing East (+x) onto Abdullah Haroon Road
+  mesh(g, new THREE.BoxGeometry(d, h, len), stone, 0, h / 2, 0, shadow);
+  const f = mesh(g, new THREE.PlaneGeometry(len, h), lam('#ffffff', tiled(tex, len / 11, 1)), d / 2 + 0.04, h / 2, 0, false);
+  f.rotation.y = Math.PI / 2;
+
+  // Stepped Art Deco central roof parapet
+  mesh(g, new THREE.BoxGeometry(2.2, 2.6, 14), trim, d / 2 - 0.8, h + 1.3, 0, shadow);
+  mesh(g, new THREE.BoxGeometry(2.4, 1.2, 8), stone, d / 2 - 0.8, h + 3.2, 0, shadow);
+
+  // Iconic Twin Guardian Lions atop the parapet (facing each other with a sphere)
+  for (const s of [-1, 1]) {
+    const lz = s * 2.6;
+    const lx = d / 2 - 0.6;
+    const ly = h + 3.8;
+    mesh(g, new THREE.BoxGeometry(1.1, 0.4, 1.6), trim, lx, ly + 0.2, lz, false); // plinth
+    mesh(g, new THREE.BoxGeometry(0.8, 1.1, 1.2), lionMat, lx, ly + 0.95, lz, shadow); // body
+    mesh(g, new THREE.SphereGeometry(0.55, 8, 6), lionMat, lx, ly + 1.7, lz - s * 0.35, shadow); // mane/head
+    mesh(g, new THREE.SphereGeometry(0.25, 6, 6), trim, lx + 0.2, ly + 0.55, lz - s * 0.65, false); // ball under paw
+  }
+
+  // Signboards: REGAL CHOWK ELECTRONICS & BRIDAL MARKET
+  const sign = mesh(
+    g,
+    new THREE.PlaneGeometry(len * 0.76, 1.65),
+    lam('#ffffff', signTexture(['REGAL CHOWK · ریگل چوک', 'REGAL ELECTRONICS & BRIDAL EMPORIUM'], '#1a237e', '#ffd54f', 768, 128)),
+    d / 2 + 0.12,
+    4.5,
+    0,
+    false,
+  );
+  sign.rotation.y = Math.PI / 2;
+
+  // Congregation of brightly dressed bridal mannequins along the veranda edge
+  const bridalCols = ['#d50000', '#ad1457', '#ff8f00', '#2e7d32', '#6a1b9a', '#c62828'];
+  for (let i = 0; i < 10; i++) {
+    const mz = -len / 2 + 4 + i * ((len - 8) / 9);
+    const col = bridalCols[i % bridalCols.length];
+    mesh(g, new THREE.ConeGeometry(0.38, 1.35, 7), lam(col), d / 2 + 0.65, 0.68, mz, false);
+    mesh(g, new THREE.SphereGeometry(0.14, 6, 5), lam('#e0c8a8'), d / 2 + 0.65, 1.52, mz, false);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 7. Paradise Cinema (Art Deco Streamlined Hall + Neon Fin on Zaibunnisa St)
+// ---------------------------------------------------------------------------
+
+function buildParadiseCinema(group: THREE.Group, l: Landmark, shadow: boolean): void {
+  const g = new THREE.Group();
+  const cx = (l.rect.x0 + l.rect.x1) / 2;
+  const cz = -(l.rect.z0 + l.rect.z1) / 2;
+  const d = l.rect.x1 - l.rect.x0;
+  const len = l.rect.z1 - l.rect.z0;
+  g.position.set(cx, KERB_H, cz);
+  group.add(g);
+
+  const h = 13.5;
+  const cream = lam('#f4ebd9');
+  const coral = lam('#c63d2f');
+  const teal = lam('#00838f');
+  const gold = basic('#ffd600');
+
+  // Art Deco auditorium hall facing East (+x)
+  mesh(g, new THREE.BoxGeometry(d, h, len), cream, 0, h / 2, 0, shadow);
+  // Stepped Art Deco horizontal speed-bands & central vertical pilaster ribs
+  for (const by of [4.2, 8.8, 12.6]) {
+    mesh(g, new THREE.BoxGeometry(0.6, 0.45, len + 0.4), coral, d / 2 + 0.1, by, 0, false);
+  }
+  for (let z = -6; z <= 6; z += 3) {
+    mesh(g, new THREE.BoxGeometry(0.7, h + 1.5, 0.55), teal, d / 2 + 0.15, (h + 1.5) / 2, z, false);
+  }
+
+  // Sweeping cantilevered Art Deco marquee canopy over the entrance
+  mesh(g, new THREE.BoxGeometry(3.8, 0.9, 18), coral, d / 2 + 1.6, 4.0, 0, shadow);
+  mesh(g, new THREE.BoxGeometry(4.0, 0.3, 18.4), gold, d / 2 + 1.6, 4.0, 0, false);
+
+  // Tall vertical neon fin sign spelling PARADISE
+  mesh(g, new THREE.BoxGeometry(2.4, 9.5, 1.1), coral, d / 2 + 0.8, h + 3.2, 0, shadow);
+  const finSign = mesh(
+    g,
+    new THREE.PlaneGeometry(2.2, 9.0),
+    basic('#ffffff', signTexture(['P', 'A', 'R', 'A', 'D', 'I', 'S', 'E'], '#b71c1c', '#ffff00', 128, 512), true),
+    d / 2 + 0.8,
+    h + 3.2,
+    0.58,
+    false,
+  );
+  void finSign;
+  const finSignBack = finSign.clone();
+  finSignBack.position.z = -0.58;
+  finSignBack.rotation.y = Math.PI;
+  g.add(finSignBack);
+
+  // Hand-painted movie hoarding billboard above the marquee
+  const poster = mesh(
+    g,
+    new THREE.PlaneGeometry(16, 5.6),
+    lam('#ffffff', cinemaPosterTexture(0)),
+    d / 2 + 0.55,
+    8.2,
+    0,
+    false,
+  );
+  poster.rotation.y = Math.PI / 2;
+}
+
+// ---------------------------------------------------------------------------
+// 8. Capri Cinema (1968 Modernist Brise-Soleil & Hoarding on M.A. Jinnah Rd)
+// ---------------------------------------------------------------------------
+
+function buildCapriCinema(group: THREE.Group, l: Landmark, shadow: boolean): void {
+  const g = new THREE.Group();
+  const cx = (l.rect.x0 + l.rect.x1) / 2;
+  const cz = -(l.rect.z0 + l.rect.z1) / 2;
+  const w = l.rect.x1 - l.rect.x0;
+  const d = l.rect.z1 - l.rect.z0;
+  g.position.set(cx, KERB_H, cz);
+  group.add(g);
+
+  const h = 14.0;
+  const concrete = lam('#dcd6c8');
+  const darkGlass = lam('#263238');
+  const finMat = lam('#f0ece1');
+  const accent = lam('#b71c1c');
+
+  // 1968 Modernist cinema box facing North (+z in sim -> -z in Three space)
+  mesh(g, new THREE.BoxGeometry(w, h, d), concrete, 0, h / 2, 0, shadow);
+  mesh(g, new THREE.BoxGeometry(w - 3, 7.5, 0.5), darkGlass, 0, 8.8, -d / 2 - 0.05, false);
+
+  // Signature angled vertical concrete sun-breaker fins (brise-soleil) across the facade
+  const fins: THREE.BufferGeometry[] = [];
+  for (let x = -w / 2 + 2.2; x <= w / 2 - 2.2; x += 2.1) {
+    const fg = new THREE.BoxGeometry(0.28, 7.8, 1.3);
+    fg.rotateY(0.32);
+    fg.translate(x, 8.8, -d / 2 - 0.55);
+    fins.push(fg);
+  }
+  const mergedFins = mergeGeometries(fins);
+  if (mergedFins) mesh(g, mergedFins, finMat, 0, 0, 0, shadow);
+
+  // Cantilevered modernist porch canopy & CAPRI 70MM fascia
+  mesh(g, new THREE.BoxGeometry(w - 4, 1.1, 3.8), accent, 0, 4.2, -d / 2 - 1.6, shadow);
+  const fascia = mesh(
+    g,
+    new THREE.PlaneGeometry(w - 6, 1.2),
+    lam('#ffffff', signTexture(['CAPRI CINEMA · 70MM · کیپری سینما'], '#b71c1c', '#ffffff', 768, 96)),
+    0,
+    4.2,
+    -d / 2 - 3.55,
+    false,
+  );
+  fascia.rotation.y = Math.PI;
+
+  // Giant hand-painted Lollywood hoarding billboard mounted above the porch
+  const hoarding = mesh(
+    g,
+    new THREE.PlaneGeometry(18, 6.2),
+    lam('#ffffff', cinemaPosterTexture(1)),
+    0,
+    8.6,
+    -d / 2 - 1.35,
+    false,
+  );
+  hoarding.rotation.y = Math.PI;
+}
+
+// ---------------------------------------------------------------------------
+// 9. Jahangir Park (Walled Green Park + Sandstone Pavilion on Raja Ghazanfar)
+// ---------------------------------------------------------------------------
+
+function buildJahangirPark(group: THREE.Group, l: Landmark, shadow: boolean): void {
+  const g = new THREE.Group();
+  const cx = (l.rect.x0 + l.rect.x1) / 2;
+  const cz = -(l.rect.z0 + l.rect.z1) / 2;
+  const w = l.rect.x1 - l.rect.x0;
+  const d = l.rect.z1 - l.rect.z0;
+  g.position.set(cx, KERB_H, cz);
+  group.add(g);
+
+  const stone = lam('#d8b474');
+  const roofMat = lam('#8e3b2e');
+  const iron = lam('#1e2224');
+
+  // Lush park lawn covering the entire block + sandstone cross pathways
+  const lawn = mesh(g, new THREE.PlaneGeometry(w - 0.8, d - 0.8), lam('#6e9648'), 0, 0.02, 0, false);
+  lawn.rotation.x = -Math.PI / 2;
+  const pathEW = mesh(g, new THREE.PlaneGeometry(w - 2, 5.5), lam('#dfd5c0'), 0, 0.035, 0, false);
+  pathEW.rotation.x = -Math.PI / 2;
+  const pathNS = mesh(g, new THREE.PlaneGeometry(5.5, d - 2), lam('#dfd5c0'), 0, 0.035, 0, false);
+  pathNS.rotation.x = -Math.PI / 2;
+
+  // Perimeter low sandstone wall + wrought-iron railing with open gates on East & South
+  for (const s of [-1, 1]) {
+    // East & West walls (split in middle for gate)
+    const halfD = (d - 10) / 2;
+    for (const zs of [-1, 1]) {
+      const wz = zs * (5 + halfD / 2);
+      mesh(g, new THREE.BoxGeometry(0.45, 0.75, halfD), stone, s * (w / 2 - 0.25), 0.375, wz, false);
+      mesh(g, new THREE.BoxGeometry(0.12, 0.95, halfD), iron, s * (w / 2 - 0.25), 1.2, wz, false);
+    }
+    // North & South walls
+    const halfW = (w - 10) / 2;
+    for (const xs of [-1, 1]) {
+      const wx = xs * (5 + halfW / 2);
+      mesh(g, new THREE.BoxGeometry(halfW, 0.75, 0.45), stone, wx, 0.375, s * (d / 2 - 0.25), false);
+      mesh(g, new THREE.BoxGeometry(halfW, 0.95, 0.12), iron, wx, 1.2, s * (d / 2 - 0.25), false);
+    }
+  }
+
+  // Main Park Gate Arch on Raja Ghazanfar Ali Road (+x)
+  for (const zs of [-1, 1]) {
+    mesh(g, new THREE.BoxGeometry(1.2, 3.8, 1.2), stone, w / 2 - 0.4, 1.9, zs * 4.6, shadow);
+  }
+  const gateSign = mesh(
+    g,
+    new THREE.PlaneGeometry(10.2, 1.4),
+    lam('#ffffff', signTexture(['JAHANGIR PARK · جہانگیر پارک', 'PUBLIC GARDENS · ESTD. 1893'], '#1b5e20', '#ffffff', 512, 128), true),
+    w / 2 - 0.4,
+    4.3,
+    0,
+    false,
+  );
+  gateSign.rotation.y = Math.PI / 2;
+
+  // Central Colonial Octagonal Sandstone Pavilion / Bandstand
+  mesh(g, new THREE.CylinderGeometry(6.8, 7.2, 0.9, 8), stone, 0, 0.45, 0, shadow);
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * Math.PI * 2;
+    mesh(g, new THREE.CylinderGeometry(0.32, 0.38, 4.6, 8), stone, Math.cos(a) * 5.2, 3.2, Math.sin(a) * 5.2, shadow);
+  }
+  mesh(g, new THREE.CylinderGeometry(7.4, 7.8, 0.6, 8), stone, 0, 5.7, 0, shadow);
+  mesh(g, new THREE.SphereGeometry(5.6, 16, 10, 0, Math.PI * 2, 0, Math.PI / 2), roofMat, 0, 6.0, 0, shadow);
+  mesh(g, new THREE.CylinderGeometry(0.15, 0.35, 1.8, 6), stone, 0, 12.2, 0, false);
+
+  // Dense ring of neem & banyan trees inside the park
+  const trunkMat = lam('#6b5440');
+  const leafMat = lam('#487532');
+  for (const tx of [-w * 0.3, w * 0.3]) {
+    for (const tz of [-d * 0.32, -d * 0.14, d * 0.14, d * 0.32]) {
+      mesh(g, new THREE.CylinderGeometry(0.24, 0.35, 3.5, 6), trunkMat, tx, 1.75, tz, shadow);
+      mesh(g, new THREE.IcosahedronGeometry(3.2, 0), leafMat, tx, 4.8, tz, shadow);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 10. Pakistan Chowk (Public Square + Stone Obelisk Monument on Kutchery Rd)
+// ---------------------------------------------------------------------------
+
+function buildPakistanChowk(group: THREE.Group, l: Landmark, shadow: boolean): void {
+  const g = new THREE.Group();
+  const cx = (l.rect.x0 + l.rect.x1) / 2;
+  const zFront = -l.rect.z0; // South edge on Kutchery Rd (+z in Three space)
+  const w = l.rect.x1 - l.rect.x0;
+  const d = l.rect.z1 - l.rect.z0;
+  g.position.set(cx, KERB_H, zFront);
+  group.add(g);
+
+  const stone = lam('#dfd0b0');
+  const obeliskMat = lam('#f0e8d5');
+  const redPlinth = lam('#8e3b30');
+  const tex = colonialVerandahTexture('#dfd0b0', '#2b5468');
+
+  // Paved heritage square
+  const plaza = mesh(g, new THREE.PlaneGeometry(24, d), lam('#d5ccb8'), 0, 0.02, -d / 2, false);
+  plaza.rotation.x = -Math.PI / 2;
+
+  // Flanking colonial heritage buildings with carved timber balconies
+  const wingW = (w - 24) / 2;
+  const h = 13.0;
+  for (const s of [-1, 1]) {
+    const wx = s * (12 + wingW / 2);
+    mesh(g, new THREE.BoxGeometry(wingW, h, d - 2), stone, wx, h / 2, -d / 2 - 1, shadow);
+    const f = mesh(g, new THREE.PlaneGeometry(wingW, h), lam('#ffffff', tiled(tex, wingW / 10, 1)), wx, h / 2, -2 + 0.05, false);
+    void f;
+    const inner = mesh(g, new THREE.PlaneGeometry(d - 2, h), lam('#ffffff', tiled(tex, (d - 2) / 10, 1)), s * 12 - s * 0.05, h / 2, -d / 2 - 1, false);
+    inner.rotation.y = s > 0 ? -Math.PI / 2 : Math.PI / 2;
+  }
+
+  // Iconic Pakistan Chowk Obelisk Monument in the centre of the square (z = -7.8)
+  const oz = -7.8;
+  mesh(g, new THREE.BoxGeometry(5.6, 0.7, 5.6), redPlinth, 0, 0.35, oz, shadow);
+  mesh(g, new THREE.BoxGeometry(4.2, 1.1, 4.2), stone, 0, 1.25, oz, shadow);
+  mesh(g, new THREE.BoxGeometry(2.6, 2.2, 2.6), obeliskMat, 0, 2.9, oz, shadow);
+  // Tapered four-sided obelisk shaft + pyramidion tip
+  const shaft = new THREE.CylinderGeometry(0.55, 1.25, 9.5, 4);
+  shaft.rotateY(Math.PI / 4);
+  mesh(g, shaft, obeliskMat, 0, 8.75, oz, shadow);
+  const tip = new THREE.ConeGeometry(0.55, 1.4, 4);
+  tip.rotateY(Math.PI / 4);
+  mesh(g, tip, lam('#d4af37'), 0, 14.2, oz, false);
+
+  // Heritage plaque sign
+  mesh(
+    g,
+    new THREE.PlaneGeometry(7.2, 1.2),
+    lam('#ffffff', signTexture(['PAKISTAN CHOWK · پاکستان چوک', 'HISTORIC CULTURAL SQUARE'], '#263238', '#ffd54f', 512, 96), true),
+    0,
+    2.4,
+    oz + 1.35,
+    false,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// 11. Burns Road Food Street (Lattice Balconies, Degh Cauldrons & Neon Signs)
+// ---------------------------------------------------------------------------
+
+function buildBurnsRoad(group: THREE.Group, l: Landmark, shadow: boolean): void {
+  const g = new THREE.Group();
+  const cx = (l.rect.x0 + l.rect.x1) / 2;
+  const cz = -(l.rect.z0 + l.rect.z1) / 2;
+  const d = l.rect.x1 - l.rect.x0;
+  const len = l.rect.z1 - l.rect.z0;
+  g.position.set(cx, KERB_H, cz);
+  group.add(g);
+
+  const h = 15.0;
+  const wall = lam('#e6cb94');
+  const tex = colonialVerandahTexture('#e6cb94', '#00695c');
+  const copper = lam('#c86d3b');
+  const awningMat = lam('#ffffff', stripesTexture('#c62828', '#ffd600'));
+
+  // Historic colonial residential/food-street block facing West (-x) onto Dr Daud Pota Rd
+  mesh(g, new THREE.BoxGeometry(d, h, len), wall, 0, h / 2, 0, shadow);
+  const f = mesh(g, new THREE.PlaneGeometry(len, h), lam('#ffffff', tiled(tex, len / 10, 1)), -d / 2 - 0.04, h / 2, 0, false);
+  f.rotation.y = -Math.PI / 2;
+
+  // Projecting teal & blue wooden lattice jharoka balconies on upper floors
+  const balCols = ['#00695c', '#1565c0', '#2e7d32', '#6a1b9a'];
+  for (let i = 0; i < 6; i++) {
+    const bz = -len / 2 + 5 + i * 8.5;
+    const bm = lam(balCols[i % balCols.length]);
+    mesh(g, new THREE.BoxGeometry(1.4, 2.6, 5.2), bm, -d / 2 - 0.65, 7.2, bz, shadow);
+    mesh(g, new THREE.BoxGeometry(1.4, 2.6, 5.2), bm, -d / 2 - 0.65, 11.4, bz, shadow);
+  }
+
+  // Red-and-gold striped restaurant awnings + steaming copper Biryani Degh cauldrons
+  const awning = mesh(g, new THREE.BoxGeometry(2.6, 0.35, len - 2), awningMat, -d / 2 - 1.2, 3.5, 0, false);
+  void awning;
+  for (let z = -len / 2 + 4; z <= len / 2 - 4; z += 5.5) {
+    // Brick tandoor / stove base + round copper degh pot
+    mesh(g, new THREE.BoxGeometry(1.1, 0.75, 1.1), lam('#8d3b29'), -d / 2 - 1.1, 0.375, z, false);
+    mesh(g, new THREE.SphereGeometry(0.58, 10, 8), copper, -d / 2 - 1.1, 1.15, z, shadow);
+    mesh(g, new THREE.CylinderGeometry(0.42, 0.48, 0.18, 10), copper, -d / 2 - 1.1, 1.7, z, false);
+  }
+
+  // Iconic Burns Road Food Street signboards
+  const mainSign = mesh(
+    g,
+    new THREE.PlaneGeometry(len * 0.85, 1.85),
+    lam('#ffffff', signTexture(['BURNS ROAD FOOD STREET · برنس روڈ فوڈ اسٹریٹ', 'WAHEED KABAB · NIHARI · FRESCO DAHI BARAY · HALEEM'], '#b71c1c', '#ffeb3b', 768, 128)),
+    -d / 2 - 0.25,
+    4.7,
+    0,
+    false,
+  );
+  mainSign.rotation.y = -Math.PI / 2;
+}
+
+// ---------------------------------------------------------------------------
+// 12. Sindh Secretariat (Tughlaq House & Colonial Barracks on Strachen Rd)
+// ---------------------------------------------------------------------------
+
+function buildSindhSecretariat(group: THREE.Group, l: Landmark, shadow: boolean): void {
+  const g = new THREE.Group();
+  const cx = (l.rect.x0 + l.rect.x1) / 2;
+  const zFront = -l.rect.z0; // South edge facing Strachen Rd (+z in Three space)
+  const w = l.rect.x1 - l.rect.x0;
+  const d = l.rect.z1 - l.rect.z0;
+  g.position.set(cx, KERB_H, zFront);
+  group.add(g);
+
+  const white = lam('#f4f2ec');
+  const buff = lam('#d9ccb2');
+  const green = lam('#01411c');
+  const redRoof = lam('#963d2f');
+
+  // Forecourt lawn & security perimeter fence with white sentry booths
+  const lawn = mesh(g, new THREE.PlaneGeometry(w, 7.5), lam('#769650'), 0, 0.02, -3.75, false);
+  lawn.rotation.x = -Math.PI / 2;
+  for (const s of [-1, 1]) {
+    const segW = (w - 10) / 2;
+    mesh(g, new THREE.BoxGeometry(segW, 1.8, 0.2), lam('#222629'), s * (5 + segW / 2), 0.9, -0.2, false);
+    // Sentry guard booth
+    mesh(g, new THREE.BoxGeometry(2.0, 2.8, 2.0), white, s * 5.2, 1.4, -0.8, shadow);
+    mesh(g, new THREE.BoxGeometry(2.3, 0.35, 2.3), green, s * 5.2, 2.95, -0.8, false);
+  }
+
+  // Imposing 5-storey Tughlaq House / Sindh Secretariat main block (z = -7 to -d)
+  const bodyD = d - 8;
+  const bodyH = 17.5;
+  const bodyZ = -7 - bodyD / 2;
+  mesh(g, new THREE.BoxGeometry(w - 4, bodyH, bodyD), white, 0, bodyH / 2, bodyZ, shadow);
+  // Horizontal window bands & green Government of Sindh frieze
+  for (let y = 3.5; y < bodyH - 1; y += 3.3) {
+    mesh(g, new THREE.BoxGeometry(w - 3.6, 1.3, bodyD + 0.1), lam('#37474f'), 0, y, bodyZ, false);
+    mesh(g, new THREE.BoxGeometry(w - 3.4, 0.4, bodyD + 0.2), buff, 0, y - 0.85, bodyZ, false);
+  }
+  mesh(g, new THREE.BoxGeometry(w - 3.2, 1.2, bodyD + 0.3), green, 0, bodyH - 0.6, bodyZ, false);
+
+  // Projecting neoclassical 4-column central portico
+  mesh(g, new THREE.BoxGeometry(14, bodyH + 1.5, 3.2), buff, 0, (bodyH + 1.5) / 2, -7 + 1.2, shadow);
+  for (const px of [-5.2, -1.8, 1.8, 5.2]) {
+    mesh(g, new THREE.CylinderGeometry(0.45, 0.52, bodyH, 10), white, px, bodyH / 2, -7 + 2.9, shadow);
+  }
+  // Rooftop flagpole + Pakistani flag
+  mesh(g, new THREE.CylinderGeometry(0.08, 0.1, 6.5, 6), lam('#999999'), 0, bodyH + 1.5 + 3.25, -7 + 1.2, false);
+  mesh(g, new THREE.PlaneGeometry(3.4, 2.2), lam('#01411c', undefined, true), 1.7, bodyH + 6.8, -7 + 1.2, false);
+  mesh(g, new THREE.PlaneGeometry(0.85, 2.2), lam('#ffffff', undefined, true), 0.42, bodyH + 6.8, -7 + 1.22, false);
+
+  // Red-tiled colonial barrack roofs on the flanking wings
+  for (const s of [-1, 1]) {
+    const roof = new THREE.ConeGeometry(4.5, 12, 3);
+    roof.rotateZ(Math.PI / 2);
+    roof.scale(1, 0.45, 1);
+    mesh(g, roof, redRoof, s * (w / 2 - 7), bodyH + 1.2, bodyZ, false);
+  }
+
+  // Official green Sindh Secretariat signboard over the portico
+  mesh(
+    g,
+    new THREE.PlaneGeometry(13.5, 1.7),
+    lam('#ffffff', signTexture(['SINDH SECRETARIAT · سندھ سیکریٹریٹ', 'GOVERNMENT OF SINDH · TUGHLAQ HOUSE'], '#01411c', '#ffffff', 768, 128)),
+    0,
+    5.2,
+    -7 + 2.95,
+    false,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// 13. Cantt Station Bus Stop (Colonial Arched Station + Minibus Terminal)
+// ---------------------------------------------------------------------------
+
+function buildCanttStation(group: THREE.Group, l: Landmark, shadow: boolean): void {
+  const g = new THREE.Group();
+  const cx = (l.rect.x0 + l.rect.x1) / 2;
+  const cz = -(l.rect.z0 + l.rect.z1) / 2;
+  const d = l.rect.x1 - l.rect.x0;
+  const len = l.rect.z1 - l.rect.z0;
+  g.position.set(cx, KERB_H, cz);
+  group.add(g);
+
+  const stone = lam('#d6b26d');
+  const darkStone = lam('#9e783c');
+  const green = lam('#0b6e3a');
+  const yellow = lam('#fbc02d');
+  const wallTex = gothicWallTexture();
+
+  // Colonial Karachi Cantonment Railway Station building set back 7 m from the kerb
+  const stD = d - 7;
+  const stH = 12.5;
+  const stX = -7 / 2;
+  mesh(g, new THREE.BoxGeometry(stD, stH, len), stone, stX, stH / 2, 0, shadow);
+  const front = mesh(
+    g,
+    new THREE.PlaneGeometry(len, stH),
+    lam('#ffffff', tiled(wallTex, len / 12, 1)),
+    stX + stD / 2 + 0.05,
+    stH / 2,
+    0,
+    false,
+  );
+  front.rotation.y = Math.PI / 2;
+
+  // Projecting central station clock/crest pediment & twin corner turrets
+  const pedX = stX + stD / 2 + 0.8;
+  mesh(g, new THREE.BoxGeometry(2.4, stH + 4.5, 12), darkStone, pedX, (stH + 4.5) / 2, 0, shadow);
+  for (const s of [-1, 1]) {
+    mesh(g, new THREE.BoxGeometry(2.2, stH + 6.5, 2.2), darkStone, pedX, (stH + 6.5) / 2, s * 6.2, shadow);
+    mesh(g, new THREE.SphereGeometry(1.3, 8, 6), lam('#f4efe4'), pedX, stH + 7.1, s * 6.2, false);
+  }
+  const stSign = mesh(
+    g,
+    new THREE.PlaneGeometry(11.5, 1.6),
+    lam('#ffffff', signTexture(['KARACHI CANTT RAILWAY STATION · کینٹ اسٹیشن', 'PAKISTAN RAILWAYS · ESTD. 1898'], '#01411c', '#ffd54f', 768, 128)),
+    pedX + 1.25,
+    stH + 2.2,
+    0,
+    false,
+  );
+  stSign.rotation.y = Math.PI / 2;
+
+  // Bustling W-11 Minibus & Coach Terminal Shelter along the Sarwar Shaheed Rd kerb (+x)
+  const bx = d / 2 - 2.6;
+  const shelterLen = len * 0.72;
+  for (let z = -shelterLen / 2 + 2; z <= shelterLen / 2 - 2; z += 5.5) {
+    mesh(g, new THREE.CylinderGeometry(0.16, 0.18, 3.8, 8), green, bx, 1.9, z, shadow);
+    // Waiting bench
+    mesh(g, new THREE.BoxGeometry(0.7, 0.5, 2.4), yellow, bx - 0.5, 0.45, z, false);
+  }
+  // Arched green-and-yellow bus terminal roof canopy + route boards
+  mesh(g, new THREE.BoxGeometry(3.8, 0.4, shelterLen), green, bx, 3.9, 0, shadow);
+  mesh(g, new THREE.BoxGeometry(4.0, 0.22, shelterLen + 0.2), yellow, bx, 4.15, 0, false);
+  const busSign = mesh(
+    g,
+    new THREE.PlaneGeometry(shelterLen * 0.85, 1.15),
+    lam('#ffffff', signTexture(['CANTT STATION BUS STOP · W-11 · D-7 · SADDAR COACH TERMINAL'], '#ffd600', '#111111', 768, 96)),
+    bx + 1.95,
+    4.65,
+    0,
+    false,
+  );
+  busSign.rotation.y = Math.PI / 2;
+}
+
+// ---------------------------------------------------------------------------
+// 14. Lucky Star Hotel (Chamfered Corner Hotel + Rooftop Star on Sarwar Shaheed)
+// ---------------------------------------------------------------------------
+
+function buildLuckyStarHotel(group: THREE.Group, l: Landmark, shadow: boolean): void {
+  const g = new THREE.Group();
+  const cx = (l.rect.x0 + l.rect.x1) / 2;
+  const cz = -(l.rect.z0 + l.rect.z1) / 2;
+  const d = l.rect.x1 - l.rect.x0;
+  const len = l.rect.z1 - l.rect.z0;
+  g.position.set(cx, KERB_H, cz);
+  group.add(g);
+
+  const h = 18.0;
+  const cream = lam('#f2eadb');
+  const terracotta = lam('#b8432e');
+  const blueGlass = lam('#2c4c64');
+  const starGold = basic('#ffea00', undefined, true);
+
+  // 5-storey mid-century hotel block facing East (+x) & North (-z, Club Rd corner)
+  mesh(g, new THREE.BoxGeometry(d - 2, h, len - 2), cream, -1, h / 2, 1, shadow);
+  // Iconic rounded/chamfered corner tower at the NE intersection (x = +d/2, z = -len/2)
+  const tx = d / 2 - 3.5, tz = -len / 2 + 3.5;
+  mesh(g, new THREE.CylinderGeometry(4.8, 4.8, h + 2.2, 12), cream, tx, (h + 2.2) / 2, tz, shadow);
+
+  // Wrap-around horizontal balcony slabs & terracotta railings on every floor
+  for (let y = 4.0; y <= h; y += 3.4) {
+    mesh(g, new THREE.BoxGeometry(d, 0.35, len), cream, 0, y, 0, false);
+    mesh(g, new THREE.BoxGeometry(d + 0.15, 0.85, len + 0.15), terracotta, 0, y + 0.55, 0, false);
+    mesh(g, new THREE.CylinderGeometry(5.1, 5.1, 0.85, 12), terracotta, tx, y + 0.55, tz, false);
+    if (y < h) {
+      mesh(g, new THREE.CylinderGeometry(4.88, 4.88, 1.5, 12), blueGlass, tx, y + 2.1, tz, false);
+    }
+  }
+
+  // Rooftop steel frame + giant glowing 5-pointed Star & LUCKY STAR HOTEL sign
+  const rY = h + 2.2;
+  mesh(g, new THREE.CylinderGeometry(0.2, 0.25, 6.5, 6), lam('#555555'), tx, rY + 3.25, tz, false);
+
+  // 5-pointed star geometry
+  const starShape = new THREE.Shape();
+  for (let i = 0; i < 10; i++) {
+    const a = -Math.PI / 2 + (i * Math.PI) / 5;
+    const r = i % 2 === 0 ? 3.2 : 1.3;
+    const sx = Math.cos(a) * r, sy = Math.sin(a) * r;
+    if (i === 0) starShape.moveTo(sx, sy);
+    else starShape.lineTo(sx, sy);
+  }
+  starShape.closePath();
+  const starMesh = mesh(g, new THREE.ShapeGeometry(starShape), starGold, tx, rY + 6.8, tz, false);
+  starMesh.rotation.y = Math.PI / 4;
+
+  // Rooftop & ground-floor hotel cafe signage
+  const roofSign = mesh(
+    g,
+    new THREE.PlaneGeometry(14, 2.2),
+    basic('#ffffff', signTexture(['★ LUCKY STAR HOTEL ★', 'لکی اسٹار ہوٹل اینڈ کیفے'], '#880e4f', '#ffea00', 512, 128), true),
+    d / 2 - 0.4,
+    h + 1.8,
+    2,
+    false,
+  );
+  roofSign.rotation.y = Math.PI / 2;
+
+  const cafeSign = mesh(
+    g,
+    new THREE.PlaneGeometry(len * 0.7, 1.4),
+    lam('#ffffff', signTexture(['LUCKY STAR HOTEL · CHAI & BIRYANI'], '#b71c1c', '#ffffff', 512, 96)),
+    d / 2 + 0.15,
+    3.6,
+    2,
+    false,
+  );
+  cafeSign.rotation.y = Math.PI / 2;
+}

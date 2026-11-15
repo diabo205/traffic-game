@@ -111,33 +111,21 @@ export class Fares {
         this.spots.push({ x: p.x, z: p.z, link: l.id, s });
       }
     }
-    // Named places, spread out across the map (fixed, not seed dependent).
-    const pr = new Rng(0x91ace);
-    const order = this.spots.map((_, i) => i);
-    for (let i = order.length - 1; i > 0; i--) {
-      const j = pr.int(0, i);
-      [order[i], order[j]] = [order[j], order[i]];
-    }
-    for (const i of order) {
-      if (this.places.length >= PLACE_NAMES.length) break;
-      const sp = this.spots[i];
-      if (this.places.some((p) => Math.hypot(p.x - sp.x, p.z - sp.z) < 95)) continue;
-      this.places.push({ ...sp, name: PLACE_NAMES[this.places.length] });
-    }
-    // Empress Market's stop is right outside it.
-    const em = map.landmarks.find((l) => l.kind === 'empress');
-    if (em) {
-      const cz = (em.rect.z0 + em.rect.z1) / 2;
+    // Named places: each pinned to the kerbside spot right outside its landmark entrance.
+    for (const name of PLACE_NAMES) {
+      const lm = map.landmarks.find((l) => l.name === name);
+      const tx = lm ? lm.stopX : 0;
+      const tz = lm ? lm.stopZ : 0;
       let best = 0;
       let bestD = Infinity;
       this.spots.forEach((s, i) => {
-        const d = Math.hypot(s.x - (em.rect.x1 + 8), s.z - cz);
+        const d = Math.hypot(s.x - tx, s.z - tz);
         if (d < bestD) {
           bestD = d;
           best = i;
         }
       });
-      this.places[0] = { ...this.spots[best], name: PLACE_NAMES[0] };
+      this.places.push({ ...this.spots[best], name });
     }
   }
 
