@@ -876,13 +876,21 @@ button { font-family: var(--display); cursor: pointer; }
   .tbtn.small { width: 46px; height: 46px; }
   .goals-head, .goals { display: none; }
   .card-grid, .controls-pane { gap: 8px; }
-  .card-btn { min-height: 56px; }
+  .card-grid { grid-template-columns: repeat(3, 1fr); }
+  .screen.settings { padding-top: calc(10px + var(--safe-t)); padding-bottom: calc(10px + var(--safe-b)); }
+  .screen-title { font-size: 28px; margin-bottom: 8px; }
+  .tabs { margin-bottom: 10px; }
+  .tab { height: 40px; font-size: 18px; }
+  .card-btn { min-height: 44px; padding: 4px 10px; }
+  .card-label { font-size: 18px; }
+  .card-value { font-size: 12px; }
+  .osm-credit { padding-top: 8px; font-size: 11px; }
 }
 /* Portrait phones: stack things that sit side by side on landscape. */
 @media (max-width: 600px) {
   .hud-tc {
     top: calc(104px + var(--safe-t));
-    left: calc(110px + var(--safe-l));
+    left: calc(120px + var(--safe-l));
     right: calc(12px + var(--safe-r));
     width: auto;
     transform: none;

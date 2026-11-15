@@ -600,7 +600,7 @@ export class Hud {
    * Boost meter. charge 0..1 (1 = ready), active = boosting now (fill shows
    * what's left), drifting shows the drift tag, launchFrac shows Launch charge.
    */
-  setBoost(charge: number, active: boolean, drifting: boolean, launchFrac = 0, dashReady = false): void {
+  setBoost(charge: number, active: boolean, drifting: boolean, launchFrac = 0, dashReady = false, stopped = false): void {
     const launchShown = !active && !drifting && launchFrac > 0;
     const c = Math.max(0, Math.min(1, launchShown ? launchFrac : charge));
     this.boostFill.style.width = `${(c * 100).toFixed(1)}%`;
@@ -626,7 +626,9 @@ export class Hud {
           : c >= 1
             ? dashReady
               ? 'DASH READY · 2× GAS'
-              : 'BOOST READY'
+              : stopped
+                ? 'LAUNCH · BRAKE + GAS'
+                : 'BOOST READY'
             : 'BOOST';
     if (this.boost.dataset.state !== state || this.boostLabel.textContent !== label) {
       this.boost.dataset.state = state;

@@ -37,6 +37,12 @@ export class Stunts {
   private shaveCooldown = 0;
   private smashCooldown = 0;
   private fareTipLeft = 320;
+  private handbrakeActive = false;
+  private driftStartX = 0;
+  private driftStartZ = 0;
+  private driftEndX = 0;
+  private driftEndZ = 0;
+  private donutDuringDrift = false;
 
   get active(): boolean {
     return this.mult > 0;
@@ -53,6 +59,8 @@ export class Stunts {
     this.shaveCooldown = 0;
     this.smashCooldown = 0;
     this.fareTipLeft = 320;
+    this.handbrakeActive = false;
+    this.donutDuringDrift = false;
   }
 
   private add(kind: string, label: string, points: number, events: SimEvent[]): void {
@@ -79,9 +87,13 @@ export class Stunts {
       case 'land':
         if (e.air > 0.35) this.add('air', `AIR ${e.air.toFixed(1)}s`, 60 + e.air * 220, events);
         break;
-      case 'drift':
-        this.add('drift', `DRIFT ${e.seconds.toFixed(1)}s`, e.seconds * 90, events);
+      case 'drift': {
+        const netDisp = Math.hypot(this.driftEndX - this.driftStartX, this.driftEndZ - this.driftStartZ);
+        if (!this.donutDuringDrift && netDisp >= Math.max(10, e.seconds * 4.5)) {
+          this.add('drift', `DRIFT ${e.seconds.toFixed(1)}s`, Math.min(400, e.seconds * 90), events);
+        }
         break;
+      }
       case 'pedDodge':
         if (this.shaveCooldown <= 0) {
           this.shaveCooldown = 1.5;
@@ -121,6 +133,19 @@ export class Stunts {
     if (this.shaveCooldown > 0) this.shaveCooldown = Math.max(0, this.shaveCooldown - dt);
     if (this.smashCooldown > 0) this.smashCooldown = Math.max(0, this.smashCooldown - dt);
 
+    if (p.handbrake) {
+      if (!this.handbrakeActive) {
+        this.handbrakeActive = true;
+        this.driftStartX = p.x;
+        this.driftStartZ = p.z;
+        this.donutDuringDrift = false;
+      }
+      this.driftEndX = p.x;
+      this.driftEndZ = p.z;
+    } else if (this.handbrakeActive) {
+      this.handbrakeActive = false;
+    }
+
     const v = Math.abs(p.speed);
     const fx = Math.sin(p.heading), fz = Math.cos(p.heading);
     const sp = p.spec;
@@ -129,6 +154,7 @@ export class Stunts {
     if (!p.airborne && Math.abs(p.yawRate) > 1.45 && v > 2 && v < 13.5 && (p.handbrake || Math.abs(p.steerAngle) > 0.35)) {
       this.donutTime += dt;
       if (this.donutTime >= 0.85 && this.donutCooldown <= 0) {
+        if (this.handbrakeActive) this.donutDuringDrift = true;
         if (Math.hypot(p.x - this.donutAnchorX, p.z - this.donutAnchorZ) < 24) {
           this.sameSpotDonuts++;
         } else {

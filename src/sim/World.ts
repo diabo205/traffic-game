@@ -28,7 +28,7 @@ const TRAFFIC_RESTITUTION = 0.1;
 export function trafficDamage(impact: number, kindDamage: number): number {
   if (impact <= 2.5) return 0;
   const x = impact - 2.5;
-  return Math.min(22, x * (0.22 + x * 0.036) * kindDamage);
+  return Math.min(8 + kindDamage * 6.5, x * (0.2 + x * 0.032) * kindDamage);
 }
 
 /**

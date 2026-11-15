@@ -431,7 +431,7 @@ export class Game {
         return;
       }
       this.input.calibrateTilt();
-      this.toastNow('TILT TO STEER · TAP ZERO TILT TO CENTER');
+      if (!this.hud.settingsOpen) this.toastNow('TILT TO STEER · TAP ZERO TILT TO CENTER');
     }
     this.setSteerMode(next);
   }
@@ -550,6 +550,7 @@ export class Game {
       p.handbrake,
       p.launchFraction,
       p.dashReady,
+      Math.abs(p.speed) < 3,
     );
     this.hud.setSpeedRush(this.world.speedRush());
     this.touch.setPedalCues(p.launchReady, p.dashReady, auto);
@@ -662,7 +663,9 @@ export class Game {
     const w = this.world;
     if (w.mode !== 'city') return;
     const f = w.fares;
-    if (f.money > this.lastTrackedMoney) this.addBank(f.money - this.lastTrackedMoney);
+    const prevPos = Math.max(0, this.lastTrackedMoney);
+    const curPos = Math.max(0, f.money);
+    if (curPos > prevPos) this.addBank(curPos - prevPos);
     this.lastTrackedMoney = f.money;
     const p = w.player;
     const px = p.prevX + (p.x - p.prevX) * (this.accumulator / DT);

@@ -213,7 +213,7 @@ export class CityWorld {
     f.cancelFare();
     const rawBill = Math.round((Math.max(0, f.money) * 0.35) / 10) * 10;
     const cost = Math.min(TOW_COST, Math.max(120, rawBill));
-    f.money -= cost;
+    f.money = Math.max(-TOW_COST, f.money - cost);
     if (f.onShift) f.shiftTime = Math.max(0, f.shiftTime - TOW_TIME);
 
     // Nearest clear road kerb instead of teleporting back to spawn.
