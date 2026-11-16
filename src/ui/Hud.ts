@@ -66,9 +66,14 @@ export class Hud {
   private startScreen: HTMLDivElement;
   private heroTitle: HTMLHeadingElement;
   private heroText: HTMLParagraphElement;
+  private trackKicker: HTMLDivElement;
+  private trackSpec: HTMLSpanElement;
+  private trackMapCity: SVGSVGElement;
+  private trackMapRoute: SVGSVGElement;
   private bankBadge: HTMLDivElement;
-  private bestHint: HTMLDivElement;
+  private bestHint: HTMLSpanElement;
   readonly rideBtns: Record<PlayerVehicle, HTMLButtonElement>;
+  readonly todBtns: Record<TimeOfDay, HTMLButtonElement>;
   readonly cityBtn: HTMLButtonElement;
   /** route-run mode tile (kept under its old name) */
   readonly startBtn: HTMLButtonElement;
@@ -219,7 +224,7 @@ export class Hud {
     shiftHint.textContent = 'ENTER / A · OR KEEP DRIVING OFF DUTY';
     this.shiftCard.append(this.shiftText, this.shiftBtn, shiftHint);
 
-    // ---- Mode select (start) ---------------------------------------------------------------------
+    // ---- Mode & conditions select (start) --------------------------------------------------------
     this.startScreen = div('screen start');
     const topbar = div('topbar');
     topbar.innerHTML = `<div class="brand"><span class="brand-mark">KT</span><span class="brand-name">KARACHI<br>TRAFFIC 3D</span></div>`;
@@ -230,10 +235,35 @@ export class Hud {
     topRight.append(this.bankBadge, startSettings);
     topbar.appendChild(topRight);
 
-    const hero = div('hero');
+    const stage = div('start-stage');
+    const stageHead = div('stage-head');
+    stageHead.innerHTML = '<span class="stage-title">SELECT RUN &amp; CONDITIONS</span><span class="stage-sub">PICK WEATHER, RIDE &amp; ROUTE</span>';
+
+    const stageGrid = div('stage-grid');
+
+    // Left featured card: map preview + mode info + specs + ride picker
+    const trackCard = div('track-card');
+    const trackPreview = div('track-preview');
+    trackPreview.innerHTML = trackPreviewMarkup();
+    this.trackMapCity = trackPreview.querySelector('.map-city')!;
+    this.trackMapRoute = trackPreview.querySelector('.map-route')!;
+    const trackInfo = div('track-info');
+    this.trackKicker = div('track-kicker');
     this.heroTitle = document.createElement('h1');
     this.heroText = document.createElement('p');
-    hero.append(div('hero-rule'), this.heroTitle, this.heroText);
+    const trackStats = div('track-stats');
+    const specRow = div('track-stat');
+    const specLbl = span('ts-lbl');
+    specLbl.textContent = 'MAP';
+    this.trackSpec = span('ts-val');
+    specRow.append(specLbl, this.trackSpec);
+    const bestRow = div('track-stat');
+    const bestLbl = span('ts-lbl');
+    bestLbl.textContent = 'BEST';
+    const bestVal = span('ts-val best-val');
+    bestRow.append(bestLbl, bestVal);
+    trackStats.append(specRow, bestRow);
+    this.bestHint = bestVal;
 
     const garage = div('garage-strip');
     const makeRideBtn = (v: PlayerVehicle) => {
@@ -250,16 +280,30 @@ export class Hud {
       minibus: makeRideBtn('minibus'),
     };
 
-    this.playBtn = button('PLAY', 'go-btn play', 'Play');
-    this.dailyBtn = button('', 'daily-btn', 'Daily Saddar challenge');
-    this.dailyBtn.innerHTML = `<span class="d-top">DAILY</span><span class="d-sub">SADDAR</span>`;
-    const playActions = div('play-actions');
-    playActions.append(this.playBtn, this.dailyBtn);
-    const playWrap = div('play-wrap');
-    this.bestHint = div('hint best-hint');
-    this.bestHint.textContent = 'ENTER / A';
-    playWrap.append(garage, playActions, this.bestHint);
+    trackInfo.append(this.trackKicker, this.heroTitle, this.heroText, trackStats, garage);
+    trackCard.append(trackPreview, trackInfo);
 
+    // Right: vertical Time-of-Day / Weather condition strips
+    const condWrap = div('cond-strips');
+    const makeCondStrip = (tod: TimeOfDay, name: string, clock: string, desc: string, art: string) => {
+      const b = button('', `cond-strip cond-${tod}`, `${name} — ${clock} (${desc})`);
+      b.dataset.tod = tod;
+      b.innerHTML = `<div class="cond-art">${art}</div><div class="cond-meta"><span class="cond-tag">SELECTED</span><span class="cond-name">${name}</span><span class="cond-time">${clock}</span><span class="cond-desc">${desc}</span></div>`;
+      condWrap.appendChild(b);
+      return b;
+    };
+    this.todBtns = {
+      noon: makeCondStrip('noon', 'NOON', '12:30', 'Fine Weather', condSvg('noon')),
+      sunset: makeCondStrip('sunset', 'SUNSET', '18:15', 'Golden Hour', condSvg('sunset')),
+      night: makeCondStrip('night', 'NIGHT', '22:00', 'Neon Streets', condSvg('night')),
+      monsoon: makeCondStrip('monsoon', 'MONSOON', '16:40', 'Heavy Rain', condSvg('monsoon')),
+    };
+
+    stageGrid.append(trackCard, condWrap);
+    stage.append(stageHead, stageGrid);
+
+    // Bottom dock: mode / utility tiles on left, Daily + Play CTA on right
+    const dock = div('start-dock');
     const tiles = div('tiles');
     this.cityBtn = tile('FREE ROAM', 'SADDAR', 'Free roam in Saddar');
     this.startBtn = tile('ROUTE', 'RUN', 'Route run to Clifton');
@@ -268,7 +312,15 @@ export class Hud {
     controlsTile.classList.add('dim');
     optionsTile.classList.add('dim');
     tiles.append(this.cityBtn, this.startBtn, controlsTile, optionsTile);
-    this.startScreen.append(topbar, hero, playWrap, tiles);
+
+    this.playBtn = button('PLAY', 'go-btn play', 'Play');
+    this.dailyBtn = button('', 'daily-btn', 'Daily Saddar challenge');
+    this.dailyBtn.innerHTML = `<span class="d-top">DAILY</span><span class="d-sub">SADDAR</span>`;
+    const playActions = div('play-actions');
+    playActions.append(this.dailyBtn, this.playBtn);
+
+    dock.append(tiles, playActions);
+    this.startScreen.append(topbar, stage, dock);
 
     // ---- Game options ------------------------------------------------------------------------------
     this.settingsScreen = div('screen settings hidden');
@@ -372,14 +424,20 @@ export class Hud {
     this.root.classList.toggle('city', mode === 'city');
     this.cityBtn.classList.toggle('chosen', mode === 'city');
     this.startBtn.classList.toggle('chosen', mode === 'route');
+    this.trackMapCity.classList.toggle('hidden', mode !== 'city');
+    this.trackMapRoute.classList.toggle('hidden', mode !== 'route');
     if (mode === 'city') {
-      this.heroTitle.innerHTML = 'PICK UP FARES.<br><em>OWN</em> SADDAR.';
-      this.heroText.innerHTML = 'Stop beside passengers across Saddar, beat the meter, and chain drifts, jumps &amp; near misses for bonus&nbsp;tips.';
+      this.trackKicker.textContent = 'WORLD CITY · KARACHI';
+      this.heroTitle.innerHTML = 'SADDAR FREE ROAM';
+      this.heroText.textContent = 'Pick up fares across Saddar, beat the meter, and chain drifts, jumps & near misses.';
+      this.trackSpec.textContent = '1.6 × 1.6 km · 31 Landmarks';
       this.statAKey.textContent = 'RS';
       this.statBKey.textContent = '★';
     } else {
-      this.heroTitle.innerHTML = 'SADDAR TO <em>CLIFTON</em><br>AGAINST THE CLOCK.';
-      this.heroText.textContent = '4.2 km dash via Lyari Expressway & Shahrah-e-Faisal to Teen Talwar. Hit checkpoints before the clock hits zero and keep your ride intact.';
+      this.trackKicker.textContent = 'HIGHWAY RUN · CLIFTON';
+      this.heroTitle.innerHTML = 'SADDAR TO CLIFTON';
+      this.heroText.textContent = '4.2 km dash via Lyari Expressway & Shahrah-e-Faisal to Teen Talwar against the clock.';
+      this.trackSpec.textContent = '4.2 km · 3 Zones';
       this.statAKey.textContent = 'LEFT';
       this.statBKey.textContent = 'NEXT';
     }
@@ -400,7 +458,7 @@ export class Hud {
   }
 
   setBestSummary(text: string | null): void {
-    this.bestHint.textContent = text ? `ENTER / A · ${text}` : 'ENTER / A';
+    this.bestHint.textContent = text ? text : 'NO RECORD YET';
   }
 
   setVehicle(v: PlayerVehicle, bank: number): void {
@@ -424,6 +482,11 @@ export class Hud {
 
   setTimeOfDay(tod: TimeOfDay): void {
     setCard(this.todBtn, tod.toUpperCase());
+    for (const k of ['noon', 'sunset', 'night', 'monsoon'] as const) {
+      const btn = this.todBtns[k];
+      btn.classList.toggle('chosen', k === tod);
+      btn.setAttribute('aria-pressed', k === tod ? 'true' : 'false');
+    }
   }
 
   setAutoGas(on: boolean): void {
@@ -570,10 +633,11 @@ export class Hud {
 
   showBanner(text: string): void {
     this.bannerText.textContent = text;
+    this.banner.classList.toggle('long', text.length > 22);
     this.banner.classList.remove('show');
     void this.banner.offsetWidth; // restart animation
     this.banner.classList.add('show');
-    this.bannerTimer = 3.2;
+    this.bannerTimer = 2.4;
   }
 
   showToast(text: string, good = true): void {
@@ -878,4 +942,55 @@ function gearIcon(): string {
 
 function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] ?? c);
+}
+
+function trackPreviewMarkup(): string {
+  return `
+    <svg class="map-city" viewBox="0 0 260 130" width="100%" height="100%" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
+      <path d="M28 96 L80 94 L132 82 L188 74 L232 62 M46 44 L106 38 L168 48 L224 44 M68 22 L80 94 L86 116 M132 20 L132 112 M186 24 L188 108" fill="none" stroke="rgba(255,255,255,0.28)" stroke-width="4" stroke-linecap="round"/>
+      <path d="M56 70 L108 66 L158 60 L188 74 L148 96 L94 94 L56 70 Z" fill="none" stroke="#ffffff" stroke-width="5.5" stroke-linejoin="round" stroke-linecap="round"/>
+      <circle cx="132" cy="63" r="6.5" fill="none" stroke="#c6f432" stroke-width="2.5"/>
+      <circle cx="158" cy="60" r="6" fill="#ff2d6f" stroke="#ffffff" stroke-width="2"/>
+    </svg>
+    <svg class="map-route hidden" viewBox="0 0 260 130" width="100%" height="100%" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
+      <path d="M30 98 C74 96, 86 58, 130 56 C174 54, 184 28, 228 34" fill="none" stroke="rgba(0,0,0,0.45)" stroke-width="10" stroke-linecap="round"/>
+      <path d="M30 98 C74 96, 86 58, 130 56 C174 54, 184 28, 228 34" fill="none" stroke="#ffffff" stroke-width="5.5" stroke-linecap="round"/>
+      <circle cx="130" cy="56" r="4.5" fill="#ffc61a"/>
+      <circle cx="228" cy="34" r="6" fill="#c6f432" stroke="#0b1530" stroke-width="2"/>
+      <circle cx="30" cy="98" r="6" fill="#ff2d6f" stroke="#ffffff" stroke-width="2"/>
+    </svg>
+  `;
+}
+
+function condSvg(tod: TimeOfDay): string {
+  const palette: Record<TimeOfDay, { sky0: string; sky1: string; sky2: string; bldg: string; road: string; line: string }> = {
+    noon: { sky0: '#2e78c7', sky1: '#7bc0f2', sky2: '#dceeff', bldg: '#45546b', road: '#2b3442', line: '#e4e9f0' },
+    sunset: { sky0: '#241a3f', sky1: '#b8465a', sky2: '#ffbe63', bldg: '#261b2f', road: '#1d1628', line: '#ffd085' },
+    night: { sky0: '#040814', sky1: '#0b1838', sky2: '#1a2d5a', bldg: '#081024', road: '#090e1c', line: '#6fa4ff' },
+    monsoon: { sky0: '#16212e', sky1: '#33485b', sky2: '#5f7484', bldg: '#1c2834', road: '#151e28', line: '#90b4cc' },
+  };
+  const p = palette[tod];
+  const skyFx =
+    tod === 'noon'
+      ? `<circle cx="122" cy="78" r="18" fill="#fff6c4" opacity="0.95"/><circle cx="122" cy="78" r="32" fill="#fff6c4" opacity="0.22"/><ellipse cx="64" cy="112" rx="44" ry="12" fill="#ffffff" opacity="0.45"/><ellipse cx="138" cy="144" rx="50" ry="13" fill="#ffffff" opacity="0.35"/>`
+      : tod === 'sunset'
+        ? `<circle cx="92" cy="186" r="30" fill="#ffd97a" opacity="0.92"/><circle cx="92" cy="186" r="54" fill="#ff8f45" opacity="0.32"/><ellipse cx="52" cy="128" rx="46" ry="9" fill="#ff9e6d" opacity="0.35"/><ellipse cx="134" cy="146" rx="42" ry="8" fill="#ffb87a" opacity="0.3"/>`
+        : tod === 'night'
+          ? `<path d="M126 58a14 14 0 1 0 16 18 11 11 0 1 1-16-18z" fill="#eef4ff" opacity="0.9"/><circle cx="38" cy="48" r="1.5" fill="#fff"/><circle cx="78" cy="74" r="1.2" fill="#fff" opacity="0.75"/><circle cx="148" cy="108" r="1.4" fill="#fff" opacity="0.8"/><circle cx="54" cy="122" r="1.1" fill="#fff" opacity="0.65"/>`
+          : `<ellipse cx="62" cy="72" rx="58" ry="22" fill="#233140" opacity="0.85"/><ellipse cx="128" cy="90" rx="64" ry="24" fill="#2b3d4f" opacity="0.85"/><path d="M114 96 L98 134 L110 134 L94 172" stroke="#dceeff" stroke-width="2" fill="none" opacity="0.55"/><g stroke="#cde4f5" stroke-width="1.2" opacity="0.48"><line x1="24" y1="70" x2="10" y2="128"/><line x1="62" y1="88" x2="48" y2="146"/><line x1="96" y1="62" x2="82" y2="120"/><line x1="142" y1="84" x2="128" y2="142"/><line x1="42" y1="148" x2="28" y2="206"/><line x1="116" y1="152" x2="102" y2="210"/><line x1="160" y1="138" x2="146" y2="196"/></g>`;
+  const winGlow =
+    tod === 'night'
+      ? `<g fill="#ffc61a" opacity="0.85"><rect x="20" y="218" width="5" height="6"/><rect x="30" y="218" width="5" height="6"/><rect x="20" y="232" width="5" height="6"/><rect x="134" y="210" width="5" height="6"/><rect x="144" y="210" width="5" height="6"/><rect x="134" y="224" width="5" height="6"/><rect x="144" y="224" width="5" height="6"/></g><rect x="14" y="248" width="32" height="4" fill="#ff2d6f" opacity="0.85"/><rect x="128" y="246" width="38" height="4" fill="#c6f432" opacity="0.8"/>`
+      : tod === 'monsoon'
+        ? `<g fill="#ffe18c" opacity="0.55"><rect x="20" y="218" width="5" height="6"/><rect x="134" y="210" width="5" height="6"/><rect x="144" y="224" width="5" height="6"/></g><path d="M40 264 L145 264" stroke="#8dc2e6" stroke-width="2" opacity="0.35"/>`
+        : '';
+  return `<svg viewBox="0 0 180 340" width="100%" height="100%" preserveAspectRatio="xMidYMax slice" aria-hidden="true">
+    <defs><linearGradient id="sky-${tod}" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="${p.sky0}"/><stop offset="56%" stop-color="${p.sky1}"/><stop offset="100%" stop-color="${p.sky2}"/></linearGradient></defs>
+    <rect width="180" height="340" fill="url(#sky-${tod})"/>
+    ${skyFx}
+    <path d="M0 262 L0 208 L44 208 L44 226 L62 226 L62 198 L74 188 L82 156 L92 156 L100 188 L112 198 L112 224 L126 224 L126 198 L162 198 L162 218 L180 218 L180 262 Z" fill="${p.bldg}"/>
+    <rect y="256" width="180" height="84" fill="${p.road}"/>
+    <polygon points="84,256 96,256 120,340 60,340" fill="${p.line}" opacity="0.22"/>
+    ${winGlow}
+  </svg>`;
 }

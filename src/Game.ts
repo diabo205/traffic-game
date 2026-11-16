@@ -289,13 +289,17 @@ export class Game {
     void this.selectVehicle(unlocked[(idx + 1) % unlocked.length]);
   }
 
-  private cycleTimeOfDay(): void {
-    const next = TIMES_OF_DAY[(TIMES_OF_DAY.indexOf(this.tod) + 1) % TIMES_OF_DAY.length];
+  private setTimeOfDay(next: TimeOfDay): void {
     this.tod = next;
     this.world.weather = next === 'monsoon' ? 'monsoon' : 'clear';
     this.renderer.setTimeOfDay(next);
     this.hud.setTimeOfDay(next);
     storageSet('kt3d.tod', next);
+  }
+
+  private cycleTimeOfDay(): void {
+    const next = TIMES_OF_DAY[(TIMES_OF_DAY.indexOf(this.tod) + 1) % TIMES_OF_DAY.length];
+    this.setTimeOfDay(next);
   }
 
   /** The minimap exists only for the city. */
@@ -411,6 +415,9 @@ export class Game {
 
     for (const v of VEHICLES) {
       this.hud.rideBtns[v].addEventListener('click', () => void this.selectVehicle(v));
+    }
+    for (const t of TIMES_OF_DAY) {
+      this.hud.todBtns[t].addEventListener('click', () => this.setTimeOfDay(t));
     }
     this.hud.rideBtn.addEventListener('click', () => this.cycleVehicle());
     this.hud.todBtn.addEventListener('click', () => this.cycleTimeOfDay());
