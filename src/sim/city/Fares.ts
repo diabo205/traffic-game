@@ -354,7 +354,7 @@ export class Fares {
       if (best >= 0) si = best;
     }
     const sp = this.spots[si];
-    const d = Math.hypot(sp.x - p.x, p.z - p.z);
+    const d = Math.hypot(sp.x - p.x, sp.z - p.z);
     if (d < SPAWN_MIN || d > SPAWN_MAX) return;
     if (this.waiting.some((w) => Math.hypot(w.x - sp.x, w.z - sp.z) < 40)) return;
     const dest = this.pickDest(sp.x, sp.z);

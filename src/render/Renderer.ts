@@ -230,7 +230,7 @@ export class Renderer {
   /** (Re)bind to a world. Dynamically imports scenery modules and rebuilds static scenery only if the seed changed. */
   async attach(world: AnyWorld): Promise<void> {
     const seq = ++this.attachSeq;
-    const key = `${world.mode}:${world.seed}`;
+    const key = world.mode === 'city' ? 'city' : `${world.mode}:${world.seed}`;
     let loadedEnv: Environment | null = null;
     let loadedScenery: CityScenery | null = null;
     let LoadedFares: (typeof FareVisuals) | null = null;

@@ -2,6 +2,7 @@ import { LevelManager } from '../LevelManager';
 import type { RunStats } from '../LevelManager';
 import { clamp, obbOverlap, pointObbDistance } from '../math';
 import { MOVES, PlayerCar, WALL } from '../PlayerCar';
+import { Rng } from '../rng';
 import { NPC_SPECS } from '../TrafficManager';
 import { trafficDamage } from '../types';
 import type { GameOverReason, GamePhase, InputFrame, NpcView, Obb, PlayerVehicle, SimEvent } from '../types';
@@ -82,19 +83,79 @@ export class CityWorld {
     this.pedestrians = new Pedestrians(this.seed, this.map);
     this.props = new Props(this.seed, this.map);
     this.level = new CityLevel(this.fares);
-    // Start on Shahrah-e-Liaquat heading NE toward Empress Market Plaza.
-    const em = this.map.landmarks.find((l) => l.kind === 'empress');
-    const emX = em ? em.obb.x : -79;
-    const emZ = em ? em.obb.z : 225;
-    const start =
-      this.map.links.find(
-        (l) => l.name.startsWith('Shahrah-e-Liaquat') && l.dx > 0.5 && l.dz > 0.2 && l.len >= 50 && Math.hypot(l.sx - emX, l.sz - emZ) < 160,
-      ) ?? this.map.links.find((l) => !l.turnaround && l.len >= 40 && l.lanes >= 2);
-    if (start) {
-      const p = this.map.linkPoint(start, Math.min(20, start.len * 0.35), this.map.laneOffset(start, start.lanes - 1));
-      this.startX = p.x;
-      this.startZ = p.z;
-      this.startHeading = start.heading;
+    // Pick a deterministic starting street from the world seed across major Saddar avenues.
+    const b = this.map.bounds;
+    const margin = 110;
+    const spawnPose = (l: CityLink) => {
+      let lane = l.lanes - 1;
+      if (lane === l.rampLane && l.lanes > 1) lane = 0;
+      let s = Math.min(20, l.len * 0.35);
+      if (lane === l.rampLane && s >= l.rampS0 - 3 && s <= l.rampS1 + 3) {
+        if (l.rampS0 - 3 >= 8) s = l.rampS0 - 3;
+        else if (l.rampS1 + 3 <= l.len - 12) s = l.rampS1 + 3;
+        else return null;
+      }
+      const pt = this.map.linkPoint(l, s, this.map.laneOffset(l, lane));
+      if (
+        this.map.rampHeight(pt.x, pt.z) > 0.01 ||
+        this.map.rampHeight(pt.x + l.dx * 1.8, pt.z + l.dz * 1.8) > 0.01 ||
+        this.map.rampHeight(pt.x - l.dx * 1.8, pt.z - l.dz * 1.8) > 0.01
+      ) {
+        return null;
+      }
+      const carBox: Obb = {
+        x: pt.x,
+        z: pt.z,
+        hw: this.player.spec.halfWidth + 0.3,
+        hl: this.player.spec.halfLength + 0.3,
+        heading: l.heading,
+      };
+      let blocked = false;
+      this.map.forEachSolidNear(pt.x, pt.z, 6, (sb) => {
+        if (!blocked && obbOverlap(carBox, sb)) blocked = true;
+      });
+      if (blocked) return null;
+      const fx = Math.sin(l.heading);
+      const fz = Math.cos(l.heading);
+      const hasAheadSpot = this.fares.spots.some((sp) => {
+        const dx = sp.x - pt.x;
+        const dz = sp.z - pt.z;
+        const along = dx * fx + dz * fz;
+        const d = Math.hypot(dx, dz);
+        return along > 18 && d >= 38 && d <= 105;
+      });
+      if (!hasAheadSpot) return null;
+      return { x: pt.x, z: pt.z, heading: l.heading };
+    };
+
+    const candidates: Array<{ x: number; z: number; heading: number }> = [];
+    for (const l of this.map.links) {
+      if (l.turnaround || l.len < 50 || l.lanes < 2 || !l.name) continue;
+      if (this.map.nodes[l.from].roundabout || this.map.nodes[l.to].roundabout) continue;
+      if (this.map.nodes[l.to].out.length === 0) continue;
+      const ex = l.sx + l.dx * l.len;
+      const ez = l.sz + l.dz * l.len;
+      const mx = (l.sx + ex) * 0.5;
+      const mz = (l.sz + ez) * 0.5;
+      if (mx < b.x0 + margin || mx > b.x1 - margin || mz < b.z0 + margin || mz > b.z1 - margin) continue;
+      const pose = spawnPose(l);
+      if (pose) candidates.push(pose);
+    }
+
+    if (candidates.length > 0) {
+      const spawnRng = new Rng(this.seed ^ 0x57a27);
+      const pick = candidates[spawnRng.int(0, candidates.length - 1)];
+      this.startX = pick.x;
+      this.startZ = pick.z;
+      this.startHeading = pick.heading;
+    } else {
+      const fallback = this.map.links.find((l) => !l.turnaround && l.len >= 40 && l.lanes >= 2);
+      if (fallback) {
+        const p = this.map.linkPoint(fallback, Math.min(20, fallback.len * 0.35), this.map.laneOffset(fallback, fallback.lanes - 1));
+        this.startX = p.x;
+        this.startZ = p.z;
+        this.startHeading = fallback.heading;
+      }
     }
     this.player.reset(this.startX, this.startZ, this.startHeading);
     this.player.freeRoam = true;

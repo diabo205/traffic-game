@@ -51,6 +51,15 @@ function dailyUtcInfo(): { key: string; label: string; seed: number } {
   return { key, label, seed };
 }
 
+function randomSeed(): number {
+  if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
+    const buf = new Uint32Array(1);
+    crypto.getRandomValues(buf);
+    return buf[0] || 1337;
+  }
+  return ((Math.random() * 0xffffffff) >>> 0) || 1337;
+}
+
 function parseCityBest(raw: string | null): { earned: number; rank?: ShiftRank } {
   if (!raw) return { earned: 0 };
   const [eStr, r] = raw.split('|');
@@ -99,7 +108,8 @@ export class Game {
   private constructor(
     private readonly renderer: Renderer,
     world: AnyWorld,
-    private readonly seed: number,
+    private seed: number,
+    private readonly fixedSeed: boolean,
     private readonly startZ: number,
     mode: Mode,
     dailyMode: boolean,
@@ -172,7 +182,9 @@ export class Game {
     const params = new URLSearchParams(window.location.search);
     const isDaily = params.has('daily');
     const daily = dailyUtcInfo();
-    const seed = isDaily ? daily.seed : Number(params.get('seed') ?? '1337') >>> 0 || 1337;
+    const seedParam = params.get('seed');
+    const fixedSeed = seedParam !== null;
+    const seed = fixedSeed ? (Number(seedParam) >>> 0 || 1337) : randomSeed();
     const lowSpec = params.has('low') || (window.matchMedia('(pointer: coarse)').matches && !params.has('high'));
     // Debug: ?z=1500 starts further along the route.
     const startZ = Math.max(0, Math.min(4200, Number(params.get('z') ?? '0') || 0));
@@ -198,7 +210,7 @@ export class Game {
     world.weather = tod === 'monsoon' ? 'monsoon' : 'clear';
     renderer.setTimeOfDay(tod);
     await renderer.attach(world);
-    return new Game(renderer, world, seed, startZ, mode, isDaily, bank, vehicle, tod, uiRoot);
+    return new Game(renderer, world, seed, fixedSeed, startZ, mode, isDaily, bank, vehicle, tod, uiRoot);
   }
 
   private resetRunTrackers(): void {
@@ -536,6 +548,7 @@ export class Game {
     this.endShownAt = this.endPendingAt = -1;
     this.hud.hideEnd();
     this.hud.showShiftOver(null);
+    if (!this.dailyMode && !this.fixedSeed) this.seed = randomSeed();
     if (!(await this.swapWorld(this.mode, this.dailyMode, this.vehicle))) return;
     this.syncMinimap();
     this.world.start();
