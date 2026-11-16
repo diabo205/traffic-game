@@ -47,12 +47,15 @@ export class SoundEngine {
   private noise!: AudioBuffer;
   private muted = false;
 
-  // Engine voice (primary intake/crank + secondary bandpass exhaust grit).
+  // Engine voice (primary intake/crank + secondary bandpass exhaust grit + intake air noise).
   private engOsc1!: OscillatorNode;
   private engOsc2!: OscillatorNode;
   private engSub!: OscillatorNode;
   private engFilter!: BiquadFilterNode;
   private engGain!: GainNode;
+  private engLfoGain!: GainNode;
+  private intakeFilter!: BiquadFilterNode;
+  private intakeGain!: GainNode;
   private exhaustOsc!: OscillatorNode;
   private exhaustFilter!: BiquadFilterNode;
   private exhaustGain!: GainNode;
@@ -161,38 +164,47 @@ export class SoundEngine {
   private buildEngine(ctx: AudioContext): void {
     this.engFilter = ctx.createBiquadFilter();
     this.engFilter.type = 'lowpass';
-    this.engFilter.frequency.value = 900;
-    this.engFilter.Q.value = 4;
+    this.engFilter.frequency.value = 500;
+    this.engFilter.Q.value = 0.85;
     this.engGain = ctx.createGain();
     this.engGain.gain.value = 0;
     this.engOsc1 = ctx.createOscillator();
     this.engOsc1.type = 'sawtooth';
     this.engOsc2 = ctx.createOscillator();
-    this.engOsc2.type = 'square';
+    this.engOsc2.type = 'triangle';
     this.engSub = ctx.createOscillator();
     this.engSub.type = 'triangle';
     const g2 = ctx.createGain();
-    g2.gain.value = 0.35;
+    g2.gain.value = 0.14;
     const gSub = ctx.createGain();
-    gSub.gain.value = 0.6;
+    gSub.gain.value = 0.7;
     this.engOsc1.connect(this.engFilter);
     this.engOsc2.connect(g2).connect(this.engFilter);
     this.engSub.connect(gSub).connect(this.engFilter);
-    // Lumpy 3-cylinder idle: amplitude wobble.
+    // Lumpy 3-cylinder idle: amplitude wobble (faded out above idle in update()).
     const lfo = ctx.createOscillator();
     lfo.frequency.value = 11;
-    const lfoGain = ctx.createGain();
-    lfoGain.gain.value = 0.08;
-    lfo.connect(lfoGain).connect(this.engGain.gain);
+    this.engLfoGain = ctx.createGain();
+    this.engLfoGain.gain.value = 0.035;
+    lfo.connect(this.engLfoGain).connect(this.engGain.gain);
     this.engFilter.connect(this.engGain).connect(this.master);
+
+    // Filtered intake / mechanical air texture (harmonic-plus-noise warmth).
+    this.intakeFilter = ctx.createBiquadFilter();
+    this.intakeFilter.type = 'bandpass';
+    this.intakeFilter.frequency.value = 380;
+    this.intakeFilter.Q.value = 0.9;
+    this.intakeGain = ctx.createGain();
+    this.intakeGain.gain.value = 0;
+    this.loopNoise(ctx).connect(this.intakeFilter).connect(this.intakeGain).connect(this.master);
 
     // Dual-layer exhaust rasp: bandpass-filtered harmonic growl.
     this.exhaustOsc = ctx.createOscillator();
     this.exhaustOsc.type = 'sawtooth';
     this.exhaustFilter = ctx.createBiquadFilter();
     this.exhaustFilter.type = 'bandpass';
-    this.exhaustFilter.frequency.value = 280;
-    this.exhaustFilter.Q.value = 2.4;
+    this.exhaustFilter.frequency.value = 220;
+    this.exhaustFilter.Q.value = 1.2;
     this.exhaustGain = ctx.createGain();
     this.exhaustGain.gain.value = 0;
     this.exhaustOsc.connect(this.exhaustFilter).connect(this.exhaustGain).connect(this.master);
@@ -291,13 +303,19 @@ export class SoundEngine {
     this.engOsc1.frequency.setTargetAtTime(fire, t, 0.03);
     this.engOsc2.frequency.setTargetAtTime(fire * 2.01, t, 0.03);
     this.engSub.frequency.setTargetAtTime(fire / 2, t, 0.03);
-    this.engFilter.frequency.setTargetAtTime((500 + this.rpm * 0.35 + p.throttle * 900) * filtMul, t, 0.05);
-    this.engGain.gain.setTargetAtTime(0.16 + p.throttle * 0.14, t, 0.05);
+    this.engFilter.frequency.setTargetAtTime((240 + this.rpm * 0.14 + p.throttle * 320) * filtMul, t, 0.05);
+    this.engGain.gain.setTargetAtTime(p.running ? 0.065 + p.throttle * 0.085 : 0.025, t, 0.05);
+
+    const idleFactor = Math.max(0, 1 - (this.rpm - 950) / 900);
+    this.engLfoGain.gain.setTargetAtTime((p.running ? 0.035 : 0.015) * idleFactor, t, 0.08);
+
+    this.intakeFilter.frequency.setTargetAtTime((300 + this.rpm * 0.12 + p.throttle * 480) * filtMul, t, 0.06);
+    this.intakeGain.gain.setTargetAtTime(p.running ? 0.015 + p.throttle * 0.05 : 0.006, t, 0.06);
 
     const exMul = p.vehicle === 'minibus' ? 0.72 : p.vehicle === 'rickshaw' ? 1.35 : 0.95;
     this.exhaustOsc.frequency.setTargetAtTime(fire * exMul, t, 0.03);
-    this.exhaustFilter.frequency.setTargetAtTime((210 + this.rpm * 0.14 + p.throttle * 340) * filtMul, t, 0.05);
-    this.exhaustGain.gain.setTargetAtTime(p.running ? 0.045 + p.throttle * 0.085 : 0.025, t, 0.05);
+    this.exhaustFilter.frequency.setTargetAtTime((180 + this.rpm * 0.10 + p.throttle * 240) * filtMul, t, 0.05);
+    this.exhaustGain.gain.setTargetAtTime(p.running ? 0.025 + p.throttle * 0.055 : 0.012, t, 0.05);
 
     this.hornGain.gain.setTargetAtTime(p.horn ? 0.32 : 0, t, 0.012);
     this.screechGain.gain.setTargetAtTime(Math.min(1, p.screech) * 0.22, t, 0.04);
