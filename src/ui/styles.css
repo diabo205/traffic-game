@@ -336,7 +336,7 @@ button { font-family: var(--display); cursor: pointer; }
 /* ---- Toast: slanted strip under the centre block ---- */
 .toast {
   position: absolute;
-  top: calc(158px + var(--safe-t));
+  top: calc(184px + var(--safe-t));
   left: 50%;
   z-index: 10;
   transform: translateX(-50%) translateY(-6px);
@@ -350,6 +350,7 @@ button { font-family: var(--display); cursor: pointer; }
   transition: opacity 0.2s, transform 0.2s;
   clip-path: polygon(10px 0, 100% 0, calc(100% - 10px) 100%, 0 100%);
 }
+.hud.in-menu .toast, .hud.in-menu .banner { display: none; }
 .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 .toast.good { background: var(--lime); color: var(--navy); }
 .toast.bad { background: var(--magenta); color: #fff; }
@@ -768,7 +769,7 @@ button { font-family: var(--display); cursor: pointer; }
 .touch-right { display: flex; align-items: flex-end; gap: 12px; }
 .aux { display: flex; flex-direction: column; gap: 10px; }
 .tbtn.small { width: 56px; height: 56px; font-size: 22px; border-radius: 50%; }
-.tbtn.small.drift { font-size: 14px; background: rgba(255, 45, 111, 0.55); }
+.tbtn.small.drift { width: 66px; height: 52px; border-radius: 26px; font-size: 15px; background: rgba(255, 45, 111, 0.62); }
 .tbtn.small.tilt-cal { width: auto; height: 48px; padding: 0 16px; border-radius: 24px; font-size: 15px; border-color: var(--lime); background: rgba(9, 18, 42, 0.72); color: var(--lime); }
 .pedals { display: flex; gap: 10px; align-items: flex-end; }
 .tbtn.pedal { width: clamp(64px, 14vw, 88px); font-size: 18px; }
@@ -869,11 +870,11 @@ button { font-family: var(--display); cursor: pointer; }
   .fare-info { font-size: 13px; }
   .guide-arrow { width: 46px; height: 46px; }
   .minimap { width: 88px; height: 88px; }
-  .banner { top: calc(194px + var(--safe-t)); }
+  .banner { top: calc(206px + var(--safe-t)); }
   .banner.show { transform: translateX(calc(12px + var(--safe-l))); }
   .banner-text { font-size: 20px; padding: 3px 24px 3px 12px; }
-  .toast { top: calc(154px + var(--safe-t)); font-size: 14px; }
-  .hud-right { top: calc(102px + var(--safe-t)); transform: none; max-height: 165px; overflow: hidden; }
+  .toast { top: calc(164px + var(--safe-t)); font-size: 14px; }
+  .hud-right { top: calc(108px + var(--safe-t)); transform: none; max-height: 155px; overflow: visible; }
   .combo-mult { font-size: 30px; }
   .combo-pts { font-size: 15px; }
   .stunt { font-size: 13px; padding: 1px 10px 1px 16px; }
@@ -904,7 +905,8 @@ button { font-family: var(--display); cursor: pointer; }
   .tbtn.gas { height: 100px; }
   .tbtn.brake { height: 72px; }
   .tbtn.steer { width: 72px; height: 72px; }
-  .tbtn.small { width: 46px; height: 46px; }
+  .tbtn.small { width: 48px; height: 48px; }
+  .tbtn.small.drift { width: 58px; height: 48px; border-radius: 24px; font-size: 13px; }
   .stick { width: 116px; height: 116px; }
   .card-grid, .controls-pane { gap: 8px; }
   .card-grid { grid-template-columns: repeat(3, 1fr); }
@@ -923,33 +925,61 @@ button { font-family: var(--display); cursor: pointer; }
   body.touch-ui:not(.in-menu) .perf-hud { bottom: calc(182px + var(--safe-b)); }
   .hud-tc {
     top: calc(104px + var(--safe-t));
-    left: calc(120px + var(--safe-l));
+    left: calc(12px + var(--safe-l));
     right: calc(12px + var(--safe-r));
     width: auto;
     transform: none;
     gap: 4px;
   }
+  .hud.city .hud-tc {
+    left: calc(118px + var(--safe-l));
+  }
   .fare { min-width: 0; width: 100%; padding: 3px 16px 5px; }
   .fare-name { font-size: 16px; }
   .fare-info { font-size: 13px; }
   .guide-arrow { width: 44px; height: 44px; }
-  .toast { top: calc(258px + var(--safe-t)); font-size: 14px; max-width: calc(100vw - 24px); white-space: normal; text-align: center; }
-  .banner { top: calc(296px + var(--safe-t)); }
+  .toast { top: calc(274px + var(--safe-t)); font-size: 14px; max-width: calc(100vw - 24px); white-space: normal; text-align: center; }
+  .banner { top: calc(332px + var(--safe-t)); }
   .banner-text { font-size: 22px; padding: 4px 26px 4px 14px; }
   .minimap { width: 88px; height: 88px; }
-  .steer-buttons, .pedals, .touch-right { gap: 6px; }
-  .tbtn.small { width: 44px; height: 44px; font-size: 18px; }
-  .tbtn.small.drift { font-size: 11px; }
+  .steer-buttons, .pedals, .touch-right { gap: 8px; }
+  .tbtn.small { width: 46px; height: 46px; font-size: 18px; }
+  .tbtn.small.drift { width: 58px; height: 48px; border-radius: 24px; font-size: 13px; }
   .hero { top: calc(68px + var(--safe-t)); width: auto; left: 16px; }
   .play-wrap { left: 14px; right: 14px; bottom: calc(198px + var(--safe-b)); }
   .play-actions { justify-content: center; }
   .garage-strip { justify-content: center; }
   .tiles { flex-wrap: wrap; }
   .tile { flex: 1 1 40%; }
-  .card-grid, .controls-pane { grid-template-columns: 1fr; }
-  .screen.pause { flex-direction: column; }
-  .pause-left { min-height: 34%; }
-  .pause-right { width: auto; }
+  .card-grid { grid-template-columns: 1fr 1fr; gap: 8px; }
+  .controls-pane { grid-template-columns: 1fr; }
+  .card-btn { min-height: 54px; padding: 6px 10px; }
+  .card-label { font-size: 20px; }
+  .card-value { font-size: 13px; }
+  .screen.pause { flex-direction: column; justify-content: space-between; overflow: auto; }
+  .pause-left {
+    flex: 0 0 auto;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+    padding: calc(16px + var(--safe-t)) calc(14px + var(--safe-r)) 10px calc(14px + var(--safe-l));
+  }
+  .zone-card, .goals-head, .goals { position: relative; z-index: 1; top: auto; right: auto; bottom: auto; left: auto; }
+  .zone-card { font-size: 30px; padding: 3px 18px; }
+  .goals-head { font-size: 18px; padding: 2px 14px; }
+  .goals { width: 100%; }
+  .goal { font-size: 14px; padding: 4px 12px; }
+  .pause-right {
+    width: auto;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    padding: 12px calc(14px + var(--safe-r)) calc(16px + var(--safe-b)) calc(14px + var(--safe-l));
+  }
+  .pause-right .menu-tag { grid-column: 1 / -1; justify-self: end; margin-bottom: 2px; font-size: 18px; }
+  .pause-right .card-btn { min-height: 50px; }
+  .pause-right .card-btn:first-of-type, .pause-right .card-btn:last-of-type { grid-column: 1 / -1; }
   .results-stats { grid-template-columns: 1fr; }
 }
 /* Mobile landscape: center perf pill between left steer buttons and right aux/pedals. */

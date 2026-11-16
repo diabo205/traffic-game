@@ -161,7 +161,7 @@ export class Stunts {
     for (const d of this.donutHistory) {
       if (Math.hypot(p.x - d.x, p.z - d.z) < 32) recentDonuts++;
     }
-    if (!p.airborne && Math.abs(p.yawRate) > 1.45 && v > 2 && v < 13.5 && (p.handbrake || Math.abs(p.steerAngle) > 0.35)) {
+    if (!p.airborne && Math.abs(p.yawRate) > 1.15 && v > 2.5 && v < 12.0 && (p.handbrake || Math.abs(p.steerAngle) > 0.38)) {
       this.donutTime += dt;
       if (this.donutTime >= 0.85 && this.donutCooldown <= 0) {
         if (this.handbrakeActive) this.donutDuringDrift = true;

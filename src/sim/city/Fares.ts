@@ -209,9 +209,9 @@ export class Fares {
   private board(w: Passenger, p: PlayerCar, events: SimEvent[]): void {
     const place = this.places[w.dest];
     const dist = this.routeLength(p.x, p.z, p.heading, place);
-    const pace = w.kind === 'vip' ? 11.8 : 10.6;
-    const pad = w.kind === 'vip' ? 5 : 6;
-    const limit = Math.max(12, Math.round(dist / pace + pad));
+    const pace = w.kind === 'vip' ? 9.8 : 9.0;
+    const pad = w.kind === 'vip' ? 6 : 8;
+    const limit = Math.max(14, Math.round(dist / pace + pad));
     const stops = w.kind === 'party' ? 2 : 1;
     const partyCount = w.kind === 'party' ? (p.vehicle === 'minibus' ? 3 : 2) : 1;
     this.fare = {
@@ -277,7 +277,7 @@ export class Fares {
       const nextDest = this.pickDest(p.x, p.z, f.dest, 720);
       const nextPlace = this.places[nextDest];
       const nextDist = this.routeLength(p.x, p.z, p.heading, nextPlace);
-      const nextLimit = Math.max(12, Math.round(nextDist / 10.6 + 6));
+      const nextLimit = Math.max(14, Math.round(nextDist / 9.0 + 7));
       const carry = Math.min(12, Math.round(f.timeLeft * 0.45));
       f.dest = nextDest;
       f.distance = nextDist;
@@ -421,11 +421,11 @@ export class Fares {
     pts.push(tx, tz);
     this.navPath = pts;
     this.navDist = r ? r.dist : direct;
-    // Aim at the first route point comfortably ahead of the car.
+    // Aim at the first route point comfortably ahead along the street (avoids corner-cutting at nodes).
     this.navX = tx;
     this.navZ = tz;
     for (let i = 2; i < pts.length; i += 2) {
-      if (Math.hypot(pts[i] - p.x, pts[i + 1] - p.z) > 6.5) {
+      if (Math.hypot(pts[i] - p.x, pts[i + 1] - p.z) > 11) {
         this.navX = pts[i];
         this.navZ = pts[i + 1];
         break;

@@ -336,14 +336,17 @@ export class CityWorld {
     const preMag = Math.hypot(vx, vz);
     const j = -(1 + RESTITUTION) * rel;
     p.setVelocity(vx + nx * j, vz + nz * j);
-    if (prevSpeed > 1.5 && intoNorm < 0.92) {
+    if (prevSpeed > 1.5 && intoNorm < WALL.glanceMax) {
       // Oblique forward wall contact: never flip gear into reverse; slide forward along wall.
       if (p.speed < 0) p.speed = Math.abs(p.speed);
       if (preMag > 3) {
-        p.speed = Math.max(p.speed, preMag * Math.max(0.72, 1 - intoNorm * 0.28));
+        p.speed = Math.max(p.speed, preMag * Math.max(0.68, 1 - intoNorm * 0.3));
       }
-    } else if (prevSpeed > 1.5 && intoNorm >= 0.92 && p.throttle > 0.3 && p.speed < -3.5) {
+    } else if (prevSpeed > 1.5 && intoNorm >= WALL.glanceMax && p.throttle > 0.3 && p.speed < -3.5) {
       p.speed = -3.5;
+    }
+    if (p.speed < -Math.max(4.5, p.spec.maxReverse * 0.85)) {
+      p.speed = -Math.max(4.5, p.spec.maxReverse * 0.85);
     }
     p.scrapeWall(nx, nz);
     const impact = -rel;
@@ -472,14 +475,20 @@ export class CityWorld {
       if (rel >= 0) continue;
       const j = -(1 + TRAFFIC_RESTITUTION) * rel;
       p.setVelocity(vx + mtv.nx * j * mr, vz + mtv.nz * j * mr);
-      // The NPC gets shoved (light ones fly sideways and spin) and loses speed.
+      // The NPC gets shoved (light ones fly sideways and spin) and loses speed; cap velocity so multi-tick contacts never go supersonic.
       const shove = j * (1 - mr);
       n.kvx -= mtv.nx * shove * 0.9;
       n.kvz -= mtv.nz * shove * 0.9;
+      const maxShoveV = Math.max(22, Math.abs(p.speed) * 1.35);
+      const kvMag = Math.hypot(n.kvx, n.kvz);
+      if (kvMag > maxShoveV) {
+        n.kvx *= maxShoveV / kvMag;
+        n.kvz *= maxShoveV / kvMag;
+      }
       // Spin from where it was hit: off-centre hits twist it.
       const rx = (p.x - n.x), rz = (p.z - n.z);
       const torque = (rx * -mtv.nz + rz * mtv.nx) * shove;
-      n.kSpin += clamp(torque * 0.35 * (1 - mr) * (1 - mr) * 4, -4, 4);
+      n.kSpin = clamp(n.kSpin + clamp(torque * 0.35 * (1 - mr) * (1 - mr) * 4, -4, 4), -10, 10);
       n.speed = Math.max(0, n.speed - shove * 0.8);
 
       const impact = -rel;

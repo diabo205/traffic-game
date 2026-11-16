@@ -252,7 +252,7 @@ export class PlayerCar {
       !this.airborne &&
       this.dashCooldown <= 0 &&
       this.boostCooldown <= 0 &&
-      this.speed > 1 &&
+      this.speed > 5.5 &&
       this.speed < this.lastTopSpeed * MOVES.dashMaxSpeed
     );
   }
@@ -459,12 +459,12 @@ export class PlayerCar {
       } else {
         this.driftTurnTime = Math.max(0, this.driftTurnTime - dt * 2);
       }
-      if (this.driftTurnTime >= 0.08 && (Math.abs(steerIn) >= 0.22 || (this.driftYawAccum >= 0.25 && Math.abs(this.yawRate) >= 0.45))) {
+      if (this.driftTurnTime >= 0.04 && (Math.abs(steerIn) >= 0.22 || (this.driftYawAccum >= 0.22 && Math.abs(this.yawRate) >= 0.42))) {
         this.driftTime += dt;
       }
     } else if (wasHandbrake) {
       // Powering out of a drift gives a boost (mini-boost for >=0.45s micro-drifts, full >=0.7s).
-      if (this.driftTime >= 0.445 && this.driftYawAccum >= 0.25 && throttle > 0.5) {
+      if (this.driftTime >= 0.445 && this.driftYawAccum >= 0.22 && throttle > 0.5) {
         const dur = this.driftTime >= 0.7 ? Math.min(0.75, 0.34 + this.driftTime * 0.15) : 0.24 + Math.max(0, this.driftTime - 0.45) * 0.32;
         this.boost('drift', dur);
       }
@@ -475,17 +475,18 @@ export class PlayerCar {
       this.driftYawAccum = 0;
     }
     // Launch: rev against the brake at a standstill, then let the brake go (monotonic reward up to 0.75s).
-    if (!air && absV < 0.8 && throttle > 0.5 && brake > 0.5) this.launchCharge = Math.min(MOVES.launchMaxCharge, this.launchCharge + dt);
+    const chargingLaunch = !air && absV < 0.8 && throttle > 0.5 && brake > 0.5;
+    if (chargingLaunch) this.launchCharge = Math.min(MOVES.launchMaxCharge, this.launchCharge + dt);
     else {
       if (this.launchCharge >= MOVES.launchCharge && throttle > 0.5 && brake < 0.2 && this.prevBrake >= 0.2) {
         this.boost('launch', 0.45 + Math.max(0, this.launchCharge - MOVES.launchCharge) * 1.45);
       }
       if (brake < 0.2 || throttle < 0.5) this.launchCharge = 0;
     }
-    // Dash: a quick re-tap of the gas while rolling.
+    // Dash: a quick re-tap of the gas while rolling out of a corner (v > 5.5 m/s blocks straight-start tap cheese).
     if (throttle < 0.2 && this.prevThrottle >= 0.2) this.sinceRelease = 0;
     else this.sinceRelease += dt;
-    if (!air && throttle > 0.8 && this.prevThrottle <= 0.8 && this.sinceRelease < MOVES.dashWindow && v > 1 && v < vTop * MOVES.dashMaxSpeed && brake < 0.2 && this.dashCooldown <= 0 && this.boostCooldown <= 0) {
+    if (!air && throttle > 0.8 && this.prevThrottle <= 0.8 && this.sinceRelease < MOVES.dashWindow && v > 5.5 && v < vTop * MOVES.dashMaxSpeed && brake < 0.2 && this.dashCooldown <= 0 && this.boostCooldown <= 0) {
       this.boost('dash', 0.6);
       this.dashCooldown = MOVES.dashCooldown;
     }
@@ -505,9 +506,12 @@ export class PlayerCar {
     this.reversing = false;
     if (air) {
       // No grip in the air: just drag.
+    } else if (chargingLaunch) {
+      // Hold wheels locked cleanly while staging Launch (no 0.3 km/h creep).
+      a -= v / dt;
     } else if (this.handbrake) {
-      // Rear locked, engine still pulling: bleeds a little speed.
-      a += throttle * sp.driveAccel * 0.5 - 1.0;
+      // Rear locked, engine still pulling: slight speed bleed without killing corner momentum.
+      a += throttle * sp.driveAccel * 0.58 - 0.65;
     } else if (v >= -0.2) {
       // Forward gear.
       const ratio = Math.max(v, 0) / top;

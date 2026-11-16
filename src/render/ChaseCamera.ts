@@ -120,11 +120,11 @@ export class ChaseCamera {
       target.y + height,
       target.z + Math.cos(this.yaw) * dist,
     );
-    if (o.clip) {
-      o.clip(this.desired, target);
-      this.desired.y = Math.max(this.desired.y, target.y + 1.0);
-    }
     if (!this.initialised) {
+      if (o.clip) {
+        o.clip(this.desired, target);
+        this.desired.y = Math.max(this.desired.y, target.y + 1.0);
+      }
       this.pos.copy(this.desired);
       this.vel.set(0, 0, 0);
       this.look.copy(target);

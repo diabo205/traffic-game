@@ -77,6 +77,8 @@ export interface CityNpc {
   lastHitTick: number;
   waitTime: number;
   blockedTime: number;
+  /** seconds left to drive clear after breaking a junction/cycle deadlock */
+  creepTime: number;
   /** seconds left pulling over for the player's horn / dipper */
   yieldTime: number;
   honkCooldown: number;
@@ -171,6 +173,7 @@ export class CityTraffic {
       lastHitTick: -1e9,
       waitTime: 0,
       blockedTime: 0,
+      creepTime: 0,
       blocker: -1,
       yieldTime: 0,
       honkCooldown: 0,
@@ -293,6 +296,9 @@ export class CityTraffic {
       list.push(n.link);
     }
 
+    const byId = new Map<number, CityNpc>();
+    for (const o of this.npcs) byId.set(o.id, o);
+
     for (const n of this.npcs) {
       n.prevX = n.x;
       n.prevZ = n.z;
@@ -314,7 +320,7 @@ export class CityTraffic {
           if (vTurn < Infinity) target = Math.min(target, Math.sqrt(vTurn * vTurn + 2 * spec.decel * 0.6 * Math.max(0, remaining - 2)));
           // Take turns at junctions; vehicles circulating inside a roundabout ring don't stop for ring chords.
           const circulating = node.roundabout && m.nodes[link.from].roundabout && m.nodes[next.to].roundabout;
-          if (remaining < 14 && !circulating) {
+          if (remaining < 14 && !circulating && n.creepTime <= 0) {
             const occ = occupants.get(node.id);
             const busy = occ?.some((from) => from !== link.id && !(turn === 'straight' && link.reverse >= 0 && from === link.reverse)) ?? false;
             if (busy && n.waitTime < MAX_WAIT) {
@@ -335,7 +341,12 @@ export class CityTraffic {
       const fx = Math.sin(n.heading), fz = Math.cos(n.heading);
       const look = 6 + n.speed * 1.6;
       let blocker = -1;
-      let creep = false;
+      let creep = n.creepTime > 0;
+      if (n.creepTime > 0) n.creepTime = Math.max(0, n.creepTime - dt);
+      const triggerCreep = (latch = 2.2) => {
+        creep = true;
+        n.creepTime = Math.max(n.creepTime, latch);
+      };
       const consider = (id: number, ox: number, oz: number, ohw: number, ohl: number) => {
         const dx = ox - n.x, dz = oz - n.z;
         const along = dx * fx + dz * fz;
@@ -350,20 +361,45 @@ export class CityTraffic {
       };
       for (const o of this.npcs) {
         if (o === n) continue;
-        // Deadlock breakers: of two vehicles waiting on each other the lower id
-        // goes; after a long wait, crossing traffic is nosed through slowly
-        // unless already within direct bumper overlap range.
-        if (o.blocker === n.id && n.id < o.id) continue;
+        // Deadlock breakers:
+        // 1) Two-way or multi-vehicle (3-6 hop) waiting cycles: lowest ID in the cycle proceeds.
+        let inCycleLowest = false;
+        if (o.blocker === n.id && n.id < o.id) {
+          inCycleLowest = true;
+        } else if ((n.blockedTime > 0.8 || creep) && o.blocker > 0) {
+          let cur: CityNpc | undefined = o;
+          let minId = Math.min(n.id, o.id);
+          for (let hop = 0; hop < 6 && cur && cur.blocker > 0; hop++) {
+            minId = Math.min(minId, cur.blocker);
+            if (cur.blocker === n.id) {
+              inCycleLowest = n.id <= minId;
+              break;
+            }
+            cur = byId.get(cur.blocker);
+          }
+        }
+        if (inCycleLowest) {
+          if (n.blockedTime > 0.8) triggerCreep(1.6);
+          continue;
+        }
         const os = NPC_SPECS[o.kind];
         const dx = o.x - n.x;
         const dz = o.z - n.z;
-        if (dx * dx + dz * dz > 36) {
-          if (n.blockedTime > 3 && Math.cos(o.heading - n.heading) < 0.6) {
-            creep = true;
+        const distSq = dx * dx + dz * dz;
+        const crossing = Math.cos(o.heading - n.heading) < 0.6;
+        const minClear = (spec.hl + os.hl) * (crossing ? 0.85 : 0.96);
+        if (distSq > minClear * minClear) {
+          // Crossing / turning / long-blocked junction traffic creeps clear once outside bumper overlap.
+          if ((creep || n.blockedTime > 2.5) && crossing) {
+            triggerCreep();
             continue;
           }
-          if (n.path && n.blockedTime > 3.5 && n.id < o.id && Math.hypot(dx, dz) > spec.hl + os.hl + 0.5) {
-            creep = true;
+          if (n.path && (creep || n.blockedTime > 3.0) && n.id < o.id) {
+            triggerCreep();
+            continue;
+          }
+          if ((creep || n.blockedTime > 4.5) && n.id < o.id) {
+            triggerCreep();
             continue;
           }
         }
@@ -375,7 +411,7 @@ export class CityTraffic {
         if (Math.abs(r.x - n.x) < 40 && Math.abs(r.z - n.z) < 40) consider(-2, r.x, r.z, r.hw, r.hl);
       }
       n.blocker = blocker;
-      if (creep) target = Math.min(target, 3);
+      if (creep) target = Math.min(target, 5.5);
 
       if (n.yieldTime > 0) {
         n.yieldTime -= dt;
@@ -387,7 +423,7 @@ export class CityTraffic {
         const allowed = stopGap <= margin ? 0 : Math.sqrt(2 * spec.decel * 0.75 * (stopGap - margin));
         if (allowed < target) target = allowed;
       }
-      const blocked = target < this.cruise(n, link) * 0.35;
+      const blocked = target < Math.min(2.2, this.cruise(n, link) * 0.25);
       n.blockedTime = blocked ? n.blockedTime + dt : 0;
 
       // ---- Lane change around a slow vehicle -----------------------------------
@@ -510,7 +546,7 @@ export class CityTraffic {
         const aProj = mtv.nx * Math.sin(a.heading) + mtv.nz * Math.cos(a.heading);
         a.x += mtv.nx * push;
         a.z += mtv.nz * push;
-        if (aProj < -0.5) {
+        if (aProj < -0.5 && a.creepTime <= 0) {
           const back = -aProj * push;
           if (a.path) a.ps = Math.max(0, a.ps - back);
           else a.s = Math.max(0, a.s - back);
@@ -522,7 +558,7 @@ export class CityTraffic {
         const bProj = -(mtv.nx * Math.sin(b.heading) + mtv.nz * Math.cos(b.heading));
         b.x -= mtv.nx * push;
         b.z -= mtv.nz * push;
-        if (bProj < -0.5) {
+        if (bProj < -0.5 && b.creepTime <= 0) {
           const back = -bProj * push;
           if (b.path) b.ps = Math.max(0, b.ps - back);
           else b.s = Math.max(0, b.s - back);

@@ -306,7 +306,7 @@ export class Hud {
         <p><b>GAS / BRAKE</b> pedals · <b>DRIFT</b></p>
         <p><b>📯</b> horn · <b>💡</b> dipper · <b>II</b> pause</p></div>
       <div class="ctl moves"><h3>MOVES</h3>
-        <p><b>DRIFT</b> gas + brake while turning — power out for a boost</p>
+        <p><b>DRIFT</b> E or gas + brake while turning — power out for a boost</p>
         <p><b>LAUNCH</b> hold brake + gas when stopped, release brake</p>
         <p><b>DASH</b> double-tap gas (&lt; 55% top speed) · <b>DONUT</b> spin tight · <b>HORN</b> clears traffic & pedestrians</p></div>`;
     const osmCredit = div('osm-credit');
@@ -454,6 +454,7 @@ export class Hud {
     setCard(this.touchBtn, v ? 'ON' : 'OFF');
     this.stickBtn.classList.toggle('disabled', !v);
     this.autoGasBtn.classList.toggle('disabled', !v);
+    this.hapticsBtn.classList.toggle('disabled', !v);
     this.pauseSteerBtn.classList.toggle('hidden', !v);
   }
 
@@ -470,6 +471,8 @@ export class Hud {
     if (open) {
       this.toast.classList.remove('show');
       this.toastTimer = 0;
+      this.banner.classList.remove('show');
+      this.bannerTimer = 0;
     }
   }
 

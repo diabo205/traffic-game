@@ -439,7 +439,7 @@ export class VehicleFactory {
       if (this.beamMaterial) {
         const beamGeo = new THREE.ConeGeometry(2.2, 14, 12, 1, true);
         beamGeo.translate(0, -7, 0);
-        beamGeo.rotateX(-Math.PI / 2);
+        beamGeo.rotateX(Math.PI / 2);
         const beam = new THREE.Mesh(beamGeo, this.beamMaterial);
         beam.position.set(0, headCenter.y, headCenter.z);
         beam.visible = false;

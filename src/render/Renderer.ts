@@ -399,8 +399,11 @@ export class Renderer {
 
   /** Pull chase camera inside building OBBs in Saddar so awnings/walls never occlude the car. */
   private clipCamera(world: CityWorld, camPos: THREE.Vector3, target: THREE.Vector3): void {
+    const horizDist = Math.hypot(camPos.x - target.x, camPos.z - target.z);
+    // Keep camera outside the player's own vehicle body (minibus is ~4.15m half-length).
+    const minT = Math.min(0.86, Math.max(0.35, (this.chase.vehicleScale > 1.05 ? 4.35 : 2.1) / Math.max(1, horizDist)));
     let bestT = 1;
-    for (const t of [0.35, 0.55, 0.72, 0.86, 1.0]) {
+    for (const t of [minT, 0.55, 0.72, 0.86, 1.0]) {
       const x = target.x + (camPos.x - target.x) * t;
       const y = target.y + (camPos.y - target.y) * t;
       const z = target.z + (camPos.z - target.z) * t;
@@ -409,7 +412,7 @@ export class Renderer {
         if (y < 10 && pointObbDistance(x, -z, b) < 1.85) hit = true;
       });
       if (hit) {
-        bestT = Math.min(bestT, Math.max(0.35, t - 0.14));
+        bestT = Math.min(bestT, Math.max(minT, t - 0.14));
         break;
       }
     }
@@ -453,7 +456,7 @@ export class Renderer {
       v.body.rotation.set(lerp(p.prevPitch, p.pitch), 0, -lerp(p.prevRoll, p.roll));
       v.body.position.y = lerp(p.prevBump, p.bump) * 0.6;
       v.setBrake(p.braking || p.reversing);
-      v.setHeadlights(p.dipper || this.timeOfDay === 'night' || this.timeOfDay === 'monsoon' ? 2 : 1, lowLight);
+      v.setHeadlights(p.dipper ? 2 : 1, lowLight);
       v.setHazard(world.phase === 'gameover' && Math.floor(this.time * 3) % 2 === 0);
       for (const w of v.wheels) {
         w.rotation.order = 'YXZ';

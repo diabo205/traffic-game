@@ -751,7 +751,7 @@ export class CityScenery {
       roof.castShadow = shadow;
       bg.add(roof);
 
-      // Left and right pavement support piers + stepped access staircases
+      // Left and right pavement support piers + flush stepped access staircases
       for (const side of [-1, 1]) {
         const px = side * half;
         for (const dz of [-0.85, 0.85]) {
@@ -760,21 +760,27 @@ export class CityScenery {
           pier.castShadow = shadow;
           bg.add(pier);
         }
-        // Landing platform & sloped stair ramp running parallel to the pavement (+z in local space)
-        const landing = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.35, 2.4), concreteMat);
-        landing.position.set(px, deckY * 0.52, 2.2);
-        const stairLen = 5.4;
-        const stair = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.28, stairLen), steelGreen);
-        stair.position.set(px, deckY * 0.5, 2.8);
-        stair.rotation.x = 0.52;
+        // Upper landing flush with bridge deck edge + continuous sloped stair flight to ground
+        const landing = new THREE.Mesh(new THREE.BoxGeometry(2.0, 0.3, 1.5), concreteMat);
+        landing.position.set(px, deckY - 0.15, deckW / 2 + 0.55);
+        const drop = deckY - 0.15;
+        const run = 5.6;
+        const stairLen = Math.hypot(drop, run);
+        const stairTilt = Math.atan2(drop, run);
+        const stairMidZ = deckW / 2 + 1.15 + run * 0.5;
+        const stair = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.26, stairLen), steelGreen);
+        stair.position.set(px, drop * 0.5, stairMidZ);
+        stair.rotation.x = stairTilt;
         const rail = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.14, stairLen), railYellow);
-        rail.position.set(px + side * 0.72, deckY * 0.5 + 0.85, 2.8);
-        rail.rotation.x = 0.52;
-        bg.add(landing, stair, rail);
+        rail.position.set(px + side * 0.72, drop * 0.5 + 0.88, stairMidZ);
+        rail.rotation.x = stairTilt;
+        const midPost = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.18, drop * 0.55, 6), concreteMat);
+        midPost.position.set(px, drop * 0.275, stairMidZ);
+        bg.add(landing, stair, rail, midPost);
       }
 
       // Double-sided illuminated municipal gantry sign over the roadway
-      const signTex = signTexture([b.name, 'PEDESTRIAN BRIDGE · پیدل چلنے والوں کا پل'], '#0f5c2e', '#ffffff', 512, 96);
+      const signTex = signTexture([b.name, 'PEDESTRIAN BRIDGE · PAIDAL PUL'], '#0f5c2e', '#ffffff', 512, 96);
       this.ownedTex.push(signTex);
       const signMat = new THREE.MeshLambertMaterial({
         color: '#ffffff',
@@ -792,6 +798,19 @@ export class CityScenery {
         bg.add(board);
       }
     }
+  }
+
+  private nearBridge(map: CityMap, x: number, z: number, padAlong: number, padSpan: number): boolean {
+    for (const br of map.bridges) {
+      const dx = x - br.x, dz = z - br.z;
+      const c = Math.cos(br.heading), s = Math.sin(br.heading);
+      // Local frame matches CityScenery.pedestrianBridges rotation.y = -br.heading:
+      // alongSpan aligns with bridge span; alongRoad runs along traffic passing under it.
+      const alongSpan = dx * c + dz * s;
+      const alongRoad = Math.abs(-dx * s + dz * c);
+      if (Math.abs(alongSpan) <= br.span * 0.5 + padSpan && alongRoad <= padAlong) return true;
+    }
+    return false;
   }
 
   private canPlaceOnPavement(map: CityMap, x: number, z: number, radius: number, padRoad: number, padSolid: number): boolean {
@@ -995,7 +1014,7 @@ export class CityScenery {
         let prev: V3 | null = null;
         for (let s = 5; s < l.len - 4; s += rng.range(22, 30)) {
           const p = map.linkPoint(l, s, off);
-          if (!this.canPlaceOnPavement(map, p.x, p.z, 0.7, 0.35, 0.75)) {
+          if (!this.canPlaceOnPavement(map, p.x, p.z, 0.7, 0.35, 0.75) || this.nearBridge(map, p.x, p.z, 10, 4)) {
             prev = null;
             continue;
           }
@@ -1039,6 +1058,7 @@ export class CityScenery {
             const pL = map.linkPoint(l, s, l.hw + 0.7);
             const pR = map.linkPoint(l, s, -(l.hw + 0.7));
             if (map.isRoad(pL.x, pL.z) || map.isRoad(pR.x, pR.z) || map.onIsland(pL.x, pL.z) || map.onIsland(pR.x, pR.z)) continue;
+            if (this.nearBridge(map, (pL.x + pR.x) * 0.5, (pL.z + pR.z) * 0.5, 18, 6)) continue;
             let blocked = false;
             for (const ep of [pL, pR]) {
               map.forEachSolidNear(ep.x, ep.z, 2, (sol) => {

@@ -189,7 +189,7 @@ export class Game {
     }
     let tod: TimeOfDay = 'noon';
     const savedTod = storageGet('kt3d.tod');
-    if (params.has('monsoon')) tod = 'monsoon';
+    if (params.has('monsoon') || params.get('weather') === 'monsoon') tod = 'monsoon';
     else if (savedTod === 'noon' || savedTod === 'sunset' || savedTod === 'night' || savedTod === 'monsoon') tod = savedTod;
 
     const renderer = await Renderer.create(container, lowSpec);
@@ -580,7 +580,15 @@ export class Game {
       this.world.start();
       this.drainAndHandle();
       if (this.dailyMode) this.hud.showBanner(`DAILY · ${this.daily.label}`);
-      if (this.world.mode === 'route') this.pendingToast = { delay: 1.8, text: 'REACH CLIFTON · 4.2 KM', good: true };
+      if (this.world.mode === 'route') {
+        if (!this.touch.visible && !this.hadFirstShift) {
+          this.hadFirstShift = true;
+          this.toastNow('WASD DRIVE · SPACE HORN · E DRIFT · R RADIO');
+          this.pendingToast = { delay: 2.8, text: 'REACH CLIFTON · 4.2 KM', good: true };
+        } else {
+          this.pendingToast = { delay: 1.8, text: 'REACH CLIFTON · 4.2 KM', good: true };
+        }
+      }
     } else if (phase === 'running' && confirm && this.world.mode === 'city' && !this.world.fares.onShift) {
       this.world.startShift();
     } else if ((phase === 'gameover' || phase === 'complete') && confirm && this.endShownAt >= 0 && this.clock - this.endShownAt > 0.6) {
@@ -800,7 +808,12 @@ export class Game {
         this.hud.showShiftOver(null);
         if (!this.hadFirstShift) {
           this.hadFirstShift = true;
-          this.pendingToast = { delay: 1.8, text: `FIND A PASSENGER · ${e.time}s SHIFT`, good: true };
+          if (!this.touch.visible) {
+            this.toastNow('WASD DRIVE · SPACE HORN · E DRIFT · R RADIO');
+            this.pendingToast = { delay: 2.8, text: `FIND A PASSENGER · ${e.time}s SHIFT`, good: true };
+          } else {
+            this.pendingToast = { delay: 1.8, text: `FIND A PASSENGER · ${e.time}s SHIFT`, good: true };
+          }
         } else {
           this.toastNow(`ON DUTY · ${e.time}s SHIFT`);
         }

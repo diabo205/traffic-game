@@ -316,6 +316,8 @@ async function runCdp(chromePath, fullUrl, report) {
             for (const cand of document.querySelectorAll(base)) {
               const s = getComputedStyle(cand);
               if (s.display === 'none' || s.visibility === 'hidden') continue;
+              const cr = cand.getBoundingClientRect();
+              if (cr.width <= 0 || cr.height <= 0) continue;
               if ((cand.innerText || cand.textContent || '').includes(needle)) { el = cand; break; }
             }
           } else {
