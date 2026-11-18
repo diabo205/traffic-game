@@ -1,5 +1,5 @@
 /* Karachi Traffic 3D Offline Service Worker */
-const CACHE = 'kt3d-v-93a088eb';
+const CACHE = 'kt3d-v-d6c1abb4';
 const PRECACHE = [
   "./",
   "./index.html",
@@ -8,32 +8,34 @@ const PRECACHE = [
   "./icon-192.png",
   "./icon-512.png",
   "./models/alto.glb",
+  "./models/coupe.glb",
   "./models/rickshaw.glb",
+  "./models/suv.glb",
   "./models/minibus.glb",
   "./models/bike.glb",
   "./models/cart.glb",
   "./models/car.glb",
   "./models/truck.glb",
-  "./assets/CityScenery-BwyboVre.js",
-  "./assets/CityWorld-CI7Zv0TJ.js",
-  "./assets/Environment-BayCP2pp.js",
-  "./assets/FareVisuals-C0Zpnn6p.js",
-  "./assets/Landmarks-D6lmnxE_.js",
-  "./assets/PropVisuals-D8FcT67L.js",
+  "./assets/CityScenery-Cg9uOzCS.js",
+  "./assets/CityWorld-BwOb_RXo.js",
+  "./assets/Environment-B3RpcWBK.js",
+  "./assets/FareVisuals-Cr4IL83U.js",
+  "./assets/Landmarks-7dSiyvnl.js",
+  "./assets/PropVisuals-D9Vp0K9O.js",
   "./assets/Props-BPmUbl-s.js",
-  "./assets/TrafficManager-C-q5Zppb.js",
-  "./assets/World-BWz0fev4.js",
+  "./assets/TrafficManager-c_LryhXL.js",
+  "./assets/World-B6qOaKET.js",
   "./assets/barlow-condensed-latin-600-normal-BN11TKSn.woff2",
   "./assets/barlow-condensed-latin-700-normal-B9NQhHK3.woff2",
   "./assets/barlow-condensed-latin-800-italic-BaEn-VSx.woff2",
   "./assets/barlow-condensed-latin-800-normal-jAD-BpyZ.woff2",
   "./assets/barlow-condensed-latin-900-italic-CNr-ajSH.woff2",
   "./assets/cityMap-VsMGdIq4.js",
-  "./assets/index-D24cu38Y.css",
-  "./assets/index-DXW3Z1KU.js",
+  "./assets/index-C3WvimIe.css",
+  "./assets/index-CAWyeY0g.js",
   "./assets/rng-DNxfwzzg.js",
-  "./assets/strip-cLHenxI8.js",
-  "./assets/three-tZnIxG6R.js"
+  "./assets/strip-BSPJRlp_.js",
+  "./assets/three-G_PbA-BZ.js"
 ];
 
 self.addEventListener('install', (event) => {
