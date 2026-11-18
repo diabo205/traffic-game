@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import type { NpcKind } from '../sim/types';
+import type { NpcKind, PlayerVehicle } from '../sim/types';
 import { headlightPoolTexture, routeBoardTexture, truckArtTexture, windscreenArtTexture, contactShadowTexture } from './textures';
 
 /**
@@ -10,12 +10,12 @@ import { headlightPoolTexture, routeBoardTexture, truckArtTexture, windscreenArt
  * Model convention: front faces local -Z, right is +X, wheels sit on y = 0.
  * Every model is wrapped as root (position + yaw) -> body (roll/pitch/bump).
  *
- * Preloads Blender/GLTF .glb models for all 7 vehicles (with procedural
+ * Preloads Blender/GLTF .glb models for all vehicles (with procedural
  * fallbacks), then returns pooled clones from create().
  * Gameplay never depends on mesh geometry — collision sizes live in src/sim/.
  */
 
-export type VisualKind = NpcKind | 'alto' | 'police';
+export type VisualKind = NpcKind | PlayerVehicle | 'police';
 
 export interface VehicleVisual {
   kind: VisualKind;
@@ -329,7 +329,7 @@ export class VehicleFactory {
     });
     const loader = new GLTFLoader();
     await Promise.all(
-      ['alto', 'rickshaw', 'minibus', 'bike', 'cart', 'car', 'truck'].map(async (name) => {
+      ['alto', 'coupe', 'rickshaw', 'suv', 'minibus', 'bike', 'cart', 'car', 'truck'].map(async (name) => {
         try {
           const gltf = await loader.loadAsync(`${import.meta.env.BASE_URL}models/${name}.${(import.meta.env.VITE_MODEL_EXT as string | undefined) ?? 'glb'}`);
           this.models.set(name, gltf.scene);
@@ -346,11 +346,17 @@ export class VehicleFactory {
 
   private protos = new Map<string, Proto>();
 
-  create(kind: VisualKind, variant: number, keepWheels = kind === 'alto'): VehicleVisual {
-    const key = `${kind}:${variant}:${keepWheels ? 'p' : 'n'}`;
+  create(
+    kind: VisualKind,
+    variant: number,
+    keepWheels = kind === 'alto' || kind === 'coupe' || kind === 'suv',
+    paint?: string | number,
+  ): VehicleVisual {
+    const paintKey = paint === undefined ? '' : typeof paint === 'number' ? `#${paint.toString(16).padStart(6, '0')}` : paint;
+    const key = `${kind}:${variant}:${keepWheels ? 'p' : 'n'}:${paintKey}`;
     let proto = this.protos.get(key);
     if (!proto) {
-      proto = this.build(kind, variant);
+      proto = this.build(kind, variant, paint);
       finalize(proto, keepWheels);
       addContactShadow(proto.root);
       this.protos.set(key, proto);
@@ -360,13 +366,15 @@ export class VehicleFactory {
     return v;
   }
 
-  private build(kind: VisualKind, variant: number): Proto {
+  private build(kind: VisualKind, variant: number, paint?: string | number): Proto {
     switch (kind) {
-      case 'alto': return this.models.has('alto') ? this.fromModel('alto', 0.28) : this.alto();
+      case 'alto': return this.models.has('alto') ? this.fromModel('alto', 0.28, paint) : this.alto(paint);
+      case 'coupe': return this.models.has('coupe') ? this.fromModel('coupe', 0.33, paint, {}, {}, [4.8, 12.0]) : this.car(variant, paint);
+      case 'suv': return this.models.has('suv') ? this.fromModel('suv', 0.42, paint, {}, {}, [5.2, 13.0]) : this.car(variant, paint);
       case 'car': return this.models.has('car') ? this.carModel(variant) : this.car(variant);
       case 'bike': return this.models.has('bike') ? this.bikeModel(variant) : this.bike(variant);
-      case 'minibus': return this.models.has('minibus') ? this.minibusModel(variant) : this.minibus(variant);
-      case 'rickshaw': return this.models.has('rickshaw') ? this.rickshawModel(variant) : this.rickshaw(variant);
+      case 'minibus': return this.models.has('minibus') ? this.minibusModel(variant, paint) : this.minibus(variant, paint);
+      case 'rickshaw': return this.models.has('rickshaw') ? this.rickshawModel(variant, paint) : this.rickshaw(variant, paint);
       case 'cart': return this.models.has('cart') ? this.cartModel(variant) : this.cart(variant);
       case 'truck': return this.models.has('truck') ? this.truckModel(variant) : this.truck(variant);
       case 'police': return this.police();
@@ -390,9 +398,9 @@ export class VehicleFactory {
   private fromModel(
     name: string,
     wheelRadius: number,
-    paint?: string,
+    paint?: string | number,
     maps: Record<string, THREE.Texture> = {},
-    matColors: Record<string, string> = {},
+    matColors: Record<string, string | number> = {},
     poolSize: readonly [number, number] = [4.6, 11],
   ): Proto {
     const { root, body } = this.shell();
@@ -410,7 +418,7 @@ export class VehicleFactory {
       if (!lm) {
         const map = maps[m.name] ? gltfTexture(maps[m.name]) : null;
         const override = matColors[m.name] ?? (m.name === 'paint' ? paint : undefined);
-        const color = map ? new THREE.Color('#ffffff') : override ? new THREE.Color(override) : m.color;
+        const color = map ? new THREE.Color('#ffffff') : override !== undefined ? new THREE.Color(override) : m.color;
         lm = new THREE.MeshLambertMaterial({ color, map, name: m.name });
         mats.set(m.name, lm);
       }
@@ -421,7 +429,13 @@ export class VehicleFactory {
       const n = c.name.toLowerCase();
       const mesh = c instanceof THREE.Mesh ? c : null;
       if (n.startsWith('wheel')) wheels.push(c);
-      else if (mesh && n.startsWith('head')) {
+      else if (
+        mesh &&
+        n.startsWith('head') &&
+        !n.startsWith('head_bezel') &&
+        !n.startsWith('head_surround') &&
+        !n.startsWith('head_reflector')
+      ) {
         mesh.material = M.headOff();
         lights.head.push(mesh);
       } else if (mesh && n.startsWith('brake')) {
@@ -532,14 +546,14 @@ export class VehicleFactory {
   }
 
   /** Karachi route minibus from Blender: truck art & route board per variant, riders on doors/roof. */
-  private minibusModel(variant: number): Proto {
+  private minibusModel(variant: number, paintOverride?: string | number): Proto {
     const BASE = ['#1f4fa8', '#e9e2cf', '#1f7a4d', '#b3261e', '#1565c0', '#6a1b9a', '#00796b', '#d84315'];
     const CREAM = ['#f3ecd8', '#fff8e1', '#e8eef5', '#f2e8cf'];
     const RED = ['#c62828', '#ad1457', '#ef6c00', '#1565c0'];
     const p = this.fromModel(
       'minibus',
       0.42,
-      BASE[variant % BASE.length],
+      paintOverride ?? BASE[variant % BASE.length],
       {
         art_side: truckArtTexture(variant),
         art_top: truckArtTexture(variant + 3),
@@ -565,7 +579,7 @@ export class VehicleFactory {
   }
 
   /** Sazgar auto-rickshaw from Blender, in Karachi's common liveries & canopies, with driver. */
-  private rickshawModel(variant: number): Proto {
+  private rickshawModel(variant: number, paintOverride?: string | number): Proto {
     const LIVERY = ['#e8731c', '#f2b51c', '#2e7d32', '#e8731c', '#c9461c', '#00796b', '#ef6c00', '#1b5e20'];
     const CANOPY = ['#151517', '#1f2329', '#1e3f20', '#2b1b17'];
     const CURTAIN = ['#b71c1c', '#1565c0', '#2e7d32', '#6a1b9a'];
@@ -573,7 +587,7 @@ export class VehicleFactory {
     const p = this.fromModel(
       'rickshaw',
       0.24,
-      LIVERY[variant % LIVERY.length],
+      paintOverride ?? LIVERY[variant % LIVERY.length],
       {},
       {
         canopy: CANOPY[variant % CANOPY.length],
@@ -589,10 +603,10 @@ export class VehicleFactory {
   // ---- Suzuki Alto (procedural fallback) --------------------------------------
   // 8th-gen Alto as seen on Karachi roads: tall, rounded one-box hatch,
   // upright tailgate with a big rear window, small horizontal tail lamps.
-  private alto(): Proto {
+  private alto(paintOverride?: string | number): Proto {
     const { root, body } = this.shell();
     const wheels: THREE.Object3D[] = [];
-    const paint = lambert('#dfe2e3');
+    const paint = lambert(paintOverride ?? '#dfe2e3');
     const lights: Lights = { brake: [], hazard: [], head: [] };
     const BEVEL = 0.11;
     const HALF_W = 0.74;
@@ -699,12 +713,12 @@ export class VehicleFactory {
   }
 
   // ---- Generic sedan ---------------------------------------------------------
-  private car(variant: number): Proto {
+  private car(variant: number, paintOverride?: string | number): Proto {
     const { root, body } = this.shell();
     const wheels: THREE.Object3D[] = [];
     const lights: Lights = { brake: [], hazard: [], head: [] };
     const taxi = variant === 7;
-    const paint = lambert(taxi ? '#f2c200' : CAR_COLORS[variant % CAR_COLORS.length]);
+    const paint = lambert(paintOverride ?? (taxi ? '#f2c200' : CAR_COLORS[variant % CAR_COLORS.length]));
     box(body, 1.72, 0.6, 4.4, paint, 0, 0.62, 0);
     box(body, 1.6, 0.52, 2.3, M.glass(), 0, 1.16, 0.2);
     box(body, 1.62, 0.08, 1.9, paint, 0, 1.45, 0.25);
@@ -759,12 +773,12 @@ export class VehicleFactory {
   }
 
   // ---- W-11 decorated minibus --------------------------------------------------
-  private minibus(variant: number): Proto {
+  private minibus(variant: number, paintOverride?: string | number): Proto {
     const { root, body } = this.shell();
     const wheels: THREE.Object3D[] = [];
     const lights: Lights = { brake: [], hazard: [], head: [] };
     const art = lambert('#ffffff', { map: truckArtTexture(variant) });
-    const base = lambert(['#1f7a4d', '#c2185b', '#1565c0', '#f9a825'][variant % 4]);
+    const base = lambert(paintOverride ?? ['#1f7a4d', '#c2185b', '#1565c0', '#f9a825'][variant % 4]);
     const L = 8.6, W = 2.36;
     // Main body with art on the sides.
     box(body, W, 1.3, L, art, 0, 1.15, 0);
@@ -797,12 +811,12 @@ export class VehicleFactory {
   }
 
   // ---- Auto-rickshaw ---------------------------------------------------------------
-  private rickshaw(variant: number): Proto {
+  private rickshaw(variant: number, paintOverride?: string | number): Proto {
     const { root, body } = this.shell();
     const wheels: THREE.Object3D[] = [];
     const lights: Lights = { brake: [], hazard: [], head: [] };
     const green = variant % 4 === 3;
-    const paint = lambert(green ? '#2e7d32' : '#f6c50f');
+    const paint = lambert(paintOverride ?? (green ? '#2e7d32' : '#f6c50f'));
     const canopy = lambert(green ? '#f6c50f' : '#141414');
     box(body, 1.36, 0.5, 2.6, paint, 0, 0.62, 0.1);
     // Tapered nose.

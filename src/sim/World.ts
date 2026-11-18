@@ -156,9 +156,12 @@ export class World {
       p.traction = Math.min(p.traction, 0.85);
     }
     this.onWater = wet;
-    // The dirt shoulder is rough: drivable for dodging, never the fast line.
+    // The dirt shoulder is rough: drivable for dodging, never the fast line (off-roaders cope much better).
     const road = sampleRoad(p.z);
-    if (p.x < road.left - p.spec.halfWidth * 0.5) p.extraDrag += SHOULDER_DRAG;
+    if (p.x < road.left - p.spec.halfWidth * 0.5) {
+      p.extraDrag += SHOULDER_DRAG * p.spec.offroadDragMul;
+      p.traction = Math.min(p.traction, p.spec.offroadTraction);
+    }
   }
 
   private constrainToRoad(): void {

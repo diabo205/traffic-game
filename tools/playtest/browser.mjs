@@ -39,11 +39,12 @@ const SMOKE = {
   url: '?mode=city&seed=1337&low',
   steps: [
     { wait: 1500 }, { shot: '00-menu' },
-    { click: 'button.go-btn.play' }, { wait: 800 }, { shot: '01-start' },
-    { hold: ['KeyW'], ms: 3000 }, { shot: '02-accel' },
-    { hold: ['KeyW', 'KeyD'], ms: 1200 }, { shot: '03-turn' },
-    { hold: ['KeyE', 'KeyA'], ms: 1200 }, { shot: '04-drift' },
-    { hold: ['KeyW'], ms: 2500 }, { shot: '05-end' },
+    { click: 'button.go-btn.play' }, { wait: 600 }, { shot: '01-car-select' },
+    { click: 'button.car-select-go' }, { wait: 800 }, { shot: '02-start' },
+    { hold: ['KeyW'], ms: 3000 }, { shot: '03-accel' },
+    { hold: ['KeyW', 'KeyD'], ms: 1200 }, { shot: '04-turn' },
+    { hold: ['KeyE', 'KeyA'], ms: 1200 }, { shot: '05-drift' },
+    { hold: ['KeyW'], ms: 2500 }, { shot: '06-end' },
   ],
 };
 const script = target === 'smoke' ? SMOKE : JSON.parse(readFileSync(target, 'utf8'));
@@ -87,6 +88,7 @@ function findChromium() {
 const KEY_DEFS = {
   Enter: { key: 'Enter', code: 'Enter', vk: 13 },
   Escape: { key: 'Escape', code: 'Escape', vk: 27 },
+  Backspace: { key: 'Backspace', code: 'Backspace', vk: 8 },
   Space: { key: ' ', code: 'Space', vk: 32 },
   ' ': { key: ' ', code: 'Space', vk: 32 },
   ShiftLeft: { key: 'Shift', code: 'ShiftLeft', vk: 16 },
@@ -321,7 +323,11 @@ async function runCdp(chromePath, fullUrl, report) {
               if ((cand.innerText || cand.textContent || '').includes(needle)) { el = cand; break; }
             }
           } else {
-            el = document.querySelector(raw);
+            const cand = document.querySelector(raw);
+            if (cand) {
+              const s = getComputedStyle(cand);
+              if (s.display !== 'none' && s.visibility !== 'hidden') el = cand;
+            }
           }
           if (!el) return null;
           const r = el.getBoundingClientRect();
@@ -417,6 +423,12 @@ try {
   report.note = 'FPS is headless software-GL (SwiftShader); treat as relative only.';
   writeFileSync(path.join(out, 'report.json'), JSON.stringify(report, null, 2));
   console.log(JSON.stringify(report, null, 2));
+  if (
+    report.pageErrors.length > 0 ||
+    report.consoleErrors.some((e) => e.startsWith('error:') || e.startsWith('log.error'))
+  ) {
+    process.exitCode = 1;
+  }
 } finally {
   await server.close();
 }

@@ -1,12 +1,45 @@
 import * as THREE from 'three';
+import { VEHICLE_SPECS } from '../sim/PlayerCar';
 import type { PlayerCar } from '../sim/PlayerCar';
+import type { PlayerVehicle } from '../sim/types';
 
-/** Alto wheel layout (matches tools/blender/alto.py). */
-const FRONT_AXLE = 1.19;
-const REAR_AXLE = -1.27;
-const TRACK = 0.645;
-/** Lateral grip of the Alto (sim ALTO.maxLateralAccel). */
-const GRIP = 9.5;
+export interface WheelDef {
+  along: number;
+  side: number;
+  axle: 'front' | 'rear';
+}
+
+const WHEEL_LAYOUTS: Record<PlayerVehicle, readonly WheelDef[]> = {
+  alto: [
+    { along: VEHICLE_SPECS.alto.wheelBase * 0.5 + 0.01, side: -(VEHICLE_SPECS.alto.halfWidth * 0.87), axle: 'front' },
+    { along: VEHICLE_SPECS.alto.wheelBase * 0.5 + 0.01, side: VEHICLE_SPECS.alto.halfWidth * 0.87, axle: 'front' },
+    { along: -(VEHICLE_SPECS.alto.wheelBase * 0.5 + 0.09), side: -(VEHICLE_SPECS.alto.halfWidth * 0.87), axle: 'rear' },
+    { along: -(VEHICLE_SPECS.alto.wheelBase * 0.5 + 0.09), side: VEHICLE_SPECS.alto.halfWidth * 0.87, axle: 'rear' },
+  ],
+  coupe: [
+    { along: VEHICLE_SPECS.coupe.wheelBase * 0.5, side: -(VEHICLE_SPECS.coupe.halfWidth * 0.907), axle: 'front' },
+    { along: VEHICLE_SPECS.coupe.wheelBase * 0.5, side: VEHICLE_SPECS.coupe.halfWidth * 0.907, axle: 'front' },
+    { along: -VEHICLE_SPECS.coupe.wheelBase * 0.5, side: -(VEHICLE_SPECS.coupe.halfWidth * 0.907), axle: 'rear' },
+    { along: -VEHICLE_SPECS.coupe.wheelBase * 0.5, side: VEHICLE_SPECS.coupe.halfWidth * 0.907, axle: 'rear' },
+  ],
+  rickshaw: [
+    { along: VEHICLE_SPECS.rickshaw.wheelBase * 0.5 + 0.22, side: 0, axle: 'front' },
+    { along: -(VEHICLE_SPECS.rickshaw.wheelBase * 0.5 - 0.13), side: -(VEHICLE_SPECS.rickshaw.halfWidth * 0.91), axle: 'rear' },
+    { along: -(VEHICLE_SPECS.rickshaw.wheelBase * 0.5 - 0.13), side: VEHICLE_SPECS.rickshaw.halfWidth * 0.91, axle: 'rear' },
+  ],
+  suv: [
+    { along: VEHICLE_SPECS.suv.wheelBase * 0.5, side: -(VEHICLE_SPECS.suv.halfWidth * 0.872), axle: 'front' },
+    { along: VEHICLE_SPECS.suv.wheelBase * 0.5, side: VEHICLE_SPECS.suv.halfWidth * 0.872, axle: 'front' },
+    { along: -VEHICLE_SPECS.suv.wheelBase * 0.5, side: -(VEHICLE_SPECS.suv.halfWidth * 0.872), axle: 'rear' },
+    { along: -VEHICLE_SPECS.suv.wheelBase * 0.5, side: VEHICLE_SPECS.suv.halfWidth * 0.872, axle: 'rear' },
+  ],
+  minibus: [
+    { along: VEHICLE_SPECS.minibus.wheelBase * 0.5 - 0.05, side: -(VEHICLE_SPECS.minibus.halfWidth * 0.768), axle: 'front' },
+    { along: VEHICLE_SPECS.minibus.wheelBase * 0.5 - 0.05, side: VEHICLE_SPECS.minibus.halfWidth * 0.768, axle: 'front' },
+    { along: -(VEHICLE_SPECS.minibus.wheelBase * 0.5 - 0.65), side: -(VEHICLE_SPECS.minibus.halfWidth * 0.768), axle: 'rear' },
+    { along: -(VEHICLE_SPECS.minibus.wheelBase * 0.5 - 0.65), side: VEHICLE_SPECS.minibus.halfWidth * 0.768, axle: 'rear' },
+  ],
+};
 
 const MAX_SEG = 900;
 const MARK_W = 0.17;
@@ -27,10 +60,11 @@ export function tyreSlide(p: PlayerCar): Slide {
   // Sideways slide (drift / hydroplaning).
   const slide = ramp(slip, 0.06, 0.26) * ramp(v, 3, 8);
   // Cornering right at the grip limit.
-  const corner = ramp(Math.abs(p.speed * p.yawRate) / GRIP, 0.78, 1) * ramp(v, 7, 13) * 0.7;
+  const grip = Math.max(1, p.spec.maxLateralAccel);
+  const corner = ramp(Math.abs(p.speed * p.yawRate) / grip, 0.78, 1) * ramp(v, 7, 13) * 0.7;
   // Hard braking from speed.
   const brake = p.braking && p.accel < -7 ? ramp(v, 5, 16) * 0.85 : 0;
-  // Front-wheel-drive launch: the Alto's fronts chirp when floored from a standstill.
+  // Launch chirp when floored from a standstill.
   const launch = p.throttle > 0.85 && p.speed > 0.3 && p.speed < 6 ? (1 - p.speed / 6) * 0.65 : 0;
   return { rear: Math.max(slide, corner, brake), front: Math.max(slide * 0.6, corner * 0.8, brake, launch) };
 }
@@ -65,6 +99,7 @@ export class TyreFx {
   private smoke: THREE.Points;
   private emitDebt = [0, 0, 0, 0];
   private time = 0;
+  private lastVehicle: PlayerVehicle | null = null;
 
   constructor() {
     const g = new THREE.BufferGeometry();
@@ -129,6 +164,7 @@ export class TyreFx {
     this.smokeAge.fill(1e9);
     for (let i = 0; i < MAX_SMOKE; i++) this.smokePos[i * 3 + 1] = -1000;
     this.last = [null, null, null, null];
+    this.emitDebt = [0, 0, 0, 0];
     this.marks.geometry.attributes.position.needsUpdate = true;
   }
 
@@ -140,19 +176,23 @@ export class TyreFx {
   update(dt: number, p: PlayerCar, x: number, z: number, heading: number, ground: (x: number, z: number) => number, pixelScale: number): Slide {
     this.time += dt;
     this.smokeMat.uniforms.uScale.value = pixelScale;
+    if (this.lastVehicle !== p.vehicle) {
+      this.lastVehicle = p.vehicle;
+      this.last = [null, null, null, null];
+      this.emitDebt = [0, 0, 0, 0];
+    }
     const slide = tyreSlide(p);
     const fx = Math.sin(heading), fz = Math.cos(heading);
     const rx = Math.cos(heading), rz = -Math.sin(heading);
-    const wheels: Array<[number, number]> = [
-      [FRONT_AXLE, -TRACK],
-      [FRONT_AXLE, TRACK],
-      [REAR_AXLE, -TRACK],
-      [REAR_AXLE, TRACK],
-    ];
+    const wheels = WHEEL_LAYOUTS[p.vehicle];
+    for (let i = wheels.length; i < 4; i++) {
+      this.last[i] = null;
+      this.emitDebt[i] = 0;
+    }
     const { vx, vz } = p.velocity();
     let marksDirty = false;
-    wheels.forEach(([along, side], i) => {
-      const k = i < 2 ? slide.front : slide.rear;
+    wheels.forEach(({ along, side, axle }, i) => {
+      const k = slide[axle];
       const wx = x + fx * along + rx * side;
       const wz = z + fz * along + rz * side;
       const y = ground(wx, wz) + 0.012;

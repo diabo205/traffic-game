@@ -4,18 +4,19 @@ import type { TouchSteerMode } from './input/InputManager';
 import { Renderer } from './render/Renderer';
 import type { AnyWorld, TimeOfDay } from './render/Renderer';
 import { CHECKPOINTS } from './sim/LevelManager';
-import { MOVES, VEHICLE_COST, VEHICLE_SPECS } from './sim/PlayerCar';
+import { PLAYER_VEHICLES, VEHICLE_COST, VEHICLE_SPECS } from './sim/PlayerCar';
 import { FINISH_Z, ZONES } from './sim/road';
 import { COMBO_WINDOW, DT } from './sim/types';
 import type { PlayerVehicle, SimEvent } from './sim/types';
 import { Hud } from './ui/Hud';
 import { Minimap } from './ui/Minimap';
 import { TouchControls } from './ui/TouchControls';
+import { CarSelectScreen } from './ui/CarSelectScreen';
 
 import type { ShiftRank } from './sim/city/Fares';
 
 const MAX_STEPS_PER_FRAME = 5;
-const VEHICLES: readonly PlayerVehicle[] = ['alto', 'rickshaw', 'minibus'];
+const VEHICLES: readonly PlayerVehicle[] = PLAYER_VEHICLES;
 const TIMES_OF_DAY: readonly TimeOfDay[] = ['noon', 'sunset', 'night', 'monsoon'];
 const STEER_MODES: readonly TouchSteerMode[] = ['buttons', 'joystick', 'tilt'];
 const MONTHS = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
@@ -89,6 +90,7 @@ export class Game {
   private readonly audio = new SoundEngine();
   private readonly hud: Hud;
   private readonly touch: TouchControls;
+  private readonly carSelectScreen: CarSelectScreen;
   private accumulator = 0;
   private lastTime = 0;
   private endShownAt = -1;
@@ -133,6 +135,11 @@ export class Game {
     this.syncBestHud();
     this.syncMinimap();
     this.touch = new TouchControls(this.hud.root, this.input.touch);
+    this.carSelectScreen = new CarSelectScreen(uiRoot, this.input);
+    this.carSelectScreen.setBank(this.bank);
+    this.carSelectScreen.setOnSelect((v) => void this.selectVehicleAndStart(v));
+    this.carSelectScreen.setOnChange((v, adj) => this.renderer.setGarageVehicle(v, adj));
+    this.carSelectScreen.setOnBack(() => this.closeCarSelect());
 
     this.renderer.onThunder = (pan, intensity) => {
       if (this.world.phase === 'running' && !this.paused) {
@@ -196,8 +203,8 @@ export class Game {
     const bank = Math.max(0, Math.floor(Number(storageGet('kt3d.bank') ?? '0') || 0));
     let vehicle: PlayerVehicle = 'alto';
     const savedVeh = storageGet('kt3d.veh');
-    if ((savedVeh === 'alto' || savedVeh === 'rickshaw' || savedVeh === 'minibus') && bank >= VEHICLE_COST[savedVeh]) {
-      vehicle = savedVeh;
+    if (savedVeh && PLAYER_VEHICLES.includes(savedVeh as PlayerVehicle) && bank >= VEHICLE_COST[savedVeh as PlayerVehicle]) {
+      vehicle = savedVeh as PlayerVehicle;
     }
     let tod: TimeOfDay = 'noon';
     const savedTod = storageGet('kt3d.tod');
@@ -292,6 +299,58 @@ export class Game {
     }
   }
 
+  private openCarSelect(): void {
+    this.hud.showStart(false);
+    this.hud.setMenu(true);
+    this.carSelectScreen.setBank(this.bank);
+    this.carSelectScreen.show(true, this.vehicle, this.bank);
+    this.renderer.setGarageMode(true, this.vehicle, this.carSelectScreen.getAdjacentVehicle());
+    this.carSelectScreen.updateProjection(this.renderer.getGarageProjection());
+    this.input.consumeConfirm();
+    this.input.consumeBack();
+  }
+
+  private closeCarSelect(): void {
+    this.dailyMode = false;
+    this.carSelectScreen.show(false);
+    this.renderer.setGarageMode(false);
+    this.hud.showStart(true);
+    this.input.consumeConfirm();
+    this.input.consumeBack();
+  }
+
+  private async selectVehicleAndStart(v: PlayerVehicle): Promise<void> {
+    const cost = VEHICLE_COST[v];
+    if (this.bank < cost) {
+      this.toastNow(`NEED RS ${cost.toLocaleString('en-PK')} TOTAL IN BANK`, false);
+      return;
+    }
+    if (v !== this.vehicle || this.dailyMode) {
+      this.vehicle = v;
+      storageSet('kt3d.veh', v);
+      this.hud.setVehicle(v, this.bank);
+      this.syncBestHud();
+      if (await this.swapWorld(this.mode, this.dailyMode, v)) this.syncMinimap();
+    }
+    this.carSelectScreen.show(false);
+    this.renderer.setGarageMode(false);
+    this.hud.setMenu(false);
+    this.audio.unlock();
+    this.world.start();
+    this.drainAndHandle();
+    this.lastTime = performance.now();
+    if (this.dailyMode) this.hud.showBanner(`DAILY · ${this.daily.label}`);
+    if (this.world.mode === 'route') {
+      if (!this.touch.visible && !this.hadFirstShift) {
+        this.hadFirstShift = true;
+        this.toastNow('WASD DRIVE · SPACE HORN · E DRIFT · R RADIO');
+        this.pendingToast = { delay: 2.8, text: 'REACH CLIFTON · 4.2 KM', good: true };
+      } else {
+        this.pendingToast = { delay: 1.8, text: 'REACH CLIFTON · 4.2 KM', good: true };
+      }
+    }
+  }
+
   private cycleVehicle(): void {
     const unlocked = VEHICLES.filter((v) => this.bank >= VEHICLE_COST[v]);
     if (unlocked.length <= 1) {
@@ -342,20 +401,14 @@ export class Game {
   }
 
   /** Quick-launch today's deterministic UTC Saddar challenge. */
-  private async launchDaily(): Promise<void> {
+  private launchDaily(): void {
     if (this.world.phase !== 'ready' || this.switching) return;
     this.audio.unlock();
     this.dailyMode = true;
     this.mode = 'city';
     this.hud.setMode('city');
-    if (!(await this.swapWorld('city', true, this.vehicle))) return;
-    this.syncMinimap();
     this.syncBestHud();
-    this.hud.showStart(false);
-    this.world.start();
-    this.drainAndHandle();
-    this.lastTime = performance.now();
-    this.hud.showBanner(`DAILY · ${this.daily.label}`);
+    this.openCarSelect();
   }
 
   private toastNow(text: string, good = true): void {
@@ -427,9 +480,7 @@ export class Game {
     window.addEventListener('pointerdown', unlock, { capture: true });
     window.addEventListener('keydown', unlock, { capture: true });
 
-    for (const v of VEHICLES) {
-      this.hud.rideBtns[v].addEventListener('click', () => void this.selectVehicle(v));
-    }
+
     for (const t of TIMES_OF_DAY) {
       this.hud.todBtns[t].addEventListener('click', () => this.setTimeOfDay(t));
     }
@@ -569,10 +620,13 @@ export class Game {
     if (this.input.consumeMute()) this.setMuted(!this.audio.isMuted);
     if (this.input.consumeRadio()) this.toggleRadio();
     const pausePressed = this.input.consumePause();
-    // Esc / Start: back out of game options first, then toggle pause.
+    // Esc / Start: back out of game options or car select first, then toggle pause.
     if (pausePressed) {
       if (this.hud.settingsOpen) this.hud.closeSettings();
-      else if (this.paused) this.resume();
+      else if (this.carSelectScreen.visible) {
+        this.closeCarSelect();
+        return;
+      } else if (this.paused) this.resume();
       else this.pause();
     }
     if (this.paused) {
@@ -593,24 +647,20 @@ export class Game {
         this.hud.showToast(pt.text, pt.good);
       }
     }
-    const confirm = this.input.consumeConfirm() && !this.hud.settingsOpen;
     const phase = this.world.phase;
+    if (phase === 'ready' && this.carSelectScreen.visible) {
+      this.carSelectScreen.pollInput();
+      this.renderer.render(this.world, this.accumulator / DT, frameDt);
+      this.carSelectScreen.updateProjection(this.renderer.getGarageProjection());
+      return;
+    }
+
+    const confirm = this.input.consumeConfirm() && !this.hud.settingsOpen;
 
     if (phase === 'ready' && confirm) {
       this.audio.unlock();
-      this.hud.showStart(false);
-      this.world.start();
-      this.drainAndHandle();
-      if (this.dailyMode) this.hud.showBanner(`DAILY · ${this.daily.label}`);
-      if (this.world.mode === 'route') {
-        if (!this.touch.visible && !this.hadFirstShift) {
-          this.hadFirstShift = true;
-          this.toastNow('WASD DRIVE · SPACE HORN · E DRIFT · R RADIO');
-          this.pendingToast = { delay: 2.8, text: 'REACH CLIFTON · 4.2 KM', good: true };
-        } else {
-          this.pendingToast = { delay: 1.8, text: 'REACH CLIFTON · 4.2 KM', good: true };
-        }
-      }
+      this.openCarSelect();
+      return;
     } else if (phase === 'running' && confirm && this.world.mode === 'city' && !this.world.fares.onShift) {
       this.world.startShift();
     } else if ((phase === 'gameover' || phase === 'complete') && confirm && this.endShownAt >= 0 && this.clock - this.endShownAt > 0.6) {
@@ -647,7 +697,7 @@ export class Game {
     this.updateTaxiHud(frameDt);
     // Boost meter: what's left while boosting, else drift charge or recharge.
     this.hud.setBoost(
-      p.boostTime > 0 ? p.boostFraction : 1 - p.boostCooldown / MOVES.boostCooldown,
+      p.boostTime > 0 ? p.boostFraction : 1 - p.boostCooldown / p.spec.boostCooldown,
       p.boostTime > 0,
       p.handbrake,
       p.launchFraction,

@@ -31,7 +31,7 @@ css = css.replace(/@font-face\{[^}]+\}/g, (block) => {
   return block.replace(/src:[^;}]+/, `src:url("${dataUri}") format("woff2")`);
 });
 
-const MODEL_NAMES = ['alto', 'rickshaw', 'minibus', 'bike', 'cart', 'car', 'truck'];
+const MODEL_NAMES = ['alto', 'coupe', 'rickshaw', 'suv', 'minibus', 'bike', 'cart', 'car', 'truck'];
 const models = {};
 for (const m of MODEL_NAMES) {
   models[m] = readFileSync(path.join(repo, 'public/models', `${m}.glb`)).toString('base64');
@@ -44,7 +44,7 @@ const fetchShim = `(function(){
   var origFetch = window.fetch ? window.fetch.bind(window) : null;
   window.fetch = function(input, init) {
     var url = typeof input === 'string' ? input : (input && input.url) || '';
-    var match = url.match(/models\\/(alto|rickshaw|minibus|bike|cart|car|truck)\\.glb(?:\\?.*)?$/);
+    var match = url.match(/models\\/(${MODEL_NAMES.join('|')})\\.glb(?:\\?.*)?$/);
     if (match && M[match[1]]) {
       var bin = atob(M[match[1]]);
       var buf = new Uint8Array(bin.length);

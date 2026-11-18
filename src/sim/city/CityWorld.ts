@@ -21,6 +21,8 @@ const HIT_COOLDOWN = 36;
 const CITY_TOP_SPEED = 27.8;
 /** Rough NPC roof heights, for jumping over traffic. */
 const NPC_HEIGHT: Readonly<Record<string, number>> = { bike: 1.3, minibus: 2.9, rickshaw: 1.9, cart: 1.3, car: 1.5, truck: 3.2 };
+/** Extra rolling drag off-road/on pavements in Saddar (m/s^2), scaled by vehicle offroadDragMul. */
+const CITY_OFFROAD_DRAG = 0.85;
 /** Taller steps than this are walls (the side or back of a ramp). */
 const MAX_STEP = 0.35;
 
@@ -228,12 +230,16 @@ export class CityWorld {
     if (wet) {
       const v = Math.abs(p.speed);
       p.traction = clamp(0.62 - v * 0.016, 0.12, 0.62);
-      p.extraDrag = 0.7 + v * 0.045;
+      p.extraDrag += 0.7 + v * 0.045;
       if (!this.onWater && v > 5.5) this.events.push({ type: 'splash' });
     } else if (this.weather === 'monsoon') {
       p.traction = Math.min(p.traction, 0.85);
     }
     this.onWater = wet;
+    if (!this.map.isRoad(p.x, p.z)) {
+      p.extraDrag += CITY_OFFROAD_DRAG * p.spec.offroadDragMul;
+      p.traction = Math.min(p.traction, p.spec.offroadTraction);
+    }
   }
 
   step(input: InputFrame): void {
@@ -505,8 +511,6 @@ export class CityWorld {
       }
       this.onRoad = road;
     }
-    // Pavements are busier and rougher than the road.
-    if (!road) p.extraDrag = 0.5;
   }
 
   private trafficCollisions(): void {

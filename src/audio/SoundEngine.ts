@@ -25,6 +25,14 @@ export interface EngineParams {
 /** Gear upshift points as fractions of top speed (5-speed manual). */
 const GEARS = [0, 0.18, 0.36, 0.56, 0.78, 1.2];
 
+export const SOUND_PROFILE: Record<PlayerVehicle, { pitchMul: number; filtMul: number; exMul: number }> = {
+  alto: { pitchMul: 1.0, filtMul: 1.0, exMul: 0.95 },
+  coupe: { pitchMul: 0.78, filtMul: 0.85, exMul: 1.25 },
+  rickshaw: { pitchMul: 1.18, filtMul: 1.2, exMul: 1.35 },
+  suv: { pitchMul: 0.68, filtMul: 0.75, exMul: 1.05 },
+  minibus: { pitchMul: 0.56, filtMul: 0.65, exMul: 0.72 },
+};
+
 /**
  * 16-step Karachi Dholak Keherwa / Chaal rhythm:
  * 1 = Dha (bayan bass + tilli slap), 2 = Dhin (bayan bass), 3 = Ta/Na (tilli rim slap), 4 = Tin (soft rim), 0 = rest.
@@ -297,8 +305,7 @@ export class SoundEngine {
     this.lastGear = p.running ? gear : 1;
 
     // 3 cylinders, 4-stroke: firing freq = rpm/60 * 1.5; scaled per vehicle
-    const pitchMul = p.vehicle === 'minibus' ? 0.56 : p.vehicle === 'rickshaw' ? 1.18 : 1;
-    const filtMul = p.vehicle === 'minibus' ? 0.65 : p.vehicle === 'rickshaw' ? 1.2 : 1;
+    const { pitchMul, filtMul, exMul } = SOUND_PROFILE[p.vehicle ?? 'alto'];
     const fire = (this.rpm / 60) * 1.5 * pitchMul;
     this.engOsc1.frequency.setTargetAtTime(fire, t, 0.03);
     this.engOsc2.frequency.setTargetAtTime(fire * 2.01, t, 0.03);
@@ -312,7 +319,6 @@ export class SoundEngine {
     this.intakeFilter.frequency.setTargetAtTime((300 + this.rpm * 0.12 + p.throttle * 480) * filtMul, t, 0.06);
     this.intakeGain.gain.setTargetAtTime(p.running ? 0.015 + p.throttle * 0.05 : 0.006, t, 0.06);
 
-    const exMul = p.vehicle === 'minibus' ? 0.72 : p.vehicle === 'rickshaw' ? 1.35 : 0.95;
     this.exhaustOsc.frequency.setTargetAtTime(fire * exMul, t, 0.03);
     this.exhaustFilter.frequency.setTargetAtTime((180 + this.rpm * 0.10 + p.throttle * 240) * filtMul, t, 0.05);
     this.exhaustGain.gain.setTargetAtTime(p.running ? 0.025 + p.throttle * 0.055 : 0.012, t, 0.05);

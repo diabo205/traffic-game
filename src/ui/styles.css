@@ -1244,3 +1244,450 @@ button { font-family: var(--display); cursor: pointer; }
 
 @keyframes pulse { from { opacity: 1; } to { opacity: 0.55; } }
 @keyframes fadeout { to { opacity: 0; } }
+
+/* ===================== NFS Heat Style Car Select Screen ===================== */
+.screen.car-select {
+  position: absolute;
+  inset: 0;
+  background: transparent;
+  pointer-events: none;
+  z-index: 100;
+  color: #fff;
+  overflow: hidden;
+}
+.screen.car-select button { pointer-events: auto; }
+
+/* Left floating translucent dark panel */
+.car-panel {
+  position: absolute;
+  top: calc(28px + var(--safe-t));
+  left: calc(28px + var(--safe-l));
+  width: min(296px, calc(100vw - 40px));
+  max-height: calc(100vh - 108px - var(--safe-t) - var(--safe-b));
+  padding: 16px 18px 14px;
+  background: linear-gradient(180deg, rgba(14, 18, 28, 0.72) 0%, rgba(10, 14, 22, 0.56) 100%);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border-top: 2px solid rgba(255, 255, 255, 0.35);
+  border-left: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.55);
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+  pointer-events: auto;
+  overflow-y: auto;
+}
+
+.car-panel-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.car-identity { min-width: 0; }
+.car-brand {
+  font-size: 28px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  line-height: 0.95;
+  color: #ffffff;
+}
+.car-model {
+  margin-top: 3px;
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  color: rgba(255, 255, 255, 0.8);
+}
+.car-rating-wrap {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-shrink: 0;
+  padding-top: 2px;
+}
+.car-rating-icon {
+  width: 24px;
+  height: 14px;
+  color: #ffffff;
+  opacity: 0.92;
+}
+.car-perf-rating {
+  font-size: 27px;
+  font-weight: 800;
+  font-style: italic;
+  line-height: 0.9;
+  font-variant-numeric: tabular-nums;
+  color: #ffffff;
+}
+
+/* 4 Stat bars */
+.car-stats {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.car-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.car-stat-label {
+  font-size: 11px;
+  font-weight: 700;
+  font-style: italic;
+  letter-spacing: 0.08em;
+  color: rgba(255, 255, 255, 0.72);
+}
+.car-stat-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.car-stat-track {
+  position: relative;
+  flex: 1;
+  height: 15px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.38);
+  overflow: hidden;
+  background-image: repeating-linear-gradient(
+    90deg,
+    transparent,
+    transparent calc(10% - 1px),
+    rgba(255, 255, 255, 0.14) calc(10% - 1px),
+    rgba(255, 255, 255, 0.14) 10%
+  );
+}
+.car-stat-fill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0.82), #ffffff);
+  transition: width 0.25s ease-out;
+}
+.car-stat-val {
+  min-width: 34px;
+  padding: 1px 5px;
+  background: rgba(255, 255, 255, 0.92);
+  color: #0b1530;
+  font-size: 12px;
+  font-weight: 800;
+  font-style: italic;
+  text-align: center;
+  line-height: 1.15;
+  font-variant-numeric: tabular-nums;
+  transform: skewX(-10deg);
+}
+
+/* 2D Diamond Handling Grid */
+.handling-section {
+  display: flex;
+  justify-content: center;
+  padding: 6px 0 4px;
+}
+.handling-diamond {
+  position: relative;
+  width: 196px;
+  height: 132px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.hd-grid {
+  position: relative;
+  width: 78px;
+  height: 78px;
+  transform: rotate(45deg);
+  border: 1.5px solid rgba(255, 255, 255, 0.48);
+  background: rgba(8, 12, 22, 0.55);
+}
+.hd-ring {
+  position: absolute;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  pointer-events: none;
+}
+.hd-ring-1 { inset: 14%; }
+.hd-ring-2 { inset: 28%; }
+.hd-ring-3 { inset: 42%; }
+.hd-axis {
+  position: absolute;
+  background: rgba(255, 255, 255, 0.28);
+  pointer-events: none;
+}
+.hd-axis-x {
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 1px;
+  transform: rotate(-45deg) scaleX(1.38);
+}
+.hd-axis-y {
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  transform: rotate(-45deg) scaleY(1.38);
+}
+.handling-dot {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #ffffff;
+  box-shadow: 0 0 8px #ffffff, 0 0 14px rgba(43, 217, 236, 0.85);
+  transform: translate(-50%, -50%);
+  transition: left 0.22s ease-out, top 0.22s ease-out;
+  z-index: 2;
+}
+.hd-lbl {
+  position: absolute;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  color: rgba(255, 255, 255, 0.9);
+  white-space: nowrap;
+}
+.hd-lbl svg {
+  width: 13px;
+  height: 13px;
+  opacity: 0.9;
+}
+.hd-top { top: 2px; left: 50%; transform: translateX(-50%); }
+.hd-bottom { bottom: 2px; left: 50%; transform: translateX(-50%); }
+.hd-left { left: 2px; top: 50%; transform: translateY(-50%); }
+.hd-right { right: 2px; top: 50%; transform: translateY(-50%); }
+
+/* Customization Rating */
+.custom-section {
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.16);
+}
+.custom-title {
+  font-size: 12px;
+  font-weight: 800;
+  font-style: italic;
+  letter-spacing: 0.06em;
+  color: rgba(255, 255, 255, 0.92);
+  margin-bottom: 6px;
+}
+.custom-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.custom-rating {
+  flex: 1;
+  display: flex;
+  gap: 4px;
+  height: 12px;
+}
+.custom-rating .seg {
+  flex: 1;
+  background: rgba(255, 255, 255, 0.24);
+}
+.custom-rating .seg.on {
+  background: #ffffff;
+}
+.custom-rating-val {
+  font-size: 14px;
+  font-weight: 800;
+  font-style: italic;
+  font-variant-numeric: tabular-nums;
+  color: #ffffff;
+}
+
+/* Floating 3D-projected hero tag */
+.car-tag-anchor {
+  position: absolute;
+  left: 60%;
+  top: 24%;
+  transform: translate(-50%, -100%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  pointer-events: none;
+  z-index: 105;
+}
+.car-tag-name {
+  padding: 2px 11px;
+  background: rgba(255, 255, 255, 0.96);
+  color: #0b1530;
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
+}
+.car-tag-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  pointer-events: auto;
+}
+.car-gear-badge {
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  filter: drop-shadow(0 4px 12px rgba(0, 0, 0, 0.55));
+}
+.car-gear-cog {
+  width: 100%;
+  height: 100%;
+}
+.car-arrow {
+  width: 30px;
+  height: 30px;
+  border: 0;
+  background: rgba(11, 21, 48, 0.72);
+  color: #ffffff;
+  font-size: 14px;
+  font-weight: 900;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+  transition: background 0.15s, transform 0.1s;
+}
+.car-arrow:hover {
+  background: var(--magenta);
+  transform: scale(1.08);
+}
+
+/* Adjacent car pin */
+.car-adj-badge {
+  position: absolute;
+  left: 84%;
+  top: 34%;
+  transform: translate(-50%, -50%);
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(255, 255, 255, 0.55);
+  background: rgba(14, 18, 28, 0.72);
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
+  transition: background 0.15s, border-color 0.15s, transform 0.1s;
+}
+.car-adj-badge svg { width: 20px; height: 12px; }
+.car-adj-badge:hover {
+  background: var(--magenta);
+  border-color: #ffffff;
+  transform: translate(-50%, -50%) scale(1.1);
+}
+
+/* Bottom-left action prompts */
+.car-actions {
+  position: absolute;
+  left: calc(28px + var(--safe-l));
+  bottom: calc(22px + var(--safe-b));
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  pointer-events: auto;
+  z-index: 110;
+}
+.car-select-go,
+.car-select-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  padding: 7px 14px;
+  background: rgba(12, 16, 26, 0.8);
+  color: #ffffff;
+  font-size: 16px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+  transition: background 0.15s, border-color 0.15s;
+}
+.car-select-go:hover:not(:disabled) {
+  background: var(--lime);
+  color: var(--navy);
+  border-color: var(--lime);
+}
+.car-select-back:hover {
+  background: rgba(255, 255, 255, 0.18);
+  border-color: #ffffff;
+}
+.car-select-go.locked {
+  background: rgba(18, 20, 30, 0.85);
+  color: rgba(255, 255, 255, 0.55);
+  border-color: rgba(255, 59, 79, 0.5);
+  cursor: not-allowed;
+}
+.key-cap {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 5px;
+  border-radius: 50%;
+  border: 1.5px solid currentColor;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1;
+}
+.car-select-back .key-cap {
+  border-radius: 4px;
+}
+
+/* Responsive mobile portrait & landscape */
+@media (max-width: 760px) {
+  .car-panel {
+    top: auto;
+    bottom: calc(58px + var(--safe-b));
+    left: calc(10px + var(--safe-l));
+    width: calc(100vw - 20px - var(--safe-l) - var(--safe-r));
+    max-width: 392px;
+    padding: 10px 12px;
+    gap: 6px;
+    max-height: 46vh;
+  }
+  .car-brand { font-size: 22px; }
+  .car-model { font-size: 14px; }
+  .car-perf-rating { font-size: 22px; }
+  .handling-diamond { width: 174px; height: 104px; }
+  .hd-grid { width: 62px; height: 62px; }
+  .car-actions {
+    left: calc(10px + var(--safe-l));
+    bottom: calc(12px + var(--safe-b));
+  }
+}
+@media (max-height: 460px) {
+  .car-panel {
+    top: calc(8px + var(--safe-t));
+    left: calc(10px + var(--safe-l));
+    width: 245px;
+    padding: 8px 10px;
+    gap: 5px;
+    max-height: calc(100vh - 60px - var(--safe-t) - var(--safe-b));
+  }
+  .car-brand { font-size: 19px; }
+  .car-model { font-size: 12px; margin-top: 1px; }
+  .car-perf-rating { font-size: 19px; }
+  .car-stats { gap: 4px; }
+  .car-stat-track { height: 11px; }
+  .handling-section { padding: 2px 0; }
+  .handling-diamond { width: 158px; height: 92px; }
+  .hd-grid { width: 52px; height: 52px; }
+  .custom-section { padding-top: 4px; }
+  .car-actions {
+    left: calc(10px + var(--safe-l));
+    bottom: calc(8px + var(--safe-b));
+  }
+  .car-select-go, .car-select-back { padding: 5px 11px; font-size: 14px; }
+}

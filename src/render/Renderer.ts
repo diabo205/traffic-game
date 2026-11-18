@@ -11,12 +11,15 @@ import { PostFx } from './PostFx';
 import type { GradeParams } from './PostFx';
 import type { Environment } from './Environment';
 import type { FareVisuals } from './FareVisuals';
+import { GarageScene } from './GarageScene';
+import type { GarageProjection } from './GarageScene';
 import type { PropVisuals } from './PropVisuals';
 import { RainFx } from './RainFx';
 import { TyreFx } from './TyreFx';
 import { VehicleFactory } from './VehicleFactory';
 import type { VehicleVisual, VisualKind } from './VehicleFactory';
 
+export type { GarageProjection };
 export type AnyWorld = World | CityWorld;
 export type TimeOfDay = 'noon' | 'sunset' | 'night' | 'monsoon';
 
@@ -33,8 +36,26 @@ const HORIZON = new THREE.Color('#d3d5cc');
 
 const FLAME_POS: Record<PlayerVehicle, readonly [number, number, number]> = {
   alto: [-0.42, 0.3, 1.72],
+  coupe: [-0.54, 0.25, 2.30],
   rickshaw: [-0.28, 0.25, 1.38],
-  minibus: [-0.75, 0.42, 4.15],
+  suv: [-0.68, 0.40, 2.53],
+  minibus: [-0.75, 0.42, 3.62],
+};
+
+interface CameraPreset {
+  distScale: number;
+  heightScale: number;
+  lookHeight: number;
+  aheadScale: number;
+  minClipDist: number;
+}
+
+const CAMERA_PRESETS: Record<PlayerVehicle, CameraPreset> = {
+  alto: { distScale: 1.0, heightScale: 1.0, lookHeight: 1.05, aheadScale: 1.0, minClipDist: 2.1 },
+  coupe: { distScale: 1.08, heightScale: 1.02, lookHeight: 1.05, aheadScale: 1.08, minClipDist: 2.35 },
+  rickshaw: { distScale: 1.12, heightScale: 1.32, lookHeight: 1.3, aheadScale: 1.25, minClipDist: 2.1 },
+  suv: { distScale: 1.24, heightScale: 1.24, lookHeight: 1.38, aheadScale: 1.2, minClipDist: 2.65 },
+  minibus: { distScale: 1.95, heightScale: 2.1, lookHeight: 2.15, aheadScale: 1.75, minClipDist: 4.35 },
 };
 
 interface LightingPreset {
@@ -152,6 +173,8 @@ export class Renderer {
   readonly gl: THREE.WebGLRenderer;
   readonly scene = new THREE.Scene();
   readonly chase: ChaseCamera;
+  private readonly garage: GarageScene;
+  private garageMode = false;
   private hemi: THREE.HemisphereLight;
   private sun: THREE.DirectionalLight;
   private skyMat: THREE.ShaderMaterial;
@@ -242,6 +265,9 @@ export class Renderer {
 
     this.post = new PostFx(this.gl, this.scene, this.chase.camera);
     this.post.setParams(LIGHTING.noon.post);
+    const initW = container.clientWidth || window.innerWidth || 1280;
+    const initH = container.clientHeight || window.innerHeight || 720;
+    this.garage = new GarageScene(this.factory, initW / Math.max(1, initH), this.lowSpec);
     this.resize();
   }
 
@@ -249,6 +275,25 @@ export class Renderer {
     const factory = new VehicleFactory();
     await factory.preload();
     return new Renderer(container, factory, lowSpec);
+  }
+
+  setGarageMode(active: boolean, vehicle?: PlayerVehicle, adjacentVehicle?: PlayerVehicle): void {
+    this.garageMode = active;
+    if (active) {
+      if (vehicle !== undefined) this.garage.setVehicle(vehicle, adjacentVehicle);
+      this.garage.update(0);
+      this.gl.toneMappingExposure = this.garage.exposure;
+    } else {
+      this.gl.toneMappingExposure = LIGHTING[this.timeOfDay].exposure;
+    }
+  }
+
+  setGarageVehicle(vehicle: PlayerVehicle, adjacentVehicle?: PlayerVehicle): void {
+    this.garage.setVehicle(vehicle, adjacentVehicle);
+  }
+
+  getGarageProjection(): GarageProjection {
+    return this.garage.getProjection();
   }
 
   setTimeOfDay(tod: TimeOfDay): void {
@@ -271,10 +316,11 @@ export class Renderer {
     this.hemi.intensity = p.hemiIntensity;
     this.sun.color.set(p.sunColor);
     this.sun.intensity = p.sunIntensity;
-    this.gl.toneMappingExposure = p.exposure;
     this.rain.setEnabled(tod === 'monsoon');
     this.birds.mesh.visible = tod !== 'monsoon';
     this.env?.setTimeOfDay?.(tod);
+    this.garage.setTimeOfDay(tod);
+    this.gl.toneMappingExposure = this.garageMode ? this.garage.exposure : p.exposure;
   }
 
   /** (Re)bind to a world. Dynamically imports scenery modules and rebuilds static scenery only if the seed changed. */
@@ -352,25 +398,12 @@ export class Renderer {
       this.flame.position.set(...FLAME_POS[veh]);
       this.player.body.add(this.flame);
     }
-    if (veh === 'minibus') {
-      this.chase.distScale = 1.95;
-      this.chase.heightScale = 2.1;
-      this.chase.lookHeight = 2.15;
-      this.chase.aheadScale = 1.75;
-      this.chase.minClipDist = 4.35;
-    } else if (veh === 'rickshaw') {
-      this.chase.distScale = 1.12;
-      this.chase.heightScale = 1.32;
-      this.chase.lookHeight = 1.3;
-      this.chase.aheadScale = 1.25;
-      this.chase.minClipDist = 2.1;
-    } else {
-      this.chase.distScale = 1.0;
-      this.chase.heightScale = 1.0;
-      this.chase.lookHeight = 1.05;
-      this.chase.aheadScale = 1.0;
-      this.chase.minClipDist = 2.1;
-    }
+    const preset = CAMERA_PRESETS[veh];
+    this.chase.distScale = preset.distScale;
+    this.chase.heightScale = preset.heightScale;
+    this.chase.lookHeight = preset.lookHeight;
+    this.chase.aheadScale = preset.aheadScale;
+    this.chase.minClipDist = preset.minClipDist;
     for (const [id, v] of this.npcVisuals) this.release(v, id);
     this.npcVisuals.clear();
     this.chase.reset();
@@ -390,6 +423,7 @@ export class Renderer {
     this.gl.setSize(w, h, false);
     this.chase.resize(w / h);
     this.post?.setSize(w, h);
+    this.garage.resize(w, h);
   }
 
   handleEvent(e: SimEvent, world: AnyWorld): void {
@@ -506,6 +540,15 @@ export class Renderer {
       } else {
         this.slowFrames = Math.max(0, this.slowFrames - 1);
       }
+    }
+    if (this.garageMode) {
+      this.garage.update(dt);
+      this.gl.toneMappingExposure = this.garage.exposure;
+      const t0 = performance.now();
+      this.garage.render(this.gl);
+      const renderMs = performance.now() - t0;
+      this.recordPerf(dt, renderMs, 'garage');
+      return;
     }
     const p = world.player;
     const lerp = (a: number, b: number) => a + (b - a) * alpha;
@@ -627,7 +670,10 @@ export class Renderer {
     const t0 = performance.now();
     this.post.render();
     const renderMs = performance.now() - t0;
+    this.recordPerf(dt, renderMs, world.mode);
+  }
 
+  private recordPerf(dt: number, renderMs: number, mode: string): void {
     if (dt > 0) {
       this.perfFrames++;
       this.perfMsAcc += dt;
@@ -635,7 +681,7 @@ export class Renderer {
       if (this.perfTimer >= 0.25) {
         this.perfFps = this.perfFrames / Math.max(1e-3, this.perfMsAcc);
         const info = this.gl.info.render;
-        const chunks = this.env?.visibleChunks ?? null;
+        const chunks = this.garageMode ? null : (this.env?.visibleChunks ?? null);
         const snap = {
           fps: +this.perfFps.toFixed(1),
           ms: +(1000 / Math.max(1, this.perfFps)).toFixed(1),
@@ -646,7 +692,7 @@ export class Renderer {
           textures: this.gl.info.memory.textures,
           dpr: +this.gl.getPixelRatio().toFixed(2),
           visibleChunks: chunks,
-          mode: world.mode,
+          mode,
           timeOfDay: this.timeOfDay,
         };
         (window as unknown as { __KT3D_PERF__?: typeof snap }).__KT3D_PERF__ = snap;
@@ -661,7 +707,7 @@ export class Renderer {
       }
     } else if (this.perfEl || !(window as unknown as { __KT3D_PERF__?: unknown }).__KT3D_PERF__) {
       const info = this.gl.info.render;
-      const chunks = this.env?.visibleChunks ?? null;
+      const chunks = this.garageMode ? null : (this.env?.visibleChunks ?? null);
       const snap = {
         fps: +this.perfFps.toFixed(1),
         ms: +(1000 / Math.max(1, this.perfFps)).toFixed(1),
@@ -672,7 +718,7 @@ export class Renderer {
         textures: this.gl.info.memory.textures,
         dpr: +this.gl.getPixelRatio().toFixed(2),
         visibleChunks: chunks,
-        mode: world.mode,
+        mode,
         timeOfDay: this.timeOfDay,
       };
       (window as unknown as { __KT3D_PERF__?: typeof snap }).__KT3D_PERF__ = snap;

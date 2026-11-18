@@ -82,6 +82,11 @@ export class InputManager {
   private tiltLastRawDeg: number | null = null;
   private confirmQueued = false;
   private prevPadConfirm = false;
+  private menuNavQueued = 0; // -1 for left, 1 for right
+  private prevPadNavLeft = false;
+  private prevPadNavRight = false;
+  private backQueued = false;
+  private prevPadBack = false;
   private prevPadMute = false;
   private muteQueued = false;
   private radioQueued = false;
@@ -100,6 +105,9 @@ export class InputManager {
       this.keys.add(e.code);
       this.lastSource = 'keyboard';
       if (e.code === 'Enter' || e.code === 'NumpadEnter') this.confirmQueued = true;
+      if (e.code === 'ArrowRight' || e.code === 'KeyD') this.menuNavQueued = 1;
+      if (e.code === 'ArrowLeft' || e.code === 'KeyA') this.menuNavQueued = -1;
+      if (e.code === 'Escape' || e.code === 'Backspace') this.backQueued = true;
       if (e.code === 'KeyM') this.muteQueued = true;
       if (e.code === 'KeyR') this.radioQueued = true;
       if (e.code === 'Escape' || e.code === 'KeyP') this.pauseQueued = true;
@@ -186,6 +194,18 @@ export class InputManager {
     return c;
   }
 
+  consumeMenuNav(): number {
+    const n = this.menuNavQueued;
+    this.menuNavQueued = 0;
+    return n;
+  }
+
+  consumeBack(): boolean {
+    const b = this.backQueued;
+    this.backQueued = false;
+    return b;
+  }
+
   /** Esc / P / gamepad Start: pause or resume. */
   consumePause(): boolean {
     const p = this.pauseQueued;
@@ -267,6 +287,15 @@ export class InputManager {
       const confirm = !!(b(9)?.pressed || b(0)?.pressed);
       if (confirm && !this.prevPadConfirm) this.confirmQueued = true;
       this.prevPadConfirm = confirm;
+      const navLeft = !!b(14)?.pressed;
+      const navRight = !!b(15)?.pressed;
+      if (navLeft && !this.prevPadNavLeft) this.menuNavQueued = -1;
+      if (navRight && !this.prevPadNavRight) this.menuNavQueued = 1;
+      this.prevPadNavLeft = navLeft;
+      this.prevPadNavRight = navRight;
+      const back = !!b(1)?.pressed; // B button as back
+      if (back && !this.prevPadBack) this.backQueued = true;
+      this.prevPadBack = back;
       const mute = !!b(8)?.pressed;
       if (mute && !this.prevPadMute) this.muteQueued = true;
       this.prevPadMute = mute;

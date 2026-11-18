@@ -508,6 +508,272 @@ function buildTruck() {
   return root;
 }
 
+// ---------------------------------------------------------------------------
+// 5. '65 Ford Mustang-inspired Coupe (coupe.glb) — R=0.33, L=4.44, W=1.74
+// ---------------------------------------------------------------------------
+function buildCoupe() {
+  const root = newVehicleRoot();
+  const M = MATS();
+  M.paint = stdMat('paint', '#1e40af', 0.24, 0.35);
+  M.stripe = stdMat('stripe', '#e8eef7', 0.28, 0.25);
+  const R = 0.33;
+
+  // 8-spoke alloy wheels resting flush on y = 0; slightly wider rear stance
+  makeWheel(root, 'wheel_FL', -0.78, R, -1.36, 0.22, M, { spoked: true, spokes: 8 });
+  makeWheel(root, 'wheel_FR', 0.78, R, -1.36, 0.22, M, { spoked: true, spokes: 8 });
+  makeWheel(root, 'wheel_RL', -0.78, R, 1.36, 0.25, M, { spoked: true, spokes: 8 });
+  makeWheel(root, 'wheel_RR', 0.78, R, 1.36, 0.25, M, { spoked: true, spokes: 8 });
+
+  // Classic 3-box pony car profile: long flat muscular hood, crisp beltline, fast/notch roof, short rear deck + ducktail
+  const prof = [
+    [-2.14, 0.28],
+    [-2.19, 0.50],
+    [-2.14, 0.69],
+    [-0.88, 0.80],
+    [-0.36, 1.28],
+    [0.68, 1.27],
+    [1.34, 0.86],
+    [2.12, 0.82],
+    [2.16, 0.84],
+    [2.16, 0.56],
+    [2.10, 0.28],
+  ];
+  const shape = new THREE.Shape();
+  prof.forEach(([z, y], i) => (i === 0 ? shape.moveTo(-z, y) : shape.lineTo(-z, y)));
+  shape.closePath();
+  const bevel = 0.07;
+  const depth = 1.72 - bevel * 2;
+  const shellGeo = new THREE.ExtrudeGeometry(shape, {
+    depth,
+    bevelEnabled: true,
+    bevelThickness: bevel,
+    bevelSize: bevel,
+    bevelSegments: 3,
+  });
+  shellGeo.rotateY(Math.PI / 2);
+  shellGeo.translate(-depth / 2, 0, 0);
+  const pos = shellGeo.getAttribute('position');
+  for (let i = 0; i < pos.count; i++) {
+    let px = pos.getX(i);
+    const py = pos.getY(i);
+    const pz = pos.getZ(i);
+    if (py > 0.80) px *= 1 - Math.min(0.22, (py - 0.80) * 0.34);
+    if (Math.abs(pz) > 1.88) px *= 1 - (Math.abs(pz) - 1.88) * 0.20;
+    pos.setX(i, px);
+  }
+  shellGeo.computeVertexNormals();
+  addMesh(root, 'body_shell', shellGeo, M.paint);
+
+  // Dark underbody sill & flared wheel arches
+  addBox(root, 'underbody', 1.56, 0.08, 4.10, M.trim, 0, 0.24, 0);
+  for (const sx of [-1, 1]) {
+    for (const z of [-1.36, 1.36]) {
+      const arch = new THREE.CircleGeometry(0.41, 12, 0, Math.PI);
+      arch.rotateY((Math.PI / 2) * sx);
+      addMesh(root, `arch_${sx}_${z}`, arch, M.trim, sx * 0.855, 0.32, z);
+      const lipGeo = new THREE.TorusGeometry(0.41, 0.032, 6, 14, Math.PI);
+      lipGeo.rotateY(Math.PI / 2);
+      addMesh(root, `arch_lip_${sx}_${z}`, lipGeo, M.paint, sx * 0.845, 0.32, z);
+    }
+  }
+
+  // Hood power bulge & front intake + twin racing stripes (hood, roof, rear deck + side rocker)
+  addBox(root, 'hood_bulge', 0.56, 0.045, 1.05, M.paint, 0, 0.77, -1.48);
+  addBox(root, 'hood_scoop', 0.44, 0.025, 0.06, M.trim, 0, 0.785, -2.00);
+  for (const sx of [-1, 1]) {
+    addBox(root, `stripe_hood_${sx}`, 0.14, 0.015, 1.24, M.stripe, sx * 0.15, 0.798, -1.52, 0.08, 0, 0);
+    addBox(root, `stripe_roof_${sx}`, 0.14, 0.015, 1.02, M.stripe, sx * 0.15, 1.355, 0.16);
+    addBox(root, `stripe_deck_${sx}`, 0.14, 0.015, 0.76, M.stripe, sx * 0.15, 0.892, 1.74, -0.05, 0, 0);
+    addBox(root, `stripe_rocker_${sx}`, 0.025, 0.055, 2.04, M.stripe, sx * 0.865, 0.32, 0);
+  }
+
+  // Greenhouse: raked windscreen, rear fastback glass, side windows, pillars, chrome trim, mirrors & C-scoops
+  addBox(root, 'windscreen', 1.28, 0.03, 0.72, M.glass, 0, 1.09, -0.62, -0.74, 0, 0);
+  addBox(root, 'rear_glass', 1.22, 0.03, 0.78, M.glass, 0, 1.11, 1.02, 0.54, 0, 0);
+  for (const sx of [-1, 1]) {
+    addBox(root, `side_win_${sx}`, 0.03, 0.36, 1.26, M.glass, sx * 0.71, 1.08, 0.18, 0, 0, sx * -0.24);
+    addBox(root, `bpillar_${sx}`, 0.04, 0.38, 0.08, M.trim, sx * 0.715, 1.08, 0.14, 0, 0, sx * -0.24);
+    addBox(root, `win_trim_${sx}`, 0.025, 0.028, 1.30, M.chrome, sx * 0.735, 0.88, 0.18);
+    addBox(root, `mirror_${sx}`, 0.15, 0.085, 0.08, M.chrome, sx * 0.89, 0.88, -0.56);
+    addBox(root, `handle_${sx}`, 0.03, 0.03, 0.14, M.chrome, sx * 0.865, 0.75, 0.10);
+    // Signature '65 Mustang side C-scoop & chrome louver bars
+    addBox(root, `cscoop_${sx}`, 0.035, 0.22, 0.42, M.trim, sx * 0.865, 0.58, 0.86);
+    for (let j = -1; j <= 1; j++) {
+      addBox(root, `cscoop_bar_${sx}_${j + 1}`, 0.045, 0.024, 0.26, M.chrome, sx * 0.868, 0.58 + j * 0.06, 0.86);
+    }
+  }
+
+  // Front fascia: recessed honeycomb grille, chrome surround, Mustang pony bar, full-width chrome bumpers
+  addBox(root, 'grille', 0.96, 0.22, 0.06, M.trim, 0, 0.61, -2.20);
+  addBox(root, 'grille_top', 1.02, 0.03, 0.075, M.chrome, 0, 0.72, -2.205);
+  addBox(root, 'grille_bot', 1.02, 0.03, 0.075, M.chrome, 0, 0.50, -2.205);
+  addBox(root, 'grille_emblem', 0.28, 0.035, 0.08, M.chrome, 0, 0.61, -2.21);
+  addBox(root, 'bumper_f', 1.70, 0.11, 0.09, M.chrome, 0, 0.35, -2.24);
+  addBox(root, 'bumper_r', 1.70, 0.11, 0.09, M.chrome, 0, 0.38, 2.23);
+  addBox(root, 'plate_f', 0.38, 0.10, 0.025, M.plate, 0, 0.35, -2.29);
+  addBox(root, 'plate_r', 0.38, 0.10, 0.025, M.plate, 0, 0.52, 2.21);
+
+  // Dual chrome exhaust tips (driver side -0.54 aligns with FLAME_POS.coupe)
+  for (const sx of [-1, 1]) {
+    addMesh(root, `exhaust_${sx}`, new THREE.CylinderGeometry(0.042, 0.042, 0.16, 10), M.chrome, sx * 0.54, 0.25, 2.22, Math.PI / 2, 0, 0);
+  }
+
+  // Direct child light meshes: head_* added first, then hazard_*, brake_*
+  for (const sx of [-1, 1]) {
+    addMesh(root, `head_bezel_${sx}`, new THREE.CylinderGeometry(0.135, 0.135, 0.06, 12), M.chrome, sx * 0.66, 0.64, -2.18, Math.PI / 2, 0, 0);
+    addMesh(root, `head_${sx}`, new THREE.CylinderGeometry(0.11, 0.11, 0.04, 12), M.head, sx * 0.66, 0.64, -2.20, Math.PI / 2, 0, 0);
+  }
+  for (const sx of [-1, 1]) {
+    addBox(root, `hazard_f${sx}`, 0.14, 0.065, 0.05, M.hazard, sx * 0.62, 0.44, -2.20);
+    addBox(root, `brake_${sx}`, 0.30, 0.12, 0.06, M.brake, sx * 0.60, 0.68, 2.18);
+    addBox(root, `tail_div_a_${sx}`, 0.025, 0.13, 0.07, M.chrome, sx * 0.60 - 0.05, 0.68, 2.185);
+    addBox(root, `tail_div_b_${sx}`, 0.025, 0.13, 0.07, M.chrome, sx * 0.60 + 0.05, 0.68, 2.185);
+    addBox(root, `hazard_r${sx}`, 0.10, 0.09, 0.06, M.hazard, sx * 0.79, 0.68, 2.16);
+  }
+
+  return root;
+}
+
+// ---------------------------------------------------------------------------
+// 6. Toyota Hilux 4x4 Double-Cab Pickup / SUV (suv.glb) — R=0.42, L=5.06, W=1.90
+// ---------------------------------------------------------------------------
+function buildSuv() {
+  const root = newVehicleRoot();
+  const M = MATS();
+  M.paint = stdMat('paint', '#c27b2b', 0.36, 0.18);
+  const R = 0.42;
+
+  // Rugged 6-spoke all-terrain wheels on y = 0, wheelbase 3.04m
+  makeWheel(root, 'wheel_FL', -0.82, R, -1.52, 0.28, M, { spoked: true, spokes: 6 });
+  makeWheel(root, 'wheel_FR', 0.82, R, -1.52, 0.28, M, { spoked: true, spokes: 6 });
+  makeWheel(root, 'wheel_RL', -0.82, R, 1.52, 0.28, M, { spoked: true, spokes: 6 });
+  makeWheel(root, 'wheel_RR', 0.82, R, 1.52, 0.28, M, { spoked: true, spokes: 6 });
+
+  // Lifted ladder chassis, steel front skid plate & side nerf steps
+  addBox(root, 'chassis', 1.30, 0.18, 4.65, M.trim, 0, 0.44, 0);
+  addBox(root, 'skid_plate', 0.96, 0.06, 0.56, M.steel, 0, 0.38, -2.30, -0.35, 0, 0);
+  for (const sx of [-1, 1]) {
+    addBox(root, `step_${sx}`, 0.14, 0.06, 1.65, M.trim, sx * 0.92, 0.39, -0.14);
+  }
+
+  // Sculpted double-cab body: tall hood, upright cab, pickup bed side walls
+  const cabProf = [
+    [-2.42, 0.54],
+    [-2.45, 0.88],
+    [-2.38, 1.18],
+    [-0.95, 1.24],
+    [-0.48, 1.80],
+    [0.68, 1.80],
+    [0.74, 1.22],
+    [2.38, 1.20],
+    [2.42, 0.86],
+    [2.38, 0.54],
+  ];
+  const shape = new THREE.Shape();
+  cabProf.forEach(([z, y], i) => (i === 0 ? shape.moveTo(-z, y) : shape.lineTo(-z, y)));
+  shape.closePath();
+  const bevel = 0.07;
+  const depth = 1.84 - bevel * 2;
+  const shellGeo = new THREE.ExtrudeGeometry(shape, {
+    depth,
+    bevelEnabled: true,
+    bevelThickness: bevel,
+    bevelSize: bevel,
+    bevelSegments: 2,
+  });
+  shellGeo.rotateY(Math.PI / 2);
+  shellGeo.translate(-depth / 2, 0, 0);
+  const pos = shellGeo.getAttribute('position');
+  for (let i = 0; i < pos.count; i++) {
+    let px = pos.getX(i);
+    const py = pos.getY(i);
+    const pz = pos.getZ(i);
+    if (py > 1.26) px *= 1 - Math.min(0.14, (py - 1.26) * 0.22);
+    if (pz < -2.15) px *= 1 - (-2.15 - pz) * 0.18;
+    pos.setX(i, px);
+  }
+  shellGeo.computeVertexNormals();
+  addMesh(root, 'body_shell', shellGeo, M.paint);
+
+  // Open pickup bed liner recess + tailgate trim
+  addBox(root, 'bedliner', 1.44, 0.08, 1.56, M.trim, 0, 1.23, 1.55);
+  addBox(root, 'bed_cap_L', 0.12, 0.04, 1.62, M.trim, -0.82, 1.24, 1.55);
+  addBox(root, 'bed_cap_R', 0.12, 0.04, 1.62, M.trim, 0.82, 1.24, 1.55);
+  addBox(root, 'bed_cap_R_tail', 1.64, 0.05, 0.09, M.trim, 0, 1.23, 2.38);
+
+  // Hood intercooler scoop
+  addBox(root, 'hood_scoop', 0.54, 0.08, 0.48, M.paint, 0, 1.24, -1.65);
+  addBox(root, 'hood_intake', 0.42, 0.04, 0.05, M.trim, 0, 1.24, -1.89);
+
+  // Chunky matte black fender flares & wheel well liners
+  for (const sx of [-1, 1]) {
+    for (const z of [-1.52, 1.52]) {
+      const arch = new THREE.CircleGeometry(0.49, 12, 0, Math.PI);
+      arch.rotateY((Math.PI / 2) * sx);
+      addMesh(root, `arch_${sx}_${z}`, arch, M.trim, sx * 0.915, 0.42, z);
+      const flareGeo = new THREE.TorusGeometry(0.50, 0.055, 6, 14, Math.PI);
+      flareGeo.rotateY(Math.PI / 2);
+      addMesh(root, `flare_${sx}_${z}`, flareGeo, M.trim, sx * 0.91, 0.42, z);
+    }
+    addBox(root, `mudflap_${sx}`, 0.30, 0.32, 0.03, M.trim, sx * 0.80, 0.32, 2.05);
+  }
+
+  // Double-cab glasshouse, B/C pillars, wing mirrors, handles, snorkel
+  addBox(root, 'windscreen', 1.46, 0.03, 0.68, M.glass, 0, 1.55, -0.74, -0.68, 0, 0);
+  addBox(root, 'rear_cab_glass', 1.38, 0.42, 0.03, M.glass, 0, 1.53, 0.72);
+  for (const sx of [-1, 1]) {
+    addBox(root, `side_win_${sx}`, 0.03, 0.42, 1.06, M.glass, sx * 0.81, 1.53, 0.06, 0, 0, sx * -0.16);
+    addBox(root, `bpillar_${sx}`, 0.04, 0.44, 0.10, M.trim, sx * 0.815, 1.53, 0.02, 0, 0, sx * -0.16);
+    addBox(root, `mirror_${sx}`, 0.18, 0.14, 0.10, M.trim, sx * 1.04, 1.32, -0.72);
+    addBox(root, `handle_f_${sx}`, 0.03, 0.035, 0.14, M.chrome, sx * 0.935, 1.12, -0.22);
+    addBox(root, `handle_r_${sx}`, 0.03, 0.035, 0.14, M.chrome, sx * 0.935, 1.12, 0.38);
+  }
+  // Right-side 4x4 safari snorkel
+  addBar(root, 'snorkel_run', [0.91, 1.12, -1.10], [0.84, 1.78, -0.58], 0.042, M.trim);
+  addBox(root, 'snorkel_head', 0.10, 0.14, 0.12, M.trim, 0.84, 1.84, -0.56);
+
+  // Tubular steel bed rollbar + roof rack
+  addBar(root, 'roll_L', [-0.74, 1.24, 0.86], [-0.70, 1.84, 0.86], 0.038, M.trim);
+  addBar(root, 'roll_R', [0.74, 1.24, 0.86], [0.70, 1.84, 0.86], 0.038, M.trim);
+  addBar(root, 'roll_top', [-0.70, 1.84, 0.86], [0.70, 1.84, 0.86], 0.038, M.trim);
+  addBar(root, 'roll_brace_L', [-0.70, 1.82, 0.86], [-0.74, 1.24, 1.48], 0.03, M.trim);
+  addBar(root, 'roll_brace_R', [0.70, 1.82, 0.86], [0.74, 1.24, 1.48], 0.03, M.trim);
+  for (const sx of [-1, 1]) {
+    addBox(root, `rack_rail_${sx}`, 0.05, 0.07, 1.06, M.trim, sx * 0.58, 1.89, 0.08);
+  }
+  for (const rz of [-0.36, 0.08, 0.52]) {
+    addBox(root, `rack_bar_${rz}`, 1.16, 0.04, 0.05, M.trim, 0, 1.88, rz);
+  }
+
+  // Front grille, heavy-duty bullbar, rear step bumper, plates, exhaust
+  addBox(root, 'grille_bg', 1.04, 0.30, 0.06, M.trim, 0, 0.96, -2.43);
+  for (let i = -1; i <= 1; i++) {
+    addBox(root, `grille_slat_${i + 1}`, 0.98, 0.038, 0.07, M.chrome, 0, 0.96 + i * 0.08, -2.435);
+  }
+  addBox(root, 'bumper_f', 1.82, 0.18, 0.14, M.trim, 0, 0.62, -2.48);
+  addBar(root, 'bull_L', [-0.46, 0.64, -2.53], [-0.40, 1.06, -2.53], 0.034, M.trim);
+  addBar(root, 'bull_R', [0.46, 0.64, -2.53], [0.40, 1.06, -2.53], 0.034, M.trim);
+  addBar(root, 'bull_top', [-0.40, 1.06, -2.53], [0.40, 1.06, -2.53], 0.034, M.trim);
+  addBar(root, 'bull_mid', [-0.84, 0.86, -2.49], [0.84, 0.86, -2.49], 0.028, M.trim);
+  addBox(root, 'bumper_r', 1.84, 0.16, 0.14, M.trim, 0, 0.60, 2.46);
+  addBox(root, 'plate_f', 0.40, 0.11, 0.03, M.plate, 0, 0.62, -2.55);
+  addBox(root, 'plate_r', 0.40, 0.11, 0.03, M.plate, 0, 0.62, 2.53);
+  addMesh(root, 'exhaust', new THREE.CylinderGeometry(0.048, 0.048, 0.22, 10), M.chrome, -0.68, 0.40, 2.42, Math.PI / 2, 0, 0);
+
+  // Direct child light meshes: main head_* MUST be added BEFORE head_fog_*!
+  for (const sx of [-1, 1]) {
+    addBox(root, `head_${sx}`, 0.30, 0.15, 0.06, M.head, sx * 0.68, 1.00, -2.41, 0, sx * 0.12, 0);
+  }
+  for (const sx of [-1, 1]) {
+    addMesh(root, `head_fog_${sx}`, new THREE.CylinderGeometry(0.09, 0.09, 0.05, 10), M.head, sx * 0.28, 0.78, -2.53, Math.PI / 2, 0, 0);
+    addBox(root, `hazard_f${sx}`, 0.11, 0.09, 0.06, M.hazard, sx * 0.84, 0.96, -2.36, 0, sx * 0.22, 0);
+    addBox(root, `brake_${sx}`, 0.14, 0.26, 0.06, M.brake, sx * 0.84, 0.98, 2.42);
+    addBox(root, `hazard_r${sx}`, 0.14, 0.10, 0.06, M.hazard, sx * 0.84, 0.78, 2.42);
+  }
+
+  return root;
+}
+
 const exporter = new GLTFExporter();
 function writeGlb(name, scene) {
   return new Promise((resolve, reject) => {
@@ -533,3 +799,5 @@ await writeGlb('bike', buildBike());
 await writeGlb('cart', buildCart());
 await writeGlb('car', buildCar());
 await writeGlb('truck', buildTruck());
+await writeGlb('coupe', buildCoupe());
+await writeGlb('suv', buildSuv());

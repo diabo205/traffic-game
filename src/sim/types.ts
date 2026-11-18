@@ -47,7 +47,26 @@ export function trafficDamage(impact: number, kindDamage: number): number {
 
 export type NpcKind = 'bike' | 'minibus' | 'rickshaw' | 'cart' | 'car' | 'truck';
 
-export type PlayerVehicle = 'alto' | 'rickshaw' | 'minibus';
+export type PlayerVehicle = 'alto' | 'coupe' | 'rickshaw' | 'suv' | 'minibus';
+
+export interface VehicleShowcaseStats {
+  power: number;        // 0..10
+  highSpeed: number;    // 0..10
+  acceleration: number; // 0..10
+  nitrous: number;      // 0..10
+}
+
+export interface VehicleShowcaseMeta {
+  id: PlayerVehicle;
+  brand: string;
+  model: string;
+  badgeName: string;
+  perfRating: number;
+  stats: VehicleShowcaseStats;
+  handlingGrid: { x: number; y: number }; // x: -1 (RACE) .. +1 (DRIFT), y: -1 (ROAD) .. +1 (OFF-ROAD)
+  customizationRating: number; // integer 1..10
+  paintHex: number;
+}
 
 export type HazardKind = 'pothole' | 'manhole' | 'water' | 'barrier' | 'checkpoint';
 

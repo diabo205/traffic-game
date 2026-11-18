@@ -2,18 +2,12 @@ import type { TouchSteerMode } from '../input/InputManager';
 import type { TimeOfDay } from '../render/Renderer';
 import type { FareKind, ShiftRank } from '../sim/city/Fares';
 import type { RunStats } from '../sim/LevelManager';
-import { VEHICLE_COST, VEHICLE_SPECS } from '../sim/PlayerCar';
+import { VEHICLE_SPECS } from '../sim/PlayerCar';
 import { FINISH_Z } from '../sim/road';
 import type { GameOverReason, PlayerVehicle } from '../sim/types';
 
 type Mode = 'route' | 'city';
 
-const VEHICLES: readonly PlayerVehicle[] = ['alto', 'rickshaw', 'minibus'];
-const VEHICLE_PERK: Readonly<Record<PlayerVehicle, string>> = {
-  alto: 'BALANCED',
-  rickshaw: 'AGILE',
-  minibus: 'TANK',
-};
 
 /**
  * Arcade HUD + menus. DOM only; the Game pushes values in and wires the
@@ -72,7 +66,7 @@ export class Hud {
   private trackMapRoute: SVGSVGElement;
   private bankBadge: HTMLDivElement;
   private bestHint: HTMLSpanElement;
-  readonly rideBtns: Record<PlayerVehicle, HTMLButtonElement>;
+
   readonly todBtns: Record<TimeOfDay, HTMLButtonElement>;
   readonly cityBtn: HTMLButtonElement;
   /** route-run mode tile (kept under its old name) */
@@ -265,23 +259,12 @@ export class Hud {
     trackStats.append(specRow, bestRow);
     this.bestHint = bestVal;
 
-    const garage = div('garage-strip');
-    const makeRideBtn = (v: PlayerVehicle) => {
-      const sp = VEHICLE_SPECS[v];
-      const cost = VEHICLE_COST[v];
-      const b = button('', 'garage-btn', `${sp.label} — ${sp.tag}`);
-      b.innerHTML = `<span class="g-name">${sp.label}</span><span class="g-perk">${VEHICLE_PERK[v]}</span><span class="g-sub">${cost === 0 ? 'FREE' : `RS ${cost}`}</span>`;
-      garage.appendChild(b);
-      return b;
-    };
-    this.rideBtns = {
-      alto: makeRideBtn('alto'),
-      rickshaw: makeRideBtn('rickshaw'),
-      minibus: makeRideBtn('minibus'),
-    };
 
-    trackInfo.append(this.trackKicker, this.heroTitle, this.heroText, trackStats, garage);
+
+    trackInfo.append(this.trackKicker, this.heroTitle, this.heroText, trackStats);
     trackCard.append(trackPreview, trackInfo);
+
+
 
     // Right: vertical Time-of-Day / Weather condition strips
     const condWrap = div('cond-strips');
@@ -467,17 +450,7 @@ export class Hud {
     this.integLabel.textContent = sp.label;
     this.bankBadge.textContent = `BANK RS ${bank.toLocaleString('en-PK')}`;
     setCard(this.rideBtn, `${sp.label} · ${sp.tag}`);
-    for (const k of VEHICLES) {
-      const btn = this.rideBtns[k];
-      const cost = VEHICLE_COST[k];
-      const unlocked = bank >= cost;
-      btn.classList.toggle('chosen', k === v);
-      btn.classList.toggle('locked', !unlocked);
-      const sub = btn.querySelector('.g-sub');
-      if (sub) {
-        sub.textContent = k === v ? 'ACTIVE' : unlocked ? 'UNLOCKED' : `LOCKED · RS ${cost}`;
-      }
-    }
+
   }
 
   setTimeOfDay(tod: TimeOfDay): void {
@@ -537,6 +510,10 @@ export class Hud {
       this.banner.classList.remove('show');
       this.bannerTimer = 0;
     }
+  }
+
+  setMenu(open: boolean): void {
+    this.menu(open);
   }
 
   showStart(v: boolean): void {

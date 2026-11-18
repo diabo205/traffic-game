@@ -11,7 +11,9 @@
     "playtest:sim": "node tools/playtest/sim.mjs",
     "playtest:balance": "node tools/playtest/balance.mjs",
     "playtest:metrics": "bash tools/playtest/metrics.sh",
-    "playtest:browser": "node tools/playtest/browser.mjs"
+    "playtest:browser": "node tools/playtest/browser.mjs",
+    "test": "node --test tools/test/*.test.mjs",
+    "test:e2e": "node tools/playtest/e2e-car-select.mjs"
   },
   "dependencies": {
     "@fontsource/barlow-condensed": "^5.2.6",

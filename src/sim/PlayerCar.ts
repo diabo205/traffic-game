@@ -1,5 +1,5 @@
 import { approach, clamp } from './math';
-import type { InputFrame, Obb, PlayerVehicle } from './types';
+import type { InputFrame, Obb, PlayerVehicle, VehicleShowcaseMeta } from './types';
 
 export interface VehicleSpec {
   readonly label: string;
@@ -25,7 +25,25 @@ export interface VehicleSpec {
   readonly topSpeedMul: number;
   /** incoming collision damage multiplier */
   readonly damageRes: number;
+  /** extra push while boosting (m/s^2) */
+  readonly boostAccel: number;
+  /** top speed multiplier while boosting */
+  readonly boostTopSpeedMul: number;
+  /** cooldown between boosts (s) */
+  readonly boostCooldown: number;
+  /** multiplier on boost duration */
+  readonly boostDurationMul: number;
+  /** off-road/shoulder drag multiplier */
+  readonly offroadDragMul: number;
+  /** max traction available off-road */
+  readonly offroadTraction: number;
+  /** lateral slip persistence during drift (0..1) */
+  readonly driftSlideKeep: number;
+  /** extra yaw authority during drift */
+  readonly driftYawBoost: number;
 }
+
+export const PLAYER_VEHICLES: readonly PlayerVehicle[] = ['alto', 'coupe', 'rickshaw', 'suv', 'minibus'] as const;
 
 /**
  * Arcade model of a 660cc Suzuki Alto: light, nimble, eager at low speed,
@@ -51,10 +69,47 @@ export const ALTO: VehicleSpec = {
   maxLateralAccel: 9.8,
   topSpeedMul: 1,
   damageRes: 1,
+  boostAccel: 9.5,
+  boostTopSpeedMul: 1.28,
+  boostCooldown: 1.4,
+  boostDurationMul: 1.0,
+  offroadDragMul: 1.0,
+  offroadTraction: 0.68,
+  driftSlideKeep: 0.9,
+  driftYawBoost: 0.5,
 } as const;
 
 export const VEHICLE_SPECS: Readonly<Record<PlayerVehicle, VehicleSpec>> = {
   alto: ALTO,
+  coupe: {
+    label: 'MUSTANG',
+    tag: "'65 STREET DRIFTER",
+    halfWidth: 0.86,
+    halfLength: 2.22,
+    wheelBase: 2.72,
+    mass: 1280,
+    driveAccel: 5.55,
+    brakeDecel: 11.2,
+    reverseAccel: 3.5,
+    maxReverse: 6.2,
+    rollingDrag: 0.24,
+    aeroDrag: 0.00038,
+    maxSteerLow: 0.62,
+    steerSpeedFalloff: 0.038,
+    steerRate: 3.5,
+    steerReturnRate: 4.9,
+    maxLateralAccel: 10.4,
+    topSpeedMul: 1.14,
+    damageRes: 0.92,
+    boostAccel: 11.8,
+    boostTopSpeedMul: 1.34,
+    boostCooldown: 1.15,
+    boostDurationMul: 1.18,
+    offroadDragMul: 1.25,
+    offroadTraction: 0.58,
+    driftSlideKeep: 0.94,
+    driftYawBoost: 0.62,
+  },
   rickshaw: {
     label: 'RICKSHAW',
     tag: 'RAZOR-SHARP GAP FILTER',
@@ -75,6 +130,43 @@ export const VEHICLE_SPECS: Readonly<Record<PlayerVehicle, VehicleSpec>> = {
     maxLateralAccel: 10.8,
     topSpeedMul: 0.9,
     damageRes: 1.15,
+    boostAccel: 9.8,
+    boostTopSpeedMul: 1.24,
+    boostCooldown: 1.1,
+    boostDurationMul: 0.92,
+    offroadDragMul: 0.75,
+    offroadTraction: 0.76,
+    driftSlideKeep: 0.8,
+    driftYawBoost: 0.44,
+  },
+  suv: {
+    label: 'HILUX',
+    tag: '4X4 OFF-ROAD BEAST',
+    halfWidth: 0.94,
+    halfLength: 2.53,
+    wheelBase: 3.04,
+    mass: 2050,
+    driveAccel: 4.9,
+    brakeDecel: 10.0,
+    reverseAccel: 3.2,
+    maxReverse: 5.8,
+    rollingDrag: 0.27,
+    aeroDrag: 0.00048,
+    maxSteerLow: 0.58,
+    steerSpeedFalloff: 0.044,
+    steerRate: 3.1,
+    steerReturnRate: 4.4,
+    maxLateralAccel: 9.2,
+    topSpeedMul: 1.03,
+    damageRes: 0.76,
+    boostAccel: 9.8,
+    boostTopSpeedMul: 1.26,
+    boostCooldown: 1.35,
+    boostDurationMul: 1.0,
+    offroadDragMul: 0.25,
+    offroadTraction: 0.92,
+    driftSlideKeep: 0.82,
+    driftYawBoost: 0.42,
   },
   minibus: {
     label: 'W-11',
@@ -96,14 +188,108 @@ export const VEHICLE_SPECS: Readonly<Record<PlayerVehicle, VehicleSpec>> = {
     maxLateralAccel: 7.8,
     topSpeedMul: 1.04,
     damageRes: 0.62,
+    boostAccel: 8.2,
+    boostTopSpeedMul: 1.22,
+    boostCooldown: 1.65,
+    boostDurationMul: 1.08,
+    offroadDragMul: 0.65,
+    offroadTraction: 0.74,
+    driftSlideKeep: 0.86,
+    driftYawBoost: 0.35,
   },
 };
 
 /** Unlock prices in cumulative earned Rupees. */
 export const VEHICLE_COST: Readonly<Record<PlayerVehicle, number>> = {
   alto: 0,
+  coupe: 0,
   rickshaw: 400,
+  suv: 800,
   minibus: 1200,
+};
+
+/** Showcase catalog metadata aligned with each vehicle's VehicleSpec physics. */
+export const VEHICLE_SHOWCASE: Readonly<Record<PlayerVehicle, VehicleShowcaseMeta>> = {
+  alto: {
+    id: 'alto',
+    brand: 'SUZUKI',
+    model: 'Alto 660cc',
+    badgeName: 'Suzuki Alto 660',
+    perfRating: 118,
+    stats: {
+      power: 2.8,
+      highSpeed: 4.2,
+      acceleration: 4.5,
+      nitrous: 5.0,
+    },
+    handlingGrid: { x: 0.08, y: -0.35 },
+    customizationRating: 5,
+    paintHex: 0xd6dde2,
+  },
+  coupe: {
+    id: 'coupe',
+    brand: 'FORD',
+    model: "Mustang '65",
+    badgeName: "'65 Ford Mustang",
+    perfRating: 168,
+    stats: {
+      power: 7.6,
+      highSpeed: 8.6,
+      acceleration: 7.8,
+      nitrous: 8.6,
+    },
+    handlingGrid: { x: 0.58, y: -0.62 },
+    customizationRating: 6,
+    paintHex: 0x1e40af,
+  },
+  rickshaw: {
+    id: 'rickshaw',
+    brand: 'SAZGAR',
+    model: 'CNG Auto-Rickshaw',
+    badgeName: 'Sazgar CNG Rickshaw',
+    perfRating: 134,
+    stats: {
+      power: 2.0,
+      highSpeed: 2.8,
+      acceleration: 7.0,
+      nitrous: 6.2,
+    },
+    handlingGrid: { x: -0.62, y: 0.12 },
+    customizationRating: 7,
+    paintHex: 0x268b44,
+  },
+  suv: {
+    id: 'suv',
+    brand: 'TOYOTA',
+    model: 'Hilux 4x4',
+    badgeName: 'Toyota Hilux 4x4',
+    perfRating: 186,
+    stats: {
+      power: 8.0,
+      highSpeed: 5.6,
+      acceleration: 5.8,
+      nitrous: 5.6,
+    },
+    handlingGrid: { x: -0.25, y: 0.82 },
+    customizationRating: 8,
+    paintHex: 0xc27b2b,
+  },
+  minibus: {
+    id: 'minibus',
+    brand: 'KARACHI W-11',
+    model: 'Express Minibus',
+    badgeName: 'W-11 Express Bus',
+    perfRating: 212,
+    stats: {
+      power: 9.2,
+      highSpeed: 6.0,
+      acceleration: 2.6,
+      nitrous: 4.4,
+    },
+    handlingGrid: { x: -0.18, y: 0.15 },
+    customizationRating: 9,
+    paintHex: 0xc82828,
+  },
 };
 
 /** Arcade moves. */
@@ -407,9 +593,10 @@ export class PlayerCar {
 
   private boost(kind: BoostKind, seconds: number): void {
     if (this.boostCooldown > 0) return;
-    this.boostTime = Math.max(this.boostTime, seconds);
+    const scaled = seconds * this.spec.boostDurationMul;
+    this.boostTime = Math.max(this.boostTime, scaled);
     this.boostMax = Math.max(this.boostTime, 0.35);
-    this.boostCooldown = MOVES.boostCooldown;
+    this.boostCooldown = this.spec.boostCooldown;
     this.boostFired = kind;
   }
 
@@ -493,7 +680,7 @@ export class PlayerCar {
     this.prevThrottle = throttle;
     this.prevBrake = brake;
     const boosting = this.boostTime > 0;
-    const top = boosting ? vTop * MOVES.boostTopSpeed : vTop;
+    const top = boosting ? vTop * sp.boostTopSpeedMul : vTop;
 
     // --- Steering --------------------------------------------------------
     const maxSteer = sp.maxSteerLow / (1 + absV * sp.steerSpeedFalloff * (1 - this.drift * 0.45));
@@ -541,7 +728,7 @@ export class PlayerCar {
       if (throttle > 0.05) a += throttle * sp.brakeDecel;
       if (v < -sp.maxReverse) a += (-sp.maxReverse - v) * 6;
     }
-    if (boosting && !air && v > -0.2 && !this.handbrake) a += MOVES.boostAccel * Math.max(0, 1 - Math.max(v, 0) / top);
+    if (boosting && !air && v > -0.2 && !this.handbrake) a += sp.boostAccel * Math.max(0, 1 - Math.max(v, 0) / top);
     const drag = sp.rollingDrag * (air ? 0 : 1) + sp.aeroDrag * v * v + this.extraDrag;
     if (absV > 0.01) a -= Math.sign(v) * Math.min(drag, absV / dt);
     // Sliding sideways scrubs speed.
@@ -567,7 +754,7 @@ export class PlayerCar {
       // Pinned against a wall: let gas/brake + steer pivot the nose off it.
       const pinned = this.wallContact > 0 && Math.abs(nv) < WALL.pivotSpeed && (throttle > 0.1 || brake > 0.1);
       const yawV = pinned ? (nv < -0.2 || (brake > 0.1 && throttle < 0.1) ? -WALL.pivotSpeed : WALL.pivotSpeed) : nv;
-      yaw = ((yawV * Math.tan(this.steerAngle)) / sp.wheelBase) * (1 + d * 0.5);
+      yaw = ((yawV * Math.tan(this.steerAngle)) / sp.wheelBase) * (1 + d * sp.driftYawBoost);
       const maxYaw = grip / Math.max(Math.abs(nv), 1);
       // Loose rear (drift) or low traction: the car rotates more freely than it changes course.
       const loose = Math.max(d, this.traction < 0.6 ? 1 : 0);
@@ -586,7 +773,7 @@ export class PlayerCar {
 
     // Travel direction catches up with heading according to grip.
     if (!air) {
-      const grip = this.traction * this.traction * (1 - this.drift * 0.9);
+      const grip = this.traction * this.traction * (1 - this.drift * sp.driftSlideKeep);
       const catchUp = 1 - Math.exp(-dt * (1.6 + 14.4 * grip));
       let diff = this.heading - this.travel;
       diff = Math.atan2(Math.sin(diff), Math.cos(diff));
