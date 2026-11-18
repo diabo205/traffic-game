@@ -11,6 +11,7 @@ import {
   flagPavingTexture,
   frereBayTexture,
   highCourtBayTexture,
+  djBayTexture,
   lawnTexture,
   colonialVerandahTexture,
   gothicWallTexture,
@@ -2433,6 +2434,17 @@ function buildArtsCouncil(
 // 31. DJ Sindh Govt. Science College (1887 Indo-Saracenic Sandstone & Dome)
 // ---------------------------------------------------------------------------
 
+/**
+ * D.J. Sindh Government Science College (James Strachan, 1887–93), from
+ * reference photos: a two-storey range of yellow Karachi stone in banded
+ * rustication, with grilled round-arched windows below and balconied
+ * round-arched windows above. A giant Ionic portico (six columns between
+ * square end piers) under a pediment with an oculus fronts a square tower
+ * that rises behind it, with pedimented windows, domed corner turrets and
+ * a large ribbed dome with a lantern. At one end, a gabled pavilion with a
+ * slender belfry tower and cupola. Wings frame a courtyard behind. Street
+ * front faces +x.
+ */
 function buildDjScienceCollege(
   group: THREE.Group,
   hw: number,
@@ -2444,57 +2456,199 @@ function buildDjScienceCollege(
   g.position.set(0, KERB_H, 0);
   group.add(g);
 
-  const d = hw * 2;
-  const len = hl * 2;
-  const h = 13.8;
-  const sandstone = lam('#dfbe7d');
-  const deepStone = lam('#b38b46');
-  const domeMat = lam('#4b7f6e');
+  const stone = lam('#ecca8c', tiled(ashlarTexture(), 4, 3));
+  const light = lam('#f3dcab');
+  const shade = lam('#a8864e');
+  const domeMat = lam('#e2c493');
+  const dark = lam('#2b2520');
+  const tile = lam('#9c5a3c');
+  const lawnMat = lam('#6f9a4e');
+  const bays = new Map<number, THREE.MeshLambertMaterial>();
+  const bayMat = (n: number) => {
+    let m = bays.get(n);
+    if (!m) {
+      m = new THREE.MeshLambertMaterial({
+        color: '#ffffff',
+        map: tiled(djBayTexture(), n, 1),
+        emissive: new THREE.Color('#ffd49a'),
+        emissiveMap: tiled(djBayTexture(true), n, 1),
+        emissiveIntensity: 0,
+      });
+      litMats.push(m);
+      bays.set(n, m);
+    }
+    return m;
+  };
+  const P = 0.8, WALL = 11, top = P + WALL;
+  const face = (w: number, x: number, z: number, a: number, y0 = P) => {
+    const n = Math.max(1, Math.round(w / 3.6));
+    mesh(g, new THREE.PlaneGeometry(w, WALL), bayMat(n), x + Math.sin(a) * 0.03, y0 + WALL / 2, z + Math.cos(a) * 0.03, false).rotation.y = a;
+  };
+  const arched = (w: number, h: number) =>
+    new THREE.ShapeGeometry(new THREE.Shape().absarc(0, h - w / 2, w / 2, 0, Math.PI, false).lineTo(-w / 2, 0).lineTo(w / 2, 0).lineTo(w / 2, h - w / 2), 10);
+  /** Small domed turret (corner pinnacle of the dome tower). */
+  const turret = (x: number, y: number, z: number, r: number) => {
+    const oct = new THREE.CylinderGeometry(r, r, r * 2.2, 8).toNonIndexed();
+    oct.computeVertexNormals();
+    mesh(g, oct, light, x, y + r * 1.1, z, false);
+    mesh(g, new THREE.CylinderGeometry(r * 1.2, r * 1.2, r * 0.3, 8), light, x, y + r * 2.35, z, false);
+    mesh(g, new THREE.SphereGeometry(r * 1.05, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2).scale(1, 1.3, 1), domeMat, x, y + r * 2.5, z, false);
+    mesh(g, new THREE.ConeGeometry(r * 0.25, r * 1.4, 6), light, x, y + r * 4.4, z, false);
+    mesh(g, new THREE.SphereGeometry(r * 0.22, 6, 4), light, x, y + r * 3.75, z, false);
+  };
 
-  // Grand yellow Gizri sandstone block with arched colonial verandahs
-  mesh(g, new THREE.BoxGeometry(d * 0.84, h, len), sandstone, -0.8, h / 2, 0, shadow);
-  const verTex = tiled(colonialVerandahTexture(), Math.max(3, Math.round(len / 6)), 2);
-  const front = mesh(
-    g,
-    new THREE.PlaneGeometry(len - 0.8, h - 1.2),
-    lam('#f3dca8', verTex),
-    hw - 0.72,
-    h / 2,
-    0,
-    false,
-  );
-  front.rotation.y = Math.PI / 2;
+  // ---- Grounds ----
+  mesh(g, new THREE.PlaneGeometry(hw * 2, hl * 2), lawnMat, 0, 0.02, 0, false).rotation.x = -Math.PI / 2;
 
-  // Projecting neoclassical entrance portico with columns & triangular pediment
-  mesh(g, new THREE.BoxGeometry(2.6, h + 1.4, 7.6), deepStone, hw - 0.4, (h + 1.4) / 2, 0, shadow);
-  for (const z of [-2.8, -1.0, 1.0, 2.8]) {
-    mesh(g, new THREE.CylinderGeometry(0.32, 0.36, h - 0.6, 8), lam('#f5ebd0'), hw + 0.9, (h - 0.6) / 2, z, shadow);
+  // ---- Main range (U-plan round a rear courtyard) ----
+  const x1 = hw - 5.0; // street face of the wings (portico and steps stand in front)
+  const frontD = 8.5, wingW = 6.0;
+  const x0 = -hw + 0.6;
+  const zH = hl - 0.6;
+  mesh(g, new THREE.BoxGeometry(x1 - x0 + 0.8, P, zH * 2 + 0.8), shade, (x0 + x1) / 2, P / 2, 0);
+  mesh(g, new THREE.BoxGeometry(frontD, WALL, zH * 2), stone, x1 - frontD / 2, P + WALL / 2, 0);
+  for (const s of [-1, 1]) mesh(g, new THREE.BoxGeometry(x1 - frontD - x0, WALL, wingW), stone, (x0 + x1 - frontD) / 2, P + WALL / 2, s * (zH - wingW / 2));
+  const porW = 12.4; // portico width
+  const endW = 6.5; // gabled end pavilion (at -z)
+  const wingFront = (za: number, zb: number) => face(Math.abs(zb - za), x1, (za + zb) / 2, Math.PI / 2);
+  wingFront(porW / 2, zH);
+  wingFront(-zH + endW, -porW / 2);
+  for (const s of [-1, 1]) {
+    face(x1 - x0, (x0 + x1) / 2, s * zH, s > 0 ? 0 : Math.PI);
+    face(x1 - frontD - x0, (x0 + x1 - frontD) / 2, s * (zH - wingW), s > 0 ? Math.PI : 0);
+    face(wingW, x0, s * (zH - wingW / 2), -Math.PI / 2);
   }
+  face(zH * 2 - wingW * 2, x1 - frontD, 0, -Math.PI / 2);
+  // Cornice and low parapet
+  mesh(g, new THREE.BoxGeometry(frontD + 0.8, 0.5, zH * 2 + 0.8), light, x1 - frontD / 2, top + 0.15, 0, false);
+  mesh(g, new THREE.BoxGeometry(frontD + 0.4, 0.8, zH * 2 + 0.4), stone, x1 - frontD / 2, top + 0.7, 0, false);
+  for (const s of [-1, 1]) mesh(g, new THREE.BoxGeometry(x1 - frontD - x0 + 0.8, 0.5, wingW + 0.8), light, (x0 + x1 - frontD) / 2, top + 0.15, s * (zH - wingW / 2), false);
+  const cy = (x0 + x1 - frontD) / 2;
+  mesh(g, new THREE.PlaneGeometry(x1 - frontD - x0, zH * 2 - wingW * 2), lam('#d9cdb4', tiled(flagPavingTexture(), 3, 4)), cy, 0.04, 0, false).rotation.x = -Math.PI / 2;
 
-  // Central octagonal clock drum & Indo-Saracenic copper-green cupola dome
-  const topY = h + 1.4;
-  mesh(g, new THREE.CylinderGeometry(3.2, 3.5, 4.8, 8), sandstone, hw - 0.6, topY + 2.4, 0, shadow);
-  const dome = new THREE.SphereGeometry(3.1, 16, 12, 0, Math.PI * 2, 0, Math.PI * 0.55);
-  mesh(g, dome, domeMat, hw - 0.6, topY + 4.8, 0, shadow);
-  mesh(g, new THREE.ConeGeometry(0.35, 2.0, 8), deepStone, hw - 0.6, topY + 4.8 + 3.6, 0, false);
+  // ---- Gabled end pavilion with a slender belfry tower (the -z end) ----
+  const ez = -zH + endW / 2;
+  mesh(g, new THREE.BoxGeometry(1.0, WALL, endW), stone, x1 + 0.5, P + WALL / 2, ez);
+  face(endW - 0.8, x1 + 1.0, ez, Math.PI / 2);
+  const gab = new THREE.Shape();
+  gab.moveTo(-endW / 2 - 0.3, 0);
+  gab.lineTo(endW / 2 + 0.3, 0);
+  gab.lineTo(0, 2.4);
+  gab.lineTo(-endW / 2 - 0.3, 0);
+  mesh(g, new THREE.ExtrudeGeometry(gab, { depth: 0.6, bevelEnabled: false }), light, x1 + 0.6, top + 0.2, ez, false).rotation.y = Math.PI / 2;
+  const roofG = gableRoofGeo(endW + 0.6, 2.3, 7.5);
+  roofG.rotateY(Math.PI / 2);
+  mesh(g, roofG, tile, x1 - 3.0, top + 0.3, ez, false);
+  // Belfry tower set just behind the gable
+  const bx = x1 - 4.0, bz = ez - 0.2, T = 3.4;
+  mesh(g, new THREE.BoxGeometry(T, 5.5, T), stone, bx, top + 2.75, bz);
+  mesh(g, new THREE.BoxGeometry(T + 0.4, 0.4, T + 0.4), light, bx, top + 5.6, bz, false);
+  const bY = top + 5.8;
+  for (const cx of [-1, 1]) for (const cz of [-1, 1]) mesh(g, new THREE.BoxGeometry(0.6, 3.2, 0.6), light, bx + cx * (T / 2 - 0.3), bY + 1.6, bz + cz * (T / 2 - 0.3));
+  mesh(g, new THREE.BoxGeometry(T - 1.2, 3.2, T - 1.2), dark, bx, bY + 1.6, bz, false);
+  mesh(g, new THREE.BoxGeometry(T + 0.5, 0.45, T + 0.5), light, bx, bY + 3.4, bz, false);
+  turret(bx, bY + 3.6, bz, 1.25);
 
-  const signTex = signTexture(
-    ['D.J. SINDH GOVT. SCIENCE COLLEGE · ڈی جے سائنس کالج', 'EST. 1887 · BURNS ROAD HERITAGE DISTRICT'],
-    '#5d4037',
-    '#ffecb3',
-    768,
-    128,
-  );
-  const signMat = new THREE.MeshLambertMaterial({
-    color: '#ffffff',
-    map: signTex,
-    emissiveMap: signTex,
-    emissive: new THREE.Color('#ffecb3'),
-    emissiveIntensity: 0,
-  });
-  litMats.push(signMat);
-  const sign = mesh(g, new THREE.PlaneGeometry(16.0, 1.55), signMat, hw + 1.0, 4.2, 0, false);
-  sign.rotation.y = Math.PI / 2;
+  // ---- Giant Ionic portico with pediment and oculus ----
+  const colX = x1 + 2.6;
+  const colH = WALL - 0.4;
+  mesh(g, new THREE.BoxGeometry(3.4, P, porW + 0.6), shade, x1 + 1.7, P / 2, 0, false);
+  for (let k = 0; k < 4; k++) {
+    // Broad steps up to the portico
+    mesh(g, new THREE.BoxGeometry(0.45, P * (1 - k / 4), porW - 0.6), light, colX + 1.0 + k * 0.45, (P * (1 - k / 4)) / 2, 0, false);
+  }
+  const supports = 8;
+  for (let k = 0; k < supports; k++) {
+    const z = -porW / 2 + 0.6 + (k * (porW - 1.2)) / (supports - 1);
+    const pier = k === 0 || k === supports - 1;
+    if (pier) {
+      mesh(g, new THREE.BoxGeometry(1.1, colH, 1.1), stone, colX, P + colH / 2, z);
+    } else {
+      mesh(g, new THREE.CylinderGeometry(0.42, 0.5, colH - 0.9, 14), light, colX, P + 0.35 + (colH - 0.9) / 2, z);
+      mesh(g, new THREE.BoxGeometry(1.05, 0.35, 1.05), light, colX, P + 0.17, z, false);
+      // Ionic capital: echinus and paired volutes
+      mesh(g, new THREE.CylinderGeometry(0.56, 0.46, 0.3, 12), light, colX, P + colH - 0.4, z, false);
+      for (const s of [-1, 1]) mesh(g, new THREE.CylinderGeometry(0.2, 0.2, 1.05, 10).rotateX(Math.PI / 2), shade, colX + 0.0, P + colH - 0.32, z + s * 0.48, false);
+      mesh(g, new THREE.BoxGeometry(1.15, 0.18, 1.15), light, colX, P + colH - 0.12, z, false);
+    }
+  }
+  // Wall behind the portico: arched doors and windows in rusticated stone
+  face(porW - 1.0, x1, 0, Math.PI / 2);
+  for (const z of [-3.6, 0, 3.6]) mesh(g, arched(1.8, 3.6), dark, x1 + 0.06, P, z, false).rotation.y = Math.PI / 2;
+  // Portico ceiling, entablature, pediment
+  const eY = P + colH;
+  mesh(g, new THREE.BoxGeometry(colX - x1 + 0.8, 0.5, porW), light, (colX + x1) / 2 + 0.2, eY + 0.25, 0);
+  mesh(g, new THREE.BoxGeometry(colX - x1 + 0.8, 0.7, porW), stone, (colX + x1) / 2 + 0.2, eY + 0.85, 0, false);
+  mesh(g, new THREE.BoxGeometry(colX - x1 + 1.2, 0.3, porW + 0.5), light, (colX + x1) / 2 + 0.2, eY + 1.35, 0, false);
+  const pedH = 2.9;
+  const ped = new THREE.Shape();
+  ped.moveTo(-porW / 2 - 0.2, 0);
+  ped.lineTo(porW / 2 + 0.2, 0);
+  ped.lineTo(0, pedH);
+  ped.lineTo(-porW / 2 - 0.2, 0);
+  mesh(g, new THREE.ExtrudeGeometry(ped, { depth: colX - x1 + 1.2, bevelEnabled: false }), stone, x1 - 0.2, eY + 1.5, 0, false).rotation.y = Math.PI / 2;
+  const slope = Math.atan2(pedH, porW / 2);
+  for (const s of [-1, 1]) {
+    const c = mesh(g, new THREE.BoxGeometry(colX - x1 + 1.5, 0.3, Math.hypot(pedH, porW / 2) + 0.4), light, (colX + x1) / 2 + 0.3, eY + 1.5 + pedH / 2 + 0.15, s * porW / 4, false);
+    c.rotation.x = s * slope;
+  }
+  // Oculus in the tympanum
+  const ring = new THREE.Shape();
+  ring.absarc(0, 0, 0.75, 0, Math.PI * 2, false);
+  const hole = new THREE.Path();
+  hole.absarc(0, 0, 0.5, 0, Math.PI * 2, true);
+  ring.holes.push(hole);
+  mesh(g, new THREE.ExtrudeGeometry(ring, { depth: 0.12, bevelEnabled: false, curveSegments: 12 }), light, colX + 1.02, eY + 2.6, 0, false).rotation.y = Math.PI / 2;
+  mesh(g, new THREE.CircleGeometry(0.5, 12), dark, colX + 1.0, eY + 2.6, 0, false).rotation.y = Math.PI / 2;
+  const nameTex = signTexture(['D.J. SINDH GOVT. SCIENCE COLLEGE', 'ڈی جے سائنس کالج · 1887'], '#5d4037', '#ffecb3', 768, 112);
+  const nameMat = new THREE.MeshLambertMaterial({ color: '#ffffff', map: nameTex, emissive: new THREE.Color('#ffecb3'), emissiveMap: nameTex, emissiveIntensity: 0 });
+  litMats.push(nameMat);
+  mesh(g, new THREE.PlaneGeometry(7.8, 0.6), nameMat, colX + 0.81, eY + 0.85, 0, false).rotation.y = Math.PI / 2;
+
+  // ---- Dome tower rising behind the portico ----
+  const tX = x1 - 4.0, TW = 9.0;
+  const tTop = top + 7.0;
+  mesh(g, new THREE.BoxGeometry(TW, tTop - top, TW), stone, tX, top + (tTop - top) / 2, 0);
+  face(TW - 1.4, tX + TW / 2, 0, Math.PI / 2, top - WALL + 6.9);
+  for (let f = 0; f < 4; f++) {
+    const a = (f / 4) * Math.PI * 2;
+    const ox = Math.sin(a), oz = Math.cos(a), ux = Math.cos(a), uz = -Math.sin(a);
+    const r = TW / 2 + 0.03;
+    for (const d of [-1.9, 1.9]) {
+      // Tall round-headed windows with pediment hoods and bracketed balconies
+      mesh(g, arched(1.3, 3.2), dark, tX + ox * r + ux * d, top + 2.0, oz * r + uz * d, false).rotation.y = a;
+      const hood = new THREE.Shape();
+      hood.moveTo(-1.0, 0);
+      hood.lineTo(1.0, 0);
+      hood.lineTo(0, 0.55);
+      hood.lineTo(-1.0, 0);
+      mesh(g, new THREE.ExtrudeGeometry(hood, { depth: 0.35, bevelEnabled: false }), light, tX + ox * (r - 0.1) + ux * d, top + 5.35, oz * (r - 0.1) + uz * d, false).rotation.y = a;
+      mesh(g, new THREE.BoxGeometry(1.8, 0.2, 0.6).rotateY(a), light, tX + ox * (r + 0.3) + ux * d, top + 1.9, oz * (r + 0.3) + uz * d, false);
+      mesh(g, new THREE.BoxGeometry(1.8, 0.55, 0.1).rotateY(a), light, tX + ox * (r + 0.55) + ux * d, top + 2.25, oz * (r + 0.55) + uz * d, false);
+    }
+  }
+  for (const cx of [-1, 1]) for (const cz of [-1, 1]) mesh(g, new THREE.BoxGeometry(0.8, tTop - top, 0.8), light, tX + cx * (TW / 2), top + (tTop - top) / 2, cz * (TW / 2), false);
+  mesh(g, new THREE.BoxGeometry(TW + 0.8, 0.55, TW + 0.8), light, tX, tTop + 0.2, 0, false);
+  mesh(g, new THREE.BoxGeometry(TW + 0.2, 0.8, TW + 0.2), stone, tX, tTop + 0.85, 0, false);
+  for (const cx of [-1, 1]) for (const cz of [-1, 1]) turret(tX + cx * (TW / 2 - 0.6), tTop + 1.2, cz * (TW / 2 - 0.6), 0.75);
+  // Drum, ribbed dome, lantern with its own small dome
+  const R = 3.7;
+  mesh(g, new THREE.CylinderGeometry(R + 0.2, R + 0.3, 1.6, 24), stone, tX, tTop + 1.25 + 0.8, 0);
+  const dY = tTop + 2.05 + 0.8;
+  const prof: THREE.Vector2[] = [];
+  for (let i = 0; i <= 14; i++) {
+    const t = (i / 14) * (Math.PI / 2);
+    prof.push(new THREE.Vector2(Math.cos(t) * R, Math.sin(t) * R * 1.05));
+  }
+  mesh(g, new THREE.LatheGeometry(prof, 24), domeMat, tX, dY, 0);
+  for (let k = 0; k < 12; k++) {
+    const rib = new THREE.TorusGeometry(R + 0.04, 0.07, 4, 14, Math.PI / 2);
+    rib.scale(1, 1.05, 1);
+    mesh(g, rib, light, tX, dY, 0, false).rotation.y = (k / 12) * Math.PI * 2;
+  }
+  turret(tX, dY + R * 1.05 - 0.2, 0, 0.85);
+
+  mergeByMaterial(g, shadow);
 }
 
 

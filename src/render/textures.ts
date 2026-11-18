@@ -1646,3 +1646,92 @@ export function highCourtBayTexture(glow = false): THREE.Texture {
     return finish(c, true);
   });
 }
+
+/**
+ * One bay (≈3.6 m × 11 m) of DJ Science College's wings: yellow Karachi
+ * stone in horizontal banded rustication, a tall round-arched ground-floor
+ * window with a light iron grille and keystone, a string course, and a
+ * round-arched upper window over a small balustraded balcony on brackets.
+ * `glow` = night mask (windows).
+ */
+export function djBayTexture(glow = false): THREE.Texture {
+  return cached(`djBay:${glow}`, () => {
+    const W = 128, H = 392;
+    const [c, ctx] = canvas(W, H);
+    const px = H / 11;
+    const y = (m: number) => H - m * px;
+    const stone = '#e8c587', light = '#f3dcab', shade = '#b8945a';
+    ctx.fillStyle = glow ? '#000' : stone;
+    ctx.fillRect(0, 0, W, H);
+    if (!glow) {
+      // Banded rustication: deep horizontal joints every ~0.45 m
+      for (let yy = H; yy > 0; yy -= 0.45 * px) {
+        ctx.fillStyle = 'rgba(95,65,25,0.45)';
+        ctx.fillRect(0, yy - 2.5, W, 2.5);
+        ctx.fillStyle = 'rgba(255,240,205,0.25)';
+        ctx.fillRect(0, yy - 0.45 * px, W, 1.5);
+      }
+      ctx.fillStyle = shade;
+      ctx.fillRect(0, y(0.6), W, 0.6 * px);
+      ctx.fillStyle = light;
+      ctx.fillRect(0, y(5.7), W, 0.35 * px); // string course
+      ctx.fillRect(0, 0, W, 0.45 * px); // cornice
+      ctx.fillStyle = shade;
+      ctx.fillRect(0, 0.45 * px, W, 0.1 * px);
+    }
+    const arch = (cx: number, base: number, hw: number, spring: number, fill: string) => {
+      ctx.fillStyle = fill;
+      ctx.beginPath();
+      ctx.moveTo(cx - hw, base);
+      ctx.lineTo(cx - hw, spring);
+      ctx.arc(cx, spring, hw, Math.PI, 0);
+      ctx.lineTo(cx + hw, base);
+      ctx.closePath();
+      ctx.fill();
+    };
+    const grille = (cx: number, base: number, hw: number, spring: number) => {
+      ctx.save();
+      arch(cx, base, hw, spring, 'rgba(0,0,0,0)');
+      ctx.clip();
+      ctx.strokeStyle = glow ? '#000' : 'rgba(200,205,205,0.75)';
+      ctx.lineWidth = 1.5;
+      for (let d = -40; d < 120; d += 7) {
+        ctx.beginPath();
+        ctx.moveTo(cx - hw + d, base);
+        ctx.lineTo(cx - hw + d + 60, base - 120);
+        ctx.moveTo(cx + hw - d, base);
+        ctx.lineTo(cx + hw - d - 60, base - 120);
+        ctx.stroke();
+      }
+      ctx.restore();
+    };
+    const cx = W / 2;
+    // Ground floor: tall round-arched window with grille and keystone
+    const gb = y(1.0), gs = y(3.9), ghw = 0.82 * px;
+    if (!glow) arch(cx, gb, ghw + 6, gs, light);
+    arch(cx, gb, ghw, gs, glow ? '#ffc879' : '#2b2724');
+    grille(cx, gb, ghw, gs);
+    if (!glow) {
+      ctx.fillStyle = light;
+      ctx.fillRect(cx - 5, gs - ghw - 9, 10, 12);
+      ctx.fillRect(cx - ghw - 10, gb, (ghw + 10) * 2, 5); // sill
+    }
+    // Upper floor: round-arched window over a balustraded balcony
+    const ub = y(6.7), us = y(9.1), uhw = 0.72 * px;
+    if (!glow) arch(cx, ub, uhw + 6, us, light);
+    arch(cx, ub, uhw, us, glow ? '#ffd28a' : '#2b2724');
+    grille(cx, ub, uhw, us);
+    if (!glow) {
+      ctx.fillStyle = light;
+      ctx.fillRect(cx - 5, us - uhw - 9, 10, 12);
+      const bw = uhw + 12, fl = y(6.05), rail = y(6.95);
+      ctx.fillRect(cx - bw, fl - 5, bw * 2, 7);
+      ctx.fillRect(cx - bw, rail, bw * 2, 5);
+      for (let x = cx - bw + 3; x < cx + bw - 2; x += 6) ctx.fillRect(x, rail + 5, 3, fl - rail - 10);
+      ctx.fillStyle = shade; // brackets
+      ctx.fillRect(cx - bw + 4, fl + 2, 5, 12);
+      ctx.fillRect(cx + bw - 9, fl + 2, 5, 12);
+    }
+    return finish(c, true);
+  });
+}
