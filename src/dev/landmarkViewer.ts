@@ -13,6 +13,8 @@ import { cityMap } from '../sim/city/cityMap';
 import type { Landmark } from '../sim/city/cityMap';
 import { buildSaddarLandmark } from '../render/SaddarLandmarks';
 import { CityScenery } from '../render/CityScenery';
+import { PropVisuals } from '../render/PropVisuals';
+import { Props } from '../sim/city/Props';
 
 const params = new URLSearchParams(location.search);
 const city = cityMap();
@@ -64,6 +66,11 @@ if (ctx) {
   scenery.setTimeOfDay(tod as 'noon' | 'sunset' | 'night');
   // CityScenery already contains this landmark; only measure our copy.
   scene.add(scenery.group);
+  // Street props (fruit carts, stalls, crates…) at their home positions.
+  const props = new Props(1, city);
+  const pv = new PropVisuals(props, true);
+  pv.update(props, lm.obb.x, lm.obb.z);
+  scene.add(pv.group);
   sun.position.set(origin.x - 49, 73, origin.z + 49);
   sun.target.position.copy(origin);
   scene.add(sun.target);

@@ -1308,3 +1308,31 @@ export function empressBayTexture(glow = false): THREE.Texture {
     return finish(c, true);
   });
 }
+
+/** Worn sandstone flag paving for market squares (one repeat ≈ 4 m). */
+export function flagPavingTexture(): THREE.Texture {
+  return cached('flagPaving', () => {
+    const [c, ctx] = canvas(256, 256);
+    const rng = new Rng(77);
+    ctx.fillStyle = '#8f8270';
+    ctx.fillRect(0, 0, 256, 256);
+    // Running-bond flags, 4 rows of 2.5 slabs, each slightly different
+    for (let r = 0; r < 4; r++) {
+      const off = r % 2 ? 51 : 0;
+      for (let k = -1; k < 3; k++) {
+        const x = off + k * 102, y = r * 64;
+        const v = 170 + rng.next() * 26;
+        ctx.fillStyle = `rgb(${v + 10},${v + 2},${v - 14})`;
+        ctx.fillRect(x + 2, y + 2, 98, 60);
+        for (let i = 0; i < 14; i++) {
+          ctx.fillStyle = `rgba(${rng.next() < 0.5 ? '90,75,55' : '235,225,205'},0.12)`;
+          ctx.fillRect(x + 2 + rng.next() * 90, y + 2 + rng.next() * 54, 3 + rng.next() * 10, 2 + rng.next() * 5);
+        }
+      }
+    }
+    // Grime in the joints
+    ctx.fillStyle = 'rgba(70,58,42,0.4)';
+    for (let r = 0; r <= 4; r++) ctx.fillRect(0, r * 64 - 1, 256, 3);
+    return finish(c, true);
+  });
+}

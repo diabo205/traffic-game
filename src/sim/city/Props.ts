@@ -125,6 +125,72 @@ export class Props {
         add('cone', p.x, p.z, 0, true);
       }
     }
+    // Hawkers crowding the square round Empress Market: fruit carts lining the
+    // arcades (main entrance kept clear), chai stalls with chairs further out,
+    // crates and drums stacked at the sides and back.
+    const em = map.landmarks.find((l) => l.kind === 'empress');
+    if (em) {
+      const es = Math.sin(em.obb.heading), ec = Math.cos(em.obb.heading);
+      // lf runs along the facade (hl axis), lr away from it (+ = street front)
+      const at = (lf: number, lr: number) => ({ x: em.obb.x + lf * es + lr * ec, z: em.obb.z + lf * ec - lr * es });
+      const { hw, hl, heading } = em.obb;
+      for (let lf = -hl + 2; lf <= hl - 2; lf += 3.4) {
+        if (Math.abs(lf) < 6) continue;
+        const p = at(lf, hw + 3.2);
+        add('fruitcart', p.x, p.z, heading + pr.range(-0.08, 0.08));
+      }
+      for (let lf = -hl + 5; lf <= hl - 5; lf += 9) {
+        if (Math.abs(lf) < 7) continue;
+        const p = at(lf, hw + 8.5);
+        add('stall', p.x, p.z, heading);
+        for (const d of [-1.2, 1.2]) {
+          const q = at(lf + d, hw + 9.6);
+          add('chair', q.x, q.z, heading + pr.range(-0.6, 0.6));
+        }
+      }
+      for (const side of [-1, 1]) {
+        for (let lr = -hw + 3; lr <= hw - 3; lr += 3.6) {
+          const p = at(side * (hl + 3.0), lr);
+          add('fruitcart', p.x, p.z, heading + Math.PI / 2 + pr.range(-0.1, 0.1));
+        }
+        for (let k = 0; k < 4; k++) {
+          const p = at(side * (hl + 7 + pr.range(0, 3)), pr.range(-hw, hw));
+          add(pr.pick(['crate', 'crate', 'drum'] as const), p.x, p.z, heading + pr.range(0, 6));
+        }
+      }
+      for (let lf = -hl + 4; lf <= hl - 4; lf += 5) {
+        const p = at(lf + pr.range(-1, 1), -hw - 3.0);
+        add(pr.pick(['crate', 'crate', 'drum', 'fruitcart'] as const), p.x, p.z, heading + pr.range(-0.3, 0.3));
+      }
+      // Outer square: chai dhabas (stall, chairs, water drum) and lines of carts
+      // dotted round the paving, leaving the approach to the clock tower clear.
+      const spots: ReadonlyArray<[number, number]> = [
+        [-hl + 6, hw + 18], [hl - 6, hw + 18], [-hl - 12, hw + 10], [hl + 12, hw + 10],
+        [-hl - 14, -hw + 2], [hl + 14, -hw + 2], [-18, -hw - 12], [18, -hw - 12],
+        [0, -hw - 14], [-hl - 10, -hw - 14], [hl + 10, -hw - 14],
+      ];
+      for (let i = 0; i < spots.length; i++) {
+        const [lf, lr] = spots[i];
+        if (i % 2 === 0) {
+          const c = at(lf, lr);
+          add('stall', c.x, c.z, heading + pr.range(-0.3, 0.3));
+          for (let k = 0; k < 4; k++) {
+            const a = (k / 4) * Math.PI * 2 + pr.range(-0.3, 0.3);
+            const q = at(lf + Math.cos(a) * 1.6, lr + Math.sin(a) * 1.6);
+            add('chair', q.x, q.z, heading + pr.range(0, 6));
+          }
+          const d = at(lf + 2.6, lr + 0.4);
+          add('drum', d.x, d.z, 0);
+        } else {
+          for (let k = -1; k <= 1; k++) {
+            const q = at(lf + k * 2.6, lr + pr.range(-0.3, 0.3));
+            add('fruitcart', q.x, q.z, heading + pr.range(-0.12, 0.12));
+          }
+          const c = at(lf + 4.5, lr);
+          add('crate', c.x, c.z, heading + pr.range(0, 6));
+        }
+      }
+    }
     // The oriented construction yards: cones, drums and crates scattered about.
     for (const y of map.yards) {
       const ys = Math.sin(y.heading), yc = Math.cos(y.heading);

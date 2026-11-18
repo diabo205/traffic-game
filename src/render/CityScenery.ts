@@ -13,6 +13,7 @@ import {
   asphaltTexture,
   BANNER_COUNT,
   dirtTexture,
+  flagPavingTexture,
   kerbStripeTexture,
   saddarFacadeAtlas,
   SHOP_SIGN_COUNT,
@@ -229,6 +230,7 @@ export class CityScenery {
     this.roads(map);
     this.puddles(map);
     this.pavements(map);
+    this.marketSquare(map, shadow);
     this.markings(map);
     this.islands(map, shadow);
     this.pedestrianBridges(map, shadow);
@@ -485,6 +487,82 @@ export class CityScenery {
     const mesh = new THREE.Mesh(merged, this.puddleMat);
     mesh.receiveShadow = true;
     this.group.add(mesh);
+  }
+
+  /**
+   * Flag-paved square filling the open city block round Empress Market
+   * (otherwise a bare dirt slab), laid just above that slab. Flood-fills 1 m cells outward from the market
+   * until it meets the road pavements, then merges each row into strips.
+   */
+  private marketSquare(map: CityMap, shadow: boolean): void {
+    void shadow;
+    const em = map.landmarks.find((l) => l.kind === 'empress');
+    if (!em) return;
+    const C = 1, R = 95;
+    const N = Math.round((2 * R) / C);
+    // Grid aligned with the market (and so with the streets round the block):
+    // i steps across the facade (lr, + = street front), j along it (lf).
+    const hs = Math.sin(em.obb.heading), hc = Math.cos(em.obb.heading);
+    const world = (lr: number, lf: number): [number, number] => [em.obb.x + lf * hs + lr * hc, em.obb.z + lf * hc - lr * hs];
+    const idx = (i: number, j: number) => j * N + i;
+    const state = new Uint8Array(N * N); // 0 unknown, 1 paved, 2 blocked
+    const open = (i: number, j: number) => {
+      const [x, z] = world(-R + (i + 0.5) * C, -R + (j + 0.5) * C);
+      return !map.isRoad(x, z) && !map.nearRoad(x, z, SIDEWALK - 0.8);
+    };
+    const start = [Math.floor(N / 2), Math.floor(N / 2)];
+    const stack = [start];
+    state[idx(start[0], start[1])] = 1;
+    while (stack.length) {
+      const [i, j] = stack.pop()!;
+      for (const [di, dj] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const a = i + di, b = j + dj;
+        if (a < 0 || b < 0 || a >= N || b >= N || state[idx(a, b)]) continue;
+        if (open(a, b)) {
+          state[idx(a, b)] = 1;
+          stack.push([a, b]);
+        } else state[idx(a, b)] = 2;
+      }
+    }
+    const pos: number[] = [];
+    const uv: number[] = [];
+    const ind: number[] = [];
+    const y = KERB_H + 0.02; // sits on the block's dirt slab
+    const uvS = 1 / 6;
+    for (let j = 0; j < N; j++) {
+      let i = 0;
+      while (i < N) {
+        if (state[idx(i, j)] !== 1) {
+          i++;
+          continue;
+        }
+        let e = i;
+        while (e + 1 < N && state[idx(e + 1, j)] === 1) e++;
+        const a = -R + i * C, b = -R + (e + 1) * C; // lr span
+        const f0 = -R + j * C, f1 = f0 + C; // lf span
+        const v = pos.length / 3;
+        for (const [lr, lf] of [[a, f0], [b, f0], [b, f1], [a, f1]]) {
+          const [x, z] = world(lr, lf);
+          pos.push(x, y, -z);
+          uv.push(lr * uvS, lf * uvS);
+        }
+        ind.push(v, v + 1, v + 2, v, v + 2, v + 3); // counter-clockwise seen from above
+        i = e + 1;
+      }
+    }
+    if (!ind.length) return;
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+    geo.setAttribute('normal', new THREE.Float32BufferAttribute(new Array(pos.length).fill(0).map((_, k) => (k % 3 === 1 ? 1 : 0)), 3));
+    geo.setIndex(ind);
+    const tex = flagPavingTexture();
+    const mat = new THREE.MeshLambertMaterial({ color: '#efe2c8', map: tex, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
+    this.ownedGeos.push(geo);
+    this.ownedMats.push(mat);
+    const m = new THREE.Mesh(geo, mat);
+    m.receiveShadow = true;
+    this.group.add(m);
   }
 
   private pavements(map: CityMap): void {
