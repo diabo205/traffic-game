@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { FINISH_Z, sampleRoad } from '../sim/road';
 import { corridorEdges, FOOTPATH_W } from './Saddar';
-import { clockFaceTexture, empressBayTexture, kerbStripeTexture, mazarFaceTexture, signTexture } from './textures';
+import { clockFaceTexture, empressBayTexture, kerbStripeTexture, mazarGrilleTexture, mazarMarbleTexture, signTexture } from './textures';
 import { archFrameGeo, gableRoofGeo, mergeByMaterial, pointedArchShape } from './landmarkKit';
 
 /**
@@ -56,7 +56,7 @@ function tiled(tex: THREE.Texture, rx: number, ry: number): THREE.Texture {
 
 export function buildLandmarks(group: THREE.Group, lowSpec: boolean, litMats: THREE.MeshLambertMaterial[] = []): void {
   buildEmpressMarket(group, !lowSpec, litMats);
-  buildMazar(group, !lowSpec);
+  buildMazar(group, !lowSpec, litMats);
   for (const f of FLYOVERS) buildFlyover(group, f.z, f.name, !lowSpec, litMats);
   buildTeenTalwar(group, !lowSpec);
 }
@@ -319,15 +319,220 @@ export function buildEmpressMarketAt(
   mergeByMaterial(g, shadow);
 }
 
+/**
+ * Mazar-e-Quaid (Yahya Merchant, completed 1970), the white marble
+ * mausoleum of Muhammad Ali Jinnah, modelled from reference photos:
+ * - a battered cube (walls lean in as they rise) of large running-bond
+ *   marble blocks; each face's top steps down towards the corners;
+ * - one tall, narrow, sharply pointed arch per face over a deep dark recess
+ *   holding a bronze grille, with the doorway at its foot;
+ * - a tall cylindrical drum ringed with small arched grille windows,
+ *   carrying a broad, near-hemispherical dome;
+ * - low marble steps all round the base, on a wide marble plaza.
+ * At night the marble is floodlit, the interior glows through the
+ * grilles and four searchlights fan up round the dome.
+ * @param W cube width at the base (m). Origin at ground centre; front +x.
+ */
+export function buildMazarModel(
+  parent: THREE.Object3D,
+  W: number,
+  shadow: boolean,
+  litMats: THREE.MeshLambertMaterial[],
+): void {
+  const g = new THREE.Group();
+  parent.add(g);
+  const floodlit = (hex: string, glow: string, map?: THREE.Texture) => {
+    const m = new THREE.MeshLambertMaterial({ color: hex, map: map ?? null, emissive: new THREE.Color(glow), emissiveIntensity: 0 });
+    litMats.push(m);
+    return m;
+  };
+  const blocks = (rx: number, ry: number) => tiled(mazarMarbleTexture(), rx, ry);
+  const plain = floodlit('#f4f3ee', '#cfdcd6');
+  const stepMat = lam('#e2e0d9');
+  const recessMat = lam('#151517');
+  const grille = new THREE.MeshLambertMaterial({
+    color: '#e8b47a',
+    map: tiled(mazarGrilleTexture(), 1 / (W * 0.035), 1 / (W * 0.035)),
+    emissive: new THREE.Color('#ffcf8a'),
+    emissiveMap: tiled(mazarGrilleTexture(true), 1 / (W * 0.035), 1 / (W * 0.035)),
+    emissiveIntensity: 0,
+  });
+  litMats.push(grille);
+
+  // ---- Plaza and low steps running right round the base ----
+  const P = W * 1.42;
+  const tiers = 4;
+  const th = W * 0.012;
+  for (let k = 0; k < tiers; k++) {
+    const w = P - k * (P - W * 1.08) / (tiers - 1);
+    mesh(g, new THREE.BoxGeometry(w, th, w), k === 0 ? plain : stepMat, 0, th * (k + 0.5), 0, false);
+  }
+  const y0 = th * tiers;
+
+  // ---- Battered cube: a square frustum of marble blocks ----
+  const H = W * 0.68;
+  const Wt = W * 0.86; // width at the top of the walls
+  const batter = Math.atan2((W - Wt) / 2, H);
+  const cube = new THREE.CylinderGeometry((Wt / 2) * Math.SQRT2, (W / 2) * Math.SQRT2, H, 4, 1).rotateY(Math.PI / 4).toNonIndexed();
+  cube.computeVertexNormals();
+  // World-scaled UVs so the blocks stay square on every face (~22 courses up the wall)
+  const blockRep = (H / 22) * 4;
+  {
+    const pos = cube.getAttribute('position');
+    const uv = cube.getAttribute('uv');
+    const nrm = cube.getAttribute('normal');
+    for (let i = 0; i < pos.count; i++) {
+      // Pick the in-face horizontal axis from the (flat) face normal
+      const t = i - (i % 3);
+      const alongZ = Math.abs(nrm.getX(t)) > Math.abs(nrm.getZ(t));
+      const along = alongZ ? pos.getZ(i) * Math.sign(nrm.getX(t)) : -pos.getX(i) * Math.sign(nrm.getZ(t));
+      uv.setXY(i, along / blockRep, (pos.getY(i) + H / 2) / blockRep);
+    }
+    uv.needsUpdate = true;
+  }
+  const cubeMat = floodlit('#ffffff', '#cfdcd6', blocks(1, 1));
+  mesh(g, cube, cubeMat, 0, y0 + H / 2, 0);
+  // Stepped skyline: each face's middle rises in two steps above its corners
+  const yTop = y0 + H;
+  for (const [w, h] of [
+    [Wt * 0.74, W * 0.035],
+    [Wt * 0.5, W * 0.07],
+  ] as const) {
+    mesh(g, new THREE.BoxGeometry(w, h, Wt - 0.02).rotateY(0), plain, 0, yTop + h / 2, 0);
+    mesh(g, new THREE.BoxGeometry(Wt - 0.02, h, w), plain, 0, yTop + h / 2, 0);
+  }
+  // Flat roof deck
+  mesh(g, new THREE.BoxGeometry(Wt - 0.04, 0.05, Wt - 0.04), plain, 0, yTop + 0.02, 0, false);
+
+  // ---- One tall, narrow pointed arch per face (leaning with the wall) ----
+  const aHw = W * 0.085, aH = H * 0.74;
+  /** Sharp lancet: two arcs of radius 2.5 × half-width meeting at the apex. */
+  const lancet = (hw: number, h: number, shape: THREE.Shape | THREE.Path = new THREE.Shape()) => {
+    const r = hw * 2.5;
+    const rise = Math.sqrt(r * r - (r - hw) * (r - hw));
+    const spring = h - rise;
+    const apex = Math.atan2(rise, r - hw);
+    shape.moveTo(-hw, 0);
+    shape.lineTo(-hw, spring);
+    shape.absarc(-hw + r, spring, r, Math.PI, Math.PI - apex, true); // left arc up to the apex
+    shape.absarc(hw - r, spring, r, apex, 0, true); // right arc back down
+    shape.lineTo(hw, 0);
+    shape.lineTo(-hw, 0);
+    return shape;
+  };
+  const lancetFrame = (hw: number, h: number, band: number, depth: number) => {
+    const outer = lancet(hw + band, h + band * 1.8) as THREE.Shape;
+    outer.holes.push(lancet(hw, h, new THREE.Path()) as THREE.Path);
+    const geo = new THREE.ExtrudeGeometry(outer, { depth, bevelEnabled: false, curveSegments: 10 });
+    geo.translate(0, 0, -depth);
+    return geo;
+  };
+  for (let f = 0; f < 4; f++) {
+    const a = (f / 4) * Math.PI * 2;
+    const face = new THREE.Group();
+    face.rotation.order = 'YXZ';
+    face.rotation.y = a;
+    face.rotation.x = -batter;
+    face.position.set(Math.sin(a) * (W / 2), y0, Math.cos(a) * (W / 2));
+    g.add(face);
+    // Dark recess, bronze grille filling the head, and a moulded reveal
+    face.add(new THREE.Mesh(new THREE.ShapeGeometry(lancet(aHw, aH) as THREE.Shape, 16), recessMat).translateZ(0.02));
+    const gr = new THREE.Mesh(new THREE.ShapeGeometry(lancet(aHw * 0.84, aH * 0.93) as THREE.Shape, 16), grille);
+    gr.position.set(0, aH * 0.05, 0.03);
+    face.add(gr);
+    // Door leaves at the foot of the grille
+    const door = new THREE.Mesh(new THREE.PlaneGeometry(aHw * 1.1, aH * 0.2), lam('#4a3622'));
+    door.position.set(0, aH * 0.1, 0.04);
+    face.add(door);
+    // Deep reveal (inner frame) and a slim outer moulding
+    const reveal = new THREE.Mesh(lancetFrame(aHw, aH, W * 0.014, W * 0.035), plain);
+    reveal.position.z = W * 0.035;
+    face.add(reveal);
+    const mould = new THREE.Mesh(lancetFrame(aHw + W * 0.014, aH + W * 0.025, W * 0.008, W * 0.012), plain);
+    mould.position.z = W * 0.012;
+    face.add(mould);
+  }
+
+  // ---- Drum with a ring of small arched grille windows, then the dome ----
+  const R = W * 0.3;
+  const drumY = yTop + W * 0.07;
+  const drumH = W * 0.18;
+  const drum = new THREE.CylinderGeometry(R, R * 1.02, drumH, 48, 1, true);
+  {
+    const pos = drum.getAttribute('position');
+    const uv = drum.getAttribute('uv');
+    for (let i = 0; i < pos.count; i++) uv.setXY(i, (Math.atan2(pos.getZ(i), pos.getX(i)) * R) / blockRep, (pos.getY(i) + drumH / 2) / blockRep);
+    uv.needsUpdate = true;
+  }
+  mesh(g, drum, cubeMat, 0, drumY + drumH / 2, 0);
+  mesh(g, new THREE.CylinderGeometry(R * 1.05, R * 1.06, W * 0.012, 48), plain, 0, drumY + drumH * 0.08, 0, false);
+  mesh(g, new THREE.CylinderGeometry(R * 1.03, R * 1.03, W * 0.012, 48), plain, 0, drumY + drumH, 0, false);
+  const nWin = 16;
+  for (let k = 0; k < nWin; k++) {
+    if (k % 4 === 0) continue; // solid piers on the axes, three windows per quarter
+    const a = ((k + 0.5) / nWin) * Math.PI * 2;
+    const win = new THREE.Mesh(new THREE.ShapeGeometry(lancet(W * 0.03, drumH * 0.64) as THREE.Shape, 8), grille);
+    win.position.set(Math.sin(a) * (R + 0.04), drumY + drumH * 0.2, Math.cos(a) * (R + 0.04));
+    win.rotation.y = a;
+    g.add(win);
+    const fr = new THREE.Mesh(lancetFrame(W * 0.03, drumH * 0.64, W * 0.008, W * 0.01), plain);
+    fr.position.set(Math.sin(a) * (R + 0.05), drumY + drumH * 0.2, Math.cos(a) * (R + 0.05));
+    fr.rotation.y = a;
+    g.add(fr);
+  }
+  // Broad dome: a hemisphere eased slightly at the crown
+  const D = R * 0.92;
+  const prof: THREE.Vector2[] = [];
+  for (let i = 0; i <= 16; i++) {
+    const t = (i / 16) * (Math.PI / 2);
+    prof.push(new THREE.Vector2(Math.cos(t) * R * 1.01, Math.sin(t) * D));
+  }
+  const dome = new THREE.LatheGeometry(prof, 48);
+  {
+    const pos = dome.getAttribute('position');
+    const uv = dome.getAttribute('uv');
+    for (let i = 0; i < pos.count; i++) uv.setXY(i, (Math.atan2(pos.getZ(i), pos.getX(i)) * R) / 14, pos.getY(i) / 10);
+    uv.needsUpdate = true;
+  }
+  // Dome: the same marble, its joints much fainter than on the walls
+  const domeMat = floodlit('#fbfbf8', '#cfdcd6');
+  mesh(g, dome, domeMat, 0, drumY + drumH, 0);
+  mesh(g, new THREE.CylinderGeometry(W * 0.01, W * 0.014, W * 0.025, 8), plain, 0, drumY + drumH + D + W * 0.01, 0, false);
+
+  mergeByMaterial(g, shadow);
+
+  // ---- Searchlights (added after merging: no shadows, drawn last) ----
+  const beam = new THREE.MeshLambertMaterial({
+    color: '#000000',
+    emissive: new THREE.Color('#5f7ea8'),
+    emissiveIntensity: 0,
+    transparent: true,
+    opacity: 0.18,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+  });
+  litMats.push(beam);
+  const beamLen = W * 2.6;
+  for (let k = 0; k < 4; k++) {
+    const a = (k / 4) * Math.PI * 2 + Math.PI / 4;
+    const cone = new THREE.ConeGeometry(W * 0.1, beamLen, 12, 1, true).translate(0, -beamLen / 2, 0);
+    const m = new THREE.Mesh(cone, beam);
+    m.position.set(Math.sin(a) * P * 0.45, y0 + 0.2, Math.cos(a) * P * 0.45);
+    m.rotation.set(Math.PI - Math.cos(a) * 0.22, 0, Math.sin(a) * 0.22);
+    m.renderOrder = 2;
+    g.add(m);
+  }
+}
+
 // ---- Mazar-e-Quaid (white marble mausoleum in its park, right side) ---------------
 
-function buildMazar(group: THREE.Group, shadow: boolean): void {
+function buildMazar(group: THREE.Group, shadow: boolean, litMats: THREE.MeshLambertMaterial[]): void {
   const g = new THREE.Group();
   group.add(g);
   const edge = corridorEdges(MAZAR_Z).right + FOOTPATH_W;
   const cx = edge + 78;
   const zc = -MAZAR_Z;
-  const marble = lam('#f6f5f0');
 
   // Park lawn and the boundary wall with green railings along the road.
   const lawn = new THREE.Mesh(new THREE.PlaneGeometry(190, 205), lam('#8aa063'));
@@ -347,27 +552,12 @@ function buildMazar(group: THREE.Group, shadow: boolean): void {
   path.position.set(edge + 30, -0.02, zc);
   g.add(path);
 
-  // Terraced platform.
-  mesh(g, new THREE.BoxGeometry(66, 2, 66), marble, cx, 1, zc, shadow);
-  mesh(g, new THREE.BoxGeometry(58, 1.4, 58), marble, cx, 2.7, zc, shadow);
-  // Main cube with a tall pointed arch on every face.
-  const H = 22, W = 36, base = 3.4;
-  mesh(g, new THREE.BoxGeometry(W, H, W), marble, cx, base + H / 2, zc, shadow);
-  const arch = lam('#ffffff', mazarFaceTexture());
-  for (let i = 0; i < 4; i++) {
-    const a = (i / 4) * Math.PI * 2;
-    const p = mesh(g, new THREE.PlaneGeometry(W, H), arch, cx + Math.sin(a) * (W / 2 + 0.03), base + H / 2, zc + Math.cos(a) * (W / 2 + 0.03), false);
-    p.rotation.y = a;
-  }
-  mesh(g, new THREE.BoxGeometry(W + 1.2, 1.2, W + 1.2), marble, cx, base + H + 0.6, zc, shadow);
-  // Drum, dome and finial.
-  const domeBase = base + H + 1.2;
-  mesh(g, new THREE.CylinderGeometry(13.5, 14.5, 4, 24), marble, cx, domeBase + 2, zc, shadow);
-  const dome = new THREE.SphereGeometry(13.5, 24, 12, 0, Math.PI * 2, 0, Math.PI / 2);
-  dome.scale(1, 1.3, 1);
-  mesh(g, dome, marble, cx, domeBase + 4, zc, shadow);
-  mesh(g, new THREE.CylinderGeometry(0.25, 0.4, 3.2, 6), lam('#c9b77a'), cx, domeBase + 4 + 13.5 * 1.3 + 1.4, zc, false);
-  mesh(g, new THREE.SphereGeometry(0.55, 8, 6), lam('#c9b77a'), cx, domeBase + 4 + 13.5 * 1.3 + 3.2, zc, false);
+  // The mausoleum itself, front turned to face the road.
+  const m = new THREE.Group();
+  m.position.set(cx, 0, zc);
+  m.rotation.y = Math.PI;
+  g.add(m);
+  buildMazarModel(m, 40, shadow, litMats);
 }
 
 // ---- Flyovers crossing Shahrah-e-Faisal ----------------------------------------------

@@ -40,21 +40,26 @@ export function gableRoofGeo(w: number, rise: number, len: number): THREE.Buffer
 export function mergeByMaterial(g: THREE.Group, shadow: boolean): void {
   const buckets = new Map<THREE.Material, THREE.BufferGeometry[]>();
   const keep: THREE.Object3D[] = [];
-  for (const child of g.children) {
-    if (!(child instanceof THREE.Mesh) || Array.isArray(child.material)) {
-      keep.push(child);
-      continue;
-    }
-    child.updateMatrix();
-    let geo = child.geometry.clone().applyMatrix4(child.matrix);
+  // Flatten plain sub-groups (e.g. a face built in its own tilted frame).
+  const flat: Array<[THREE.Mesh, THREE.Material, THREE.Matrix4]> = [];
+  const visit = (o: THREE.Object3D, parent: THREE.Matrix4) => {
+    o.updateMatrix();
+    const m = parent.clone().multiply(o.matrix);
+    if (o instanceof THREE.Mesh && !Array.isArray(o.material)) flat.push([o, o.material, m]);
+    else if (o.type === 'Group') for (const c of o.children) visit(c, m);
+    else keep.push(o);
+  };
+  for (const child of g.children) visit(child, new THREE.Matrix4());
+  for (const [child, mat, matrix] of flat) {
+    let geo = child.geometry.clone().applyMatrix4(matrix);
     if (geo.index) geo = geo.toNonIndexed();
     for (const name of Object.keys(geo.attributes)) {
       if (name !== 'position' && name !== 'normal' && name !== 'uv') geo.deleteAttribute(name);
     }
     geo.clearGroups();
-    const list = buckets.get(child.material) ?? [];
+    const list = buckets.get(mat) ?? [];
     list.push(geo);
-    buckets.set(child.material, list);
+    buckets.set(mat, list);
   }
   g.clear();
   for (const k of keep) g.add(k);

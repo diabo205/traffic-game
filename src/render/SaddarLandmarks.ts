@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { KERB_H } from '../sim/city/cityMap';
 import type { Landmark } from '../sim/city/cityMap';
-import { buildEmpressMarketAt } from './Landmarks';
+import { buildEmpressMarketAt, buildMazarModel } from './Landmarks';
 import { archFrameGeo, gableRoofGeo, mergeByMaterial, pointedArchShape } from './landmarkKit';
 import {
   cinemaPosterTexture,
@@ -10,9 +10,9 @@ import {
   clockFaceTexture,
   flagPavingTexture,
   frereBayTexture,
+  lawnTexture,
   colonialVerandahTexture,
   gothicWallTexture,
-  mazarFaceTexture,
   signTexture,
   stainedLancetTexture,
   stPatricksFrontTexture,
@@ -1762,98 +1762,17 @@ function buildMazarQuaid(
   const g = new THREE.Group();
   g.position.set(0, KERB_H, 0);
   group.add(g);
-
-  const d = hw * 2;
-  const len = hl * 2;
-  const marble = new THREE.MeshLambertMaterial({
-    color: '#f8f7f2',
-    emissive: new THREE.Color('#fff5dd'),
-    emissiveIntensity: 0,
-  });
-  litMats.push(marble);
-  const darkSteps = lam('#45494e');
-  const lawnMat = lam('#6fa050');
-  const poolMat = lam('#38a3b8');
-  const goldMat = lam('#e6b830');
-
-  // Manicured terraced lawn base & ornamental perimeter iron-green boundary
-  mesh(g, new THREE.BoxGeometry(d, 0.35, len), lawnMat, 0, 0.175, 0, false);
-  // Reflecting pool and fountain jets along the front approach (+x)
-  mesh(g, new THREE.BoxGeometry(4.2, 0.42, len * 0.56), poolMat, hw - 2.6, 0.22, 0, false);
-  for (const fz of [-len * 0.2, 0, len * 0.2]) {
-    mesh(g, new THREE.CylinderGeometry(0.18, 0.35, 1.4, 8), basic('#d8f6ff'), hw - 2.6, 0.9, fz, false);
-  }
-
-  // Two-tier white marble podium with dark ceremonial stair flights on all 4 sides
-  mesh(g, new THREE.BoxGeometry(d * 0.76, 1.8, len * 0.78), marble, -1.2, 0.9, 0, shadow);
-  mesh(g, new THREE.BoxGeometry(d * 0.64, 1.6, len * 0.66), marble, -1.2, 2.6, 0, shadow);
-  mesh(g, new THREE.BoxGeometry(2.6, 1.85, 5.6), darkSteps, hw - 3.6, 0.92, 0, false);
-  mesh(g, new THREE.BoxGeometry(2.2, 1.65, 4.6), darkSteps, hw - 4.8, 2.62, 0, false);
-
-  // Tapered white marble mausoleum chamber with pointed-arch portals
-  const chW = Math.min(14.5, d * 0.56);
-  const chH = 11.8;
-  const bodyGeo = new THREE.CylinderGeometry(chW * 0.64, chW * 0.74, chH, 4);
-  bodyGeo.rotateY(Math.PI / 4);
-  mesh(g, bodyGeo, marble, -1.2, 3.4 + chH / 2, 0, shadow);
-
-  const faceTex = mazarFaceTexture();
-  const faceMat = new THREE.MeshLambertMaterial({
-    color: '#ffffff',
-    map: faceTex,
-    emissiveMap: faceTex,
-    emissive: new THREE.Color('#fff2cc'),
-    emissiveIntensity: 0,
-  });
-  litMats.push(faceMat);
-  for (let i = 0; i < 4; i++) {
-    const a = (i / 4) * Math.PI * 2;
-    const f = mesh(
-      g,
-      new THREE.PlaneGeometry(chW * 0.88, chH * 0.92),
-      faceMat,
-      -1.2 + Math.sin(a) * (chW * 0.5 + 0.08),
-      3.4 + chH * 0.48,
-      Math.cos(a) * (chW * 0.5 + 0.08),
-      false,
-    );
-    f.rotation.y = a;
-  }
-
-  // Octagonal drum, white marble dome, and golden crescent finial
-  const topY = 3.4 + chH;
-  mesh(g, new THREE.BoxGeometry(chW * 0.96, 0.7, chW * 0.96), marble, -1.2, topY + 0.35, 0, shadow);
-  mesh(g, new THREE.CylinderGeometry(chW * 0.44, chW * 0.48, 1.4, 16), lam('#d8e6e2'), -1.2, topY + 1.2, 0, shadow);
-  const dome = new THREE.SphereGeometry(chW * 0.44, 20, 14, 0, Math.PI * 2, 0, Math.PI * 0.55);
-  dome.scale(1, 1.18, 1);
-  mesh(g, dome, marble, -1.2, topY + 1.6, 0, shadow);
-  mesh(g, new THREE.ConeGeometry(0.42, 2.4, 8), goldMat, -1.2, topY + 1.6 + chW * 0.52 + 1.1, 0, false);
-
-  // Corner ceremonial marble minar pillars on the podium corners
-  for (const sx of [-1, 1]) {
-    for (const sz of [-1, 1]) {
-      mesh(
-        g,
-        new THREE.BoxGeometry(0.85, 4.8, 0.85),
-        marble,
-        -1.2 + sx * (d * 0.34),
-        3.4 + 2.4,
-        sz * (len * 0.35),
-        shadow,
-      );
-    }
-  }
-
-  const sign = mesh(
-    g,
-    new THREE.PlaneGeometry(15.0, 1.5),
-    lam('#ffffff', signTexture(['MAZAR-E-QUAID · مزارِ قائد', 'QUAID-E-AZAM MAUSOLEUM · M.A. JINNAH RD'], '#01411c', '#ffffff', 768, 128)),
-    hw + 0.15,
-    2.6,
-    0,
-    false,
-  );
-  sign.rotation.y = Math.PI / 2;
+  // Lawn over the whole compound, the mausoleum sized to fill it with its stairs.
+  const lawn = mesh(g, new THREE.PlaneGeometry(hw * 2, hl * 2), lam('#6f9a4e', tiled(lawnTexture(), hw / 4, hl / 4)), 0, 0.03, 0, false);
+  lawn.rotation.x = -Math.PI / 2;
+  const W = (Math.min(hw, hl) * 2 - 0.6) / 1.58;
+  buildMazarModel(g, W, shadow, litMats);
+  // Name stone by the front walk
+  const tex = signTexture(['MAZAR-E-QUAID · مزارِ قائد', 'QUAID-E-AZAM MAUSOLEUM'], '#01411c', '#ffffff', 768, 128);
+  const signMat = new THREE.MeshLambertMaterial({ color: '#ffffff', map: tex, emissive: new THREE.Color('#ffffff'), emissiveMap: tex, emissiveIntensity: 0 });
+  litMats.push(signMat);
+  mesh(g, new THREE.BoxGeometry(0.6, 1.6, 7.0), lam('#d9d6ce'), hw - 0.6, 0.8, -hl + 5.0);
+  mesh(g, new THREE.PlaneGeometry(6.6, 1.1), signMat, hw - 0.28, 1.0, -hl + 5.0, false).rotation.y = Math.PI / 2;
 }
 
 // ---------------------------------------------------------------------------

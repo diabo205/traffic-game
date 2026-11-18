@@ -1473,3 +1473,89 @@ export function ashlarTexture(): THREE.Texture {
     return finish(c, true);
   });
 }
+
+/**
+ * Mazar-e-Quaid's copper grille: an interlaced octagon-and-square lattice
+ * over the shadowed arch recess (one repeat = one octagon cell).
+ * `glow` = night mask: the lit interior shining through the gaps.
+ */
+export function mazarGrilleTexture(glow = false): THREE.Texture {
+  return cached(`mazarGrille:${glow}`, () => {
+    const S = 128;
+    const [c, ctx] = canvas(S, S);
+    ctx.fillStyle = glow ? '#ffd9a0' : '#2b3431';
+    ctx.fillRect(0, 0, S, S);
+    const metal = glow ? '#000000' : '#9aa59d';
+    ctx.strokeStyle = metal;
+    ctx.lineWidth = 7;
+    // Octagon centred in the tile; its diagonal edges meet the neighbours'
+    // to leave a small square at each corner.
+    const k = S * 0.29; // half the straight edge
+    const m = S / 2;
+    const oct = (cx: number, cy: number) => {
+      ctx.beginPath();
+      ctx.moveTo(cx - k, cy - m);
+      ctx.lineTo(cx + k, cy - m);
+      ctx.lineTo(cx + m, cy - k);
+      ctx.lineTo(cx + m, cy + k);
+      ctx.lineTo(cx + k, cy + m);
+      ctx.lineTo(cx - k, cy + m);
+      ctx.lineTo(cx - m, cy + k);
+      ctx.lineTo(cx - m, cy - k);
+      ctx.closePath();
+      ctx.stroke();
+    };
+    oct(m, m);
+    // Eight-point star inside each octagon
+    ctx.lineWidth = 4;
+    for (const rot of [0, Math.PI / 4]) {
+      ctx.save();
+      ctx.translate(m, m);
+      ctx.rotate(rot);
+      ctx.strokeRect(-S * 0.2, -S * 0.2, S * 0.4, S * 0.4);
+      ctx.restore();
+    }
+    if (!glow) {
+      ctx.fillStyle = 'rgba(255,255,255,0.12)';
+      ctx.fillRect(0, 0, S, 3);
+    }
+    return finish(c, true);
+  });
+}
+
+/**
+ * Mazar-e-Quaid's dressed white marble: large blocks laid in running bond
+ * with crisp grey joints, a soft bevel highlight on each block and gentle
+ * block-to-block tone variation (4 courses × 4 blocks per repeat).
+ */
+export function mazarMarbleTexture(): THREE.Texture {
+  return cached('mazarMarble', () => {
+    const S = 256;
+    const [c, ctx] = canvas(S, S);
+    const rng = new Rng(1970);
+    ctx.fillStyle = '#b9b7b0';
+    ctx.fillRect(0, 0, S, S);
+    const rows = 4, cols = 4, bh = S / rows, bw = S / cols;
+    for (let r = 0; r < rows; r++) {
+      const off = r % 2 ? bw / 2 : 0;
+      for (let k = -1; k <= cols; k++) {
+        const x = k * bw + off, y = r * bh;
+        const v = 236 + rng.next() * 14;
+        ctx.fillStyle = `rgb(${v},${v},${v - 4})`;
+        ctx.fillRect(x + 2, y + 2, bw - 4, bh - 4);
+        // Bevel: light top/left, shade bottom/right
+        ctx.fillStyle = 'rgba(255,255,255,0.55)';
+        ctx.fillRect(x + 2, y + 2, bw - 4, 3);
+        ctx.fillRect(x + 2, y + 2, 3, bh - 4);
+        ctx.fillStyle = 'rgba(120,118,110,0.28)';
+        ctx.fillRect(x + 2, y + bh - 6, bw - 4, 4);
+        ctx.fillRect(x + bw - 6, y + 2, 4, bh - 4);
+        for (let i = 0; i < 6; i++) {
+          ctx.fillStyle = 'rgba(150,150,140,0.08)';
+          ctx.fillRect(x + 6 + rng.next() * (bw - 20), y + 6 + rng.next() * (bh - 16), 6 + rng.next() * 14, 1.5);
+        }
+      }
+    }
+    return finish(c, true);
+  });
+}

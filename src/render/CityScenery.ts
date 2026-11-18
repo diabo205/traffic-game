@@ -242,7 +242,8 @@ export class CityScenery {
     this.puddles(map);
     this.pavements(map);
     this.marketSquare(map);
-    this.frereGarden(map);
+    this.landmarkGarden(map, 'frere_hall', 58, 7, 9);
+    this.landmarkGarden(map, 'mazar_quaid', 60, 6, 10);
     this.markings(map);
     this.islands(map, shadow);
     this.pedestrianBridges(map, shadow);
@@ -594,37 +595,39 @@ export class CityScenery {
   }
 
   /**
-   * Bagh-e-Jinnah round Frere Hall: mown lawns bounded by the streets (and
-   * 58 m out), gravel walks on the hall's axes and a ring round it, and
-   * shade trees scattered between the walks.
+   * Landscaped grounds round a landmark: mown lawns bounded by the streets
+   * (out to `R` m, never past the landmark's own front street), gravel walks
+   * on its axes and in a ring `ring` m outside it, and shade trees scattered
+   * between the walks. Used for Bagh-e-Jinnah (Frere Hall) and the
+   * Mazar-e-Quaid gardens.
    */
-  private frereGarden(map: CityMap): void {
-    // Stop at the hall's front street: the garden lies behind and beside it.
-    const fh = map.landmarks.find((l) => l.kind === 'frere_hall');
-    const cells = this.landmarkCells(map, 'frere_hall', 58, fh ? fh.obb.hw + 2 : Infinity);
+  private landmarkGarden(map: CityMap, kind: string, R: number, ring: number, treeStep: number): void {
+    const lm0 = map.landmarks.find((l) => l.kind === kind);
+    if (!lm0) return;
+    const cells = this.landmarkCells(map, kind, R, lm0.obb.hw + 2);
     if (!cells) return;
     const { lm, local, filled } = cells;
     const { hw, hl } = lm.obb;
     const walk = (i: number, j: number) => {
       const [lr, lf] = local(i, j);
-      const ring = Math.max(Math.abs(lr) - hw - 7, Math.abs(lf) - hl - 7);
-      return Math.abs(lf) < 2.2 || Math.abs(lr) < 1.6 || (ring > -2.2 && ring < 0);
+      const d = Math.max(Math.abs(lr) - hw - ring, Math.abs(lf) - hl - ring);
+      return Math.abs(lf) < 2.2 || Math.abs(lr) < 1.6 || (d > -2.2 && d < 0);
     };
     const lawn = new THREE.MeshLambertMaterial({ color: '#ffffff', map: lawnTexture(), polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
     const gravel = new THREE.MeshLambertMaterial({ color: '#e2d4b6', map: dirtTexture(), polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3 });
     this.cellSurface(cells, (i, j) => filled(i, j) && !walk(i, j), KERB_H + 0.02, lawn, 1 / 8);
     this.cellSurface(cells, (i, j) => filled(i, j) && walk(i, j), KERB_H + 0.025, gravel, 1 / 3);
-    // Shade trees on a loose grid, clear of the walks and the hall.
-    const rng = new Rng(1865);
-    for (let j = 4; j < cells.N - 4; j += 9) {
-      for (let i = 4; i < cells.N - 4; i += 9) {
+    if (treeStep <= 0) return;
+    const rng = new Rng(kind.length * 977);
+    for (let j = 4; j < cells.N - 4; j += treeStep) {
+      for (let i = 4; i < cells.N - 4; i += treeStep) {
         const ii = i + Math.round(rng.range(-3, 3)), jj = j + Math.round(rng.range(-3, 3));
         if (!filled(ii, jj) || walk(ii, jj)) continue;
         // keep a 3 m margin to every non-garden cell (roads, pavements)
         let ok = true;
         for (let d = -3; d <= 3 && ok; d += 3) for (let e = -3; e <= 3 && ok; e += 3) if (!filled(ii + d, jj + e)) ok = false;
         const [lr, lf] = local(ii, jj);
-        if (!ok || (Math.abs(lr) < hw + 4 && Math.abs(lf) < hl + 4)) continue;
+        if (!ok || (Math.abs(lr) < hw + ring && Math.abs(lf) < hl + ring)) continue;
         this.gardenTrees.push(cells.world(lr, lf));
       }
     }

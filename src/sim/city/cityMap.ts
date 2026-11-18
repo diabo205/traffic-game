@@ -492,7 +492,8 @@ export class CityMap {
       { kind: 'grammar_school', name: 'Karachi Grammar School', obb: { x: -223.8, z: 492.0, hw: 11.5, hl: 16.0, heading: -2.173 } },
       { kind: 'ymca', name: 'Historic YMCA', obb: { x: -494.6, z: -784.9, hw: 10.5, hl: 14.0, heading: -1.706 } },
       { kind: 'madina_mall', name: 'Madina Mall', obb: { x: -160.5, z: -655.0, hw: 9.5, hl: 12.5, heading: 2.868 } },
-      { kind: 'mazar_quaid', name: 'Mazar-e-Quaid', obb: { x: 644.0, z: 579.0, hw: 11.5, hl: 14.5, heading: 1.010 } },
+      // Square compound, set back from M.A. Jinnah Rd into the open block.
+      { kind: 'mazar_quaid', name: 'Mazar-e-Quaid', obb: { x: 635.7, z: 580.9, hw: 18.0, hl: 18.0, heading: 1.010 } },
       { kind: 'frere_hall', name: 'Frere Hall', obb: { x: -138.5, z: -821.6, hw: 10.0, hl: 14.0, heading: 2.818 } },
       // On the central island of its roundabout, front facing east up M.A. Jinnah Road.
       { kind: 'merewether_tower', name: 'Merewether Clock Tower', obb: { x: MEREWETHER_CHOWK.x, z: MEREWETHER_CHOWK.z, hw: 6.5, hl: 6.5, heading: -0.6 } },
