@@ -15,6 +15,13 @@ import {
   BANNER_COUNT,
   dirtTexture,
   flagPavingTexture,
+  contactShadowTexture,
+  NEON_H_COUNT,
+  NEON_V_COUNT,
+  neonHAtlas,
+  neonHAtlasUv,
+  neonVAtlas,
+  neonVAtlasUv,
   lawnTexture,
   kerbStripeTexture,
   saddarFacadeAtlas,
@@ -198,6 +205,9 @@ interface ClutterBucket {
   banners: THREE.Matrix4[][];
   bulbs: THREE.Matrix4[];
   glows: THREE.Matrix4[];
+  neonH: THREE.Matrix4[][];
+  neonV: THREE.Matrix4[][];
+  shadows: THREE.Matrix4[];
 }
 
 /**
@@ -223,6 +233,7 @@ export class CityScenery {
   private puddleMat!: THREE.MeshPhongMaterial;
   private shopSignMat!: THREE.MeshLambertMaterial;
   private bannerMat!: THREE.MeshLambertMaterial;
+  private neonMats: THREE.MeshLambertMaterial[] = [];
   private lampBulbMat!: THREE.MeshLambertMaterial;
   private warmGlowMat!: THREE.MeshBasicMaterial;
   private litProps: THREE.MeshLambertMaterial[] = [];
@@ -288,6 +299,9 @@ export class CityScenery {
         banners: Array.from({ length: BANNER_COUNT }, () => []),
         bulbs: [],
         glows: [],
+        neonH: Array.from({ length: NEON_H_COUNT }, () => []),
+        neonV: Array.from({ length: NEON_V_COUNT }, () => []),
+        shadows: [],
       };
       this.clutterBuckets.set(group, b);
     }
@@ -320,6 +334,7 @@ export class CityScenery {
       this.puddleMat.opacity = wet ? 0.84 : 0.56;
     }
     if (this.shopSignMat) this.shopSignMat.emissiveIntensity = tod === 'night' ? 1.7 : tod === 'monsoon' ? 1.3 : tod === 'sunset' ? 0.9 : 0;
+    for (const m of this.neonMats) m.emissiveIntensity = tod === 'night' ? 2.6 : tod === 'monsoon' ? 2.2 : tod === 'sunset' ? 1.7 : 0.45;
     if (this.bannerMat) this.bannerMat.emissiveIntensity = tod === 'night' ? 0.55 : tod === 'monsoon' ? 0.42 : tod === 'sunset' ? 0.2 : 0;
     if (this.lampBulbMat) this.lampBulbMat.emissiveIntensity = tod === 'night' ? 3.0 : tod === 'monsoon' ? 2.4 : tod === 'sunset' ? 1.4 : 0;
     for (const m of this.litProps) m.emissiveIntensity = tod === 'night' ? 0.65 : tod === 'monsoon' ? 0.5 : tod === 'sunset' ? 0.25 : 0;
@@ -1069,6 +1084,8 @@ export class CityScenery {
       fb.cols.push(new THREE.Color(BUILDING_COLORS[rng.int(0, BUILDING_COLORS.length - 1)]).multiplyScalar(rng.range(0.92, 1.05)));
 
       const top = base + b.h;
+      // Soft contact shadow on the pavement round the footprint.
+      this.bucketFor(b.x, b.z).shadows.push(place(b.x, base + 0.018, -b.z, ry, b.hw * 2 + 3.6, 1, b.hl * 2 + 3.6));
       // Roof clutter: black / blue water tanks and a stair room.
       if (rng.chance(0.7)) {
         const n = rng.int(1, 3);
@@ -1113,6 +1130,24 @@ export class CityScenery {
           const off2 = rng.range(-(half - w2 / 2), half - w2 / 2) * 0.5;
           const ax2 = fx + nx * 0.09 - nz * off2, az2 = fz + nz * 0.09 + nx * off2;
           bk.signs[rng.int(0, SHOP_SIGN_COUNT - 1)].push(place(ax2, base + GROUND_FLOOR_H + 0.48, -az2, fRy, w2, w2 / 4.2 + 0.16, 1));
+        }
+        // Neon: a blade sign jutting from the wall above the awning, and a
+        // bilingual neon board on an upper floor.
+        const blades = half > 7 ? 2 : 1;
+        for (let k = 0; k < blades; k++) {
+          if (!rng.chance(0.55)) continue;
+          const bo = rng.range(-(half - 1), half - 1);
+          const out = 0.75;
+          const vx = fx + nx * out - nz * bo, vz = fz + nz * out + nx * bo;
+          const vh = rng.range(2.6, 3.6);
+          bk.neonV[rng.int(0, NEON_V_COUNT - 1)].push(place(vx, base + GROUND_FLOOR_H + 0.4 + vh / 2, -vz, fRy + Math.PI / 2, 1.05, vh, 1));
+        }
+        if (b.storeys >= 3 && rng.chance(0.6)) {
+          const nw = Math.min(half * 1.6, rng.range(4.2, 6.8));
+          const no = rng.range(-(half - nw / 2), half - nw / 2) * 0.6;
+          const st = rng.int(1, Math.min(2, b.storeys - 2));
+          const hx = fx + nx * 0.12 - nz * no, hz = fz + nz * 0.12 + nx * no;
+          bk.neonH[rng.int(0, NEON_H_COUNT - 1)].push(place(hx, base + GROUND_FLOOR_H + st * STOREY_H - 0.15, -hz, fRy, nw, nw / 4, 1));
         }
         if (rng.chance(0.6)) {
           this.pushClutter(fx, fz, awningGeo, place(fx + nx * 0.7, base + 2.55, -(fz + nz * 0.7), fRy, half * 1.8, 0.1, 1.4), awningPalette[rng.int(0, awningPalette.length - 1)]);
@@ -1635,7 +1670,25 @@ export class CityScenery {
     const bannerGeos = Array.from({ length: BANNER_COUNT }, (_, i) => doubleSidedAtlasQuadGeo(streetBannerAtlasUv(i)));
     const bulbGeo = new THREE.BoxGeometry(0.42, 0.14, 0.24);
     const glowGeo = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
-    this.ownedGeos.push(...signGeos, ...bannerGeos, bulbGeo, glowGeo);
+    const neonHGeos = Array.from({ length: NEON_H_COUNT }, (_, i) => atlasQuadGeo(neonHAtlasUv(i)));
+    const neonVGeos = Array.from({ length: NEON_V_COUNT }, (_, i) => doubleSidedAtlasQuadGeo(neonVAtlasUv(i)));
+    this.ownedGeos.push(...signGeos, ...bannerGeos, bulbGeo, glowGeo, ...neonHGeos, ...neonVGeos);
+    const neonMat = (map: THREE.Texture, mask: THREE.Texture) =>
+      new THREE.MeshLambertMaterial({ map, emissiveMap: mask, emissive: new THREE.Color('#ffffff'), emissiveIntensity: 0.45 });
+    const neonHMat = neonMat(neonHAtlas(), neonHAtlas(true));
+    const neonVMat = neonMat(neonVAtlas(), neonVAtlas(true));
+    this.neonMats.push(neonHMat, neonVMat);
+    const shadowMat = new THREE.MeshBasicMaterial({
+      color: '#1a120c',
+      alphaMap: contactShadowTexture(),
+      transparent: true,
+      opacity: 0.5,
+      depthWrite: false,
+      polygonOffset: true,
+      polygonOffsetFactor: -2,
+      polygonOffsetUnits: -2,
+    });
+    this.ownedMats.push(neonHMat, neonVMat, shadowMat);
 
     const clutterMat = new THREE.MeshLambertMaterial({ vertexColors: true });
     this.shopSignMat = new THREE.MeshLambertMaterial({
@@ -1684,6 +1737,9 @@ export class CityScenery {
         true,
       );
       instanced(bk.group, bulbGeo, this.lampBulbMat, bk.bulbs, undefined, false, false);
+      addBatch(bk.group, neonHMat, bk.neonH.map((mats, i) => ({ geo: neonHGeos[i], mats })), false, true);
+      addBatch(bk.group, neonVMat, bk.neonV.map((mats, i) => ({ geo: neonVGeos[i], mats })), false, true);
+      instanced(bk.group, glowGeo, shadowMat, bk.shadows, undefined, false, false);
       const gm = instanced(bk.group, glowGeo, this.warmGlowMat, bk.glows, undefined, false, false);
       if (gm) {
         gm.visible = false;

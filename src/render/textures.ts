@@ -1798,3 +1798,161 @@ export function kgsBayTexture(glow = false): THREE.Texture {
     return finish(c, true);
   });
 }
+
+// ---------------------------------------------------------------------------
+// Neon signage
+// ---------------------------------------------------------------------------
+
+const NEON_H: ReadonlyArray<{ en: string; ur: string; col: string; col2: string }> = [
+  { en: 'SADDAR BAZAR', ur: 'صدر بازار', col: '#ff3d7f', col2: '#38e1ff' },
+  { en: 'TEA SHOP', ur: 'چائے خانہ', col: '#3dff8c', col2: '#ffd23d' },
+  { en: 'BIRYANI HOUSE', ur: 'بریانی', col: '#ffb02e', col2: '#ff3d3d' },
+  { en: 'MOBILE ZONE', ur: 'موبائل', col: '#38b6ff', col2: '#ff5ce1' },
+  { en: 'HOTEL MEHRAN', ur: 'ہوٹل', col: '#ff5ce1', col2: '#ffffff' },
+  { en: 'JEWELLERS', ur: 'جیولرز', col: '#ffe14d', col2: '#ff3d7f' },
+  { en: 'SWEETS & BAKERS', ur: 'مٹھائی', col: '#ff6b3d', col2: '#3dfff0' },
+  { en: 'PHARMACY', ur: 'دواخانہ', col: '#3dff8c', col2: '#ffffff' },
+];
+const NEON_V: ReadonlyArray<{ lines: string[]; col: string }> = [
+  { lines: ['صدر', 'کڑاہی', 'ہاؤس'], col: '#38e1ff' },
+  { lines: ['چائے', 'پراٹھا'], col: '#ff3d7f' },
+  { lines: ['ٹیلر', 'ماسٹر'], col: '#ffe14d' },
+  { lines: ['کباب', 'تکہ'], col: '#ff6b3d' },
+  { lines: ['HOTEL'], col: '#ff5ce1' },
+  { lines: ['کلینک', '24/7'], col: '#3dff8c' },
+  { lines: ['پان', 'شاپ'], col: '#ff3d3d' },
+  { lines: ['CAFE'], col: '#38b6ff' },
+];
+export const NEON_H_COUNT = NEON_H.length;
+export const NEON_V_COUNT = NEON_V.length;
+const URDU_FONT = '"Noto Nastaliq Urdu", "Noto Naskh Arabic", "Segoe UI", Tahoma, sans-serif';
+
+/** Neon tube text: a soft halo then a bright core. `mask` draws tubes only (for emissiveMap). */
+function neonText(ctx: CanvasRenderingContext2D, text: string, x: number, y: number, col: string, maxW: number, mask: boolean): void {
+  ctx.save();
+  ctx.lineJoin = 'round';
+  ctx.shadowColor = col;
+  ctx.shadowBlur = mask ? 6 : 14;
+  ctx.strokeStyle = col;
+  ctx.lineWidth = 5;
+  ctx.strokeText(text, x, y, maxW);
+  ctx.shadowBlur = 0;
+  ctx.strokeStyle = mask ? '#ffffff' : '#fff8f0';
+  ctx.globalAlpha = mask ? 0.75 : 0.9;
+  ctx.lineWidth = 1.6;
+  ctx.strokeText(text, x, y, maxW);
+  ctx.restore();
+}
+
+function neonPanel(ctx: CanvasRenderingContext2D, w: number, h: number, col: string, mask: boolean): void {
+  if (!mask) {
+    ctx.fillStyle = '#17121f';
+    ctx.fillRect(0, 0, w, h);
+    ctx.fillStyle = 'rgba(255,255,255,0.05)';
+    ctx.fillRect(0, 0, w, h * 0.45);
+  }
+  ctx.save();
+  ctx.strokeStyle = col;
+  ctx.shadowColor = col;
+  ctx.shadowBlur = mask ? 4 : 10;
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.roundRect(8, 8, w - 16, h - 16, 10);
+  ctx.stroke();
+  ctx.restore();
+}
+
+/** 2×4 atlas of horizontal bilingual neon boards (512×128 cells). */
+export function neonHAtlas(mask = false): THREE.Texture {
+  return cached(`neonH:${mask}`, () => {
+    const [c, ctx] = canvas(1024, 512);
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, 1024, 512);
+    NEON_H.forEach((s, i) => {
+      ctx.save();
+      ctx.translate((i % 2) * 512, Math.floor(i / 2) * 128);
+      neonPanel(ctx, 512, 128, s.col2, mask);
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.font = '900 46px system-ui, sans-serif';
+      neonText(ctx, s.en, 200, 66, s.col, 330, mask);
+      ctx.font = `700 46px ${URDU_FONT}`;
+      ctx.direction = 'rtl';
+      neonText(ctx, s.ur, 430, 62, s.col2, 130, mask);
+      ctx.restore();
+    });
+    return finish(c);
+  });
+}
+
+export function neonHAtlasUv(i: number): readonly [number, number, number, number] {
+  const k = ((i % NEON_H_COUNT) + NEON_H_COUNT) % NEON_H_COUNT;
+  const col = k % 2, row = Math.floor(k / 2);
+  return [col * 0.5 + 0.003, 1 - (row + 1) * 0.25 + 0.004, (col + 1) * 0.5 - 0.003, 1 - row * 0.25 - 0.004];
+}
+
+/** 8×1 atlas of tall blade neon signs (128×384 cells), Urdu lines stacked. */
+export function neonVAtlas(mask = false): THREE.Texture {
+  return cached(`neonV:${mask}`, () => {
+    const [c, ctx] = canvas(1024, 384);
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, 1024, 384);
+    NEON_V.forEach((s, i) => {
+      ctx.save();
+      ctx.translate(i * 128, 0);
+      neonPanel(ctx, 128, 384, s.col, mask);
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      const n = s.lines.length;
+      s.lines.forEach((t, k) => {
+        const latin = /^[A-Z0-9/ ]+$/.test(t);
+        if (latin) {
+          // Latin words run letter by letter down the blade
+          ctx.font = '900 42px system-ui, sans-serif';
+          const letters = t.split('');
+          letters.forEach((ch, j) => neonText(ctx, ch, 64, 192 + (j - (letters.length - 1) / 2) * 52, s.col, 100, mask));
+        } else {
+          ctx.font = `700 40px ${URDU_FONT}`;
+          ctx.direction = 'rtl';
+          neonText(ctx, t, 64, 192 + (k - (n - 1) / 2) * 100, s.col, 104, mask);
+        }
+      });
+      ctx.restore();
+    });
+    return finish(c);
+  });
+}
+
+export function neonVAtlasUv(i: number): readonly [number, number, number, number] {
+  const k = ((i % NEON_V_COUNT) + NEON_V_COUNT) % NEON_V_COUNT;
+  return [k / 8 + 0.003, 0.004, (k + 1) / 8 - 0.003, 0.996];
+}
+
+/** Soft rectangular contact shadow: opaque core fading out over the outer ~30% (alpha in red). */
+export function contactShadowTexture(): THREE.Texture {
+  return cached('contactShadow', () => {
+    const S = 128;
+    const [c, ctx] = canvas(S, S);
+    const img = ctx.createImageData(S, S);
+    for (let y = 0; y < S; y++) {
+      for (let x = 0; x < S; x++) {
+        const dx = Math.abs((x + 0.5) / S - 0.5) * 2, dy = Math.abs((y + 0.5) / S - 0.5) * 2;
+        const d = Math.max(dx, dy);
+        const a = 1 - smooth(0.62, 1.0, d);
+        const v = Math.round(255 * a * a);
+        const o = (y * S + x) * 4;
+        img.data[o] = img.data[o + 1] = img.data[o + 2] = v;
+        img.data[o + 3] = 255;
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+    const t = finish(c);
+    t.colorSpace = THREE.NoColorSpace;
+    return t;
+  });
+}
+
+function smooth(a: number, b: number, x: number): number {
+  const t = Math.max(0, Math.min(1, (x - a) / (b - a)));
+  return t * t * (3 - 2 * t);
+}

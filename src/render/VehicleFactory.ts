@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import type { NpcKind } from '../sim/types';
-import { headlightPoolTexture, routeBoardTexture, truckArtTexture, windscreenArtTexture } from './textures';
+import { headlightPoolTexture, routeBoardTexture, truckArtTexture, windscreenArtTexture, contactShadowTexture } from './textures';
 
 /**
  * Builds low-poly procedural vehicles.
@@ -352,6 +352,7 @@ export class VehicleFactory {
     if (!proto) {
       proto = this.build(kind, variant);
       finalize(proto, keepWheels);
+      addContactShadow(proto.root);
       this.protos.set(key, proto);
     }
     const v = bind(kind, proto.root.clone(true), proto.wheelRadius);
@@ -903,4 +904,28 @@ export class VehicleFactory {
     attachHeadlightPool(body, lights, -4.53, 6.4, 15);
     return { root, body, wheels, wheelRadius: 0.5, lights };
   }
+}
+
+let blobMat: THREE.MeshBasicMaterial | null = null;
+/** Soft dark blob under a vehicle so it sits on the road (sized from the mesh's footprint). */
+function addContactShadow(root: THREE.Object3D): void {
+  root.updateMatrixWorld(true);
+  const box = new THREE.Box3().setFromObject(root);
+  if (box.isEmpty()) return;
+  blobMat ??= new THREE.MeshBasicMaterial({
+    color: '#000000',
+    alphaMap: contactShadowTexture(),
+    transparent: true,
+    opacity: 0.55,
+    depthWrite: false,
+    polygonOffset: true,
+    polygonOffsetFactor: -4,
+    polygonOffsetUnits: -4,
+  });
+  const w = box.max.x - box.min.x, l = box.max.z - box.min.z;
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(w * 1.25 + 0.3, l * 1.15 + 0.4).rotateX(-Math.PI / 2), blobMat);
+  m.position.set((box.min.x + box.max.x) / 2, 0.03, (box.min.z + box.max.z) / 2);
+  m.renderOrder = 1;
+  m.name = 'contactShadow';
+  root.add(m);
 }
