@@ -310,7 +310,7 @@ function measureVehicleBounds(root: THREE.Object3D, fallback: { roofY: number; h
   root.updateMatrixWorld(true);
   const box = new THREE.Box3();
   root.traverse((o) => {
-    if (o instanceof THREE.Mesh && o.name !== 'beam' && o.name !== 'pool') {
+    if (o instanceof THREE.Mesh && o.name !== 'beam' && o.name !== 'pool' && o.name !== 'contactShadow') {
       box.expandByObject(o);
     }
   });
@@ -437,7 +437,7 @@ export class GarageScene {
     for (const veh of PLAYER_VEHICLES) {
       const visual = factory.create(veh, 0, true, VEHICLE_SHOWCASE[veh].paintHex);
       visual.root.traverse((o) => {
-        if (o instanceof THREE.Mesh && o.name !== 'beam' && o.name !== 'pool') {
+        if (o instanceof THREE.Mesh && o.name !== 'beam' && o.name !== 'pool' && o.name !== 'contactShadow') {
           o.castShadow = !lowSpec;
         }
       });
@@ -710,23 +710,23 @@ export class GarageScene {
   private computeCameraGoals(hero: GarageSlotEntry): void {
     const portrait = this.aspect < 0.85;
     const radius = Math.hypot(hero.halfWidth, hero.halfLength);
-    const sizeScale = Math.max(1, radius / 2.55);
-    const heightScale = Math.max(1, hero.roofY / 1.65);
+    const sizeScale = Math.max(0.95, radius / 2.25);
+    const heightScale = Math.max(0.95, hero.roofY / 1.55);
 
-    this.targetFov = portrait ? 56 : 42;
-    const baseDist = portrait ? 8.8 / Math.max(0.45, this.aspect * 1.45) : 6.15;
+    this.targetFov = portrait ? 48 : 38;
+    const baseDist = portrait ? 6.4 / Math.max(0.55, this.aspect * 1.35) : 5.45;
     const dist = baseDist * sizeScale;
 
-    // In landscape, shift look target slightly left so the hero sits slightly right of center (leaving left 30% open for stats).
-    // In portrait, center the hero horizontally.
-    const lookX = portrait ? this.heroGroup.position.x : this.heroGroup.position.x - 0.95 * sizeScale;
-    const lookY = hero.roofY * 0.56 + 0.08;
-    const lookZ = this.heroGroup.position.z - 0.15;
+    // In landscape, shift look target slightly left so the hero fills center-right (leaving left 30% open for stats).
+    // In portrait, center horizontally and shift lookY down slightly so the car sits in the upper half above the panel.
+    const lookX = portrait ? this.heroGroup.position.x : this.heroGroup.position.x - 0.72 * sizeScale;
+    const lookY = portrait ? hero.roofY * 0.34 - 0.12 : hero.roofY * 0.46 + 0.04;
+    const lookZ = this.heroGroup.position.z - 0.1;
 
     this.camTargetDesired.set(lookX, lookY, lookZ);
     this.camPosDesired.set(
-      lookX + (portrait ? 0.15 : -0.15),
-      Math.max(1.38, 1.48 * heightScale),
+      lookX + (portrait ? 0.12 : -0.18),
+      Math.max(1.16, 1.20 * heightScale),
       lookZ + dist,
     );
   }
