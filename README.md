@@ -37,6 +37,7 @@ npm run playtest:metrics # run all headless sim feel probes
 
 - `?mode=city` or `?mode=route` — launch directly into Free Roam or Route Run (defaults to last played, or `city`)
 - `?daily=1` — play Daily Saddar with today's UTC seed
+- `?tod=noon|sunset|night|monsoon` — start at a given time of day
 - `?monsoon` — launch directly into Karachi Monsoon weather mode (rain curtain, lightning, wet asphalt reflections, and hydroplaning puddles)
 - `?seed=123` — set deterministic world PRNG seed (default `1337`)
 - `?low` / `?high` — force graphics quality tier (touch devices default to `low`)

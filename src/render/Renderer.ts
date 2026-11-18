@@ -7,6 +7,8 @@ import { Birds } from './Birds';
 import { ChaseCamera } from './ChaseCamera';
 import type { CityScenery } from './CityScenery';
 import { Effects } from './Effects';
+import { PostFx } from './PostFx';
+import type { GradeParams } from './PostFx';
 import type { Environment } from './Environment';
 import type { FareVisuals } from './FareVisuals';
 import type { PropVisuals } from './PropVisuals';
@@ -39,6 +41,8 @@ interface LightingPreset {
   top: string;
   mid: string;
   bottom: string;
+  /** sky-shader sun disc / halo colour (HDR, so it blooms) */
+  sunGlow: string;
   sunDir: readonly [number, number, number];
   hemiSky: string;
   hemiGround: string;
@@ -46,49 +50,82 @@ interface LightingPreset {
   sunColor: string;
   sunIntensity: number;
   exposure: number;
+  fogNear: number;
+  fogFar: number;
+  post: GradeParams;
 }
 
 const LIGHTING: Record<TimeOfDay, LightingPreset> = {
+  // Clear, warm Karachi afternoon: deep blue overhead, dusty warm horizon.
   noon: {
-    top: '#9ec0d8',
-    mid: '#dde1db',
-    bottom: '#d3d5cc',
+    top: '#4f93d4',
+    mid: '#b9d3e4',
+    bottom: '#ecdcbf',
+    sunGlow: '#fff1d0',
     sunDir: [-0.49, 0.73, 0.49],
-    hemiSky: '#e6edf1',
-    hemiGround: '#a8977a',
-    hemiIntensity: 1.5,
-    sunColor: '#fff1d6',
-    sunIntensity: 2.6,
+    hemiSky: '#cfe0ef',
+    hemiGround: '#b39a72',
+    hemiIntensity: 1.3,
+    sunColor: '#ffe6c0',
+    sunIntensity: 3.0,
     exposure: 1.0,
+    fogNear: 60,
+    fogFar: 430,
+    post: {
+      bloom: 0.25, bloomRadius: 0.4, bloomThreshold: 0.95,
+      saturation: 1.15, contrast: 1.06,
+      shadowTint: '#e4ebff', highlightTint: '#fff4e2',
+      vignette: 0.25, glowTint: '#fff0d0', glow: 0.06,
+    },
   },
+  // Golden hour: low orange sun, long shadows, violet shade, glowing haze.
   sunset: {
-    top: '#32386b',
-    mid: '#df7b5c',
-    bottom: '#e7ab7f',
-    sunDir: [-0.82, 0.22, -0.52],
-    hemiSky: '#ffd3aa',
-    hemiGround: '#72524c',
-    hemiIntensity: 1.25,
-    sunColor: '#ffa25b',
-    sunIntensity: 2.4,
-    exposure: 1.06,
+    top: '#4a5296',
+    mid: '#f2a272',
+    bottom: '#ffd09a',
+    sunGlow: '#ffb468',
+    sunDir: [-0.84, 0.17, -0.52],
+    hemiSky: '#c4b6dc',
+    hemiGround: '#8c6a52',
+    hemiIntensity: 1.45,
+    sunColor: '#ffa45c',
+    sunIntensity: 3.2,
+    exposure: 1.05,
+    fogNear: 70,
+    fogFar: 380,
+    post: {
+      bloom: 0.5, bloomRadius: 0.55, bloomThreshold: 0.85,
+      saturation: 1.15, contrast: 1.06,
+      shadowTint: '#d2c8ff', highlightTint: '#ffeed6',
+      vignette: 0.38, glowTint: '#ffb47a', glow: 0.14,
+    },
   },
   night: {
-    top: '#091129',
-    mid: '#19294c',
-    bottom: '#202d45',
+    top: '#060c22',
+    mid: '#16264a',
+    bottom: '#2a3350',
+    sunGlow: '#9fb8ff',
     sunDir: [-0.4, 0.65, 0.5],
     hemiSky: '#5874b0',
     hemiGround: '#2d282c',
-    hemiIntensity: 1.05,
+    hemiIntensity: 1.0,
     sunColor: '#a6c2ff',
-    sunIntensity: 0.9,
+    sunIntensity: 0.85,
     exposure: 1.18,
+    fogNear: 25,
+    fogFar: 320,
+    post: {
+      bloom: 0.55, bloomRadius: 0.45, bloomThreshold: 0.88,
+      saturation: 1.18, contrast: 1.08,
+      shadowTint: '#b4c4ff', highlightTint: '#ffe4c4',
+      vignette: 0.48, glowTint: '#3a5aa8', glow: 0.1,
+    },
   },
   monsoon: {
     top: '#182433',
     mid: '#2c3d4f',
     bottom: '#3a4b5c',
+    sunGlow: '#b5d0ea',
     sunDir: [-0.35, 0.78, 0.42],
     hemiSky: '#7d97b2',
     hemiGround: '#28313a',
@@ -96,6 +133,14 @@ const LIGHTING: Record<TimeOfDay, LightingPreset> = {
     sunColor: '#b5d0ea',
     sunIntensity: 1.35,
     exposure: 1.08,
+    fogNear: 18,
+    fogFar: 235,
+    post: {
+      bloom: 0.6, bloomRadius: 0.55, bloomThreshold: 0.65,
+      saturation: 0.95, contrast: 1.06,
+      shadowTint: '#c4d8ff', highlightTint: '#eef4ff',
+      vignette: 0.38, glowTint: '#8aa4c0', glow: 0.1,
+    },
   },
 };
 
@@ -110,6 +155,7 @@ export class Renderer {
   private hemi: THREE.HemisphereLight;
   private sun: THREE.DirectionalLight;
   private skyMat: THREE.ShaderMaterial;
+  private post: PostFx;
   private timeOfDay: TimeOfDay = 'noon';
   private env: Scenery | null = null;
   private envKey = '';
@@ -150,7 +196,7 @@ export class Renderer {
     this.gl.toneMapping = THREE.ACESFilmicToneMapping;
     this.gl.toneMappingExposure = 1.0;
     this.gl.shadowMap.enabled = !lowSpec;
-    this.gl.shadowMap.type = THREE.PCFShadowMap;
+    this.gl.shadowMap.type = THREE.PCFSoftShadowMap;
     container.appendChild(this.gl.domElement);
 
     if (new URLSearchParams(window.location.search).has('perf')) {
@@ -194,6 +240,8 @@ export class Renderer {
     this.scene.add(this.birds.mesh);
     this.scene.add(this.rain.group);
 
+    this.post = new PostFx(this.gl, this.scene, this.chase.camera);
+    this.post.setParams(LIGHTING.noon.post);
     this.resize();
   }
 
@@ -210,11 +258,13 @@ export class Renderer {
     this.skyMat.uniforms.mid.value.set(p.mid);
     this.skyMat.uniforms.bottom.value.set(p.bottom);
     this.skyMat.uniforms.sunDir.value.set(p.sunDir[0], p.sunDir[1], p.sunDir[2]).normalize();
+    this.skyMat.uniforms.sunGlow.value.set(p.sunGlow);
+    this.post.setParams(p.post);
     (this.scene.background as THREE.Color).set(p.bottom);
     if (this.scene.fog instanceof THREE.Fog) {
       this.scene.fog.color.set(p.bottom);
-      this.scene.fog.near = tod === 'monsoon' ? 18 : 25;
-      this.scene.fog.far = tod === 'monsoon' ? 235 : 330;
+      this.scene.fog.near = p.fogNear;
+      this.scene.fog.far = p.fogFar;
     }
     this.hemi.color.set(p.hemiSky);
     this.hemi.groundColor.set(p.hemiGround);
@@ -339,6 +389,7 @@ export class Renderer {
     const h = this.container.clientHeight || window.innerHeight;
     this.gl.setSize(w, h, false);
     this.chase.resize(w / h);
+    this.post?.setSize(w, h);
   }
 
   handleEvent(e: SimEvent, world: AnyWorld): void {
@@ -574,7 +625,7 @@ export class Renderer {
     this.effects.update(dt);
 
     const t0 = performance.now();
-    this.gl.render(this.scene, this.chase.camera);
+    this.post.render();
     const renderMs = performance.now() - t0;
 
     if (dt > 0) {
@@ -646,6 +697,7 @@ function makeSky(): THREE.Mesh {
       bottom: { value: HORIZON.clone() },
       // Matches the directional light (sun behind-left of the camera).
       sunDir: { value: new THREE.Vector3(-0.49, 0.73, 0.49).normalize() },
+      sunGlow: { value: new THREE.Color('#fff1d0') },
     },
     vertexShader: /* glsl */ `
       varying vec3 vDir;
@@ -655,14 +707,18 @@ function makeSky(): THREE.Mesh {
         gl_Position = p.xyww;
       }`,
     fragmentShader: /* glsl */ `
-      uniform vec3 top; uniform vec3 mid; uniform vec3 bottom; uniform vec3 sunDir;
+      uniform vec3 top; uniform vec3 mid; uniform vec3 bottom; uniform vec3 sunDir; uniform vec3 sunGlow;
       varying vec3 vDir;
       void main() {
-        float h = vDir.y;
-        vec3 c = mix(bottom, mid, smoothstep(-0.02, 0.12, h));
-        c = mix(c, top, smoothstep(0.12, 0.7, h));
-        float s = max(dot(normalize(vDir), sunDir), 0.0);
-        c += vec3(1.0, 0.82, 0.5) * (pow(s, 600.0) * 1.5 + pow(s, 8.0) * 0.25);
+        vec3 d = normalize(vDir);
+        float h = d.y;
+        vec3 c = mix(bottom, mid, smoothstep(-0.02, 0.16, h));
+        c = mix(c, top, smoothstep(0.16, 0.75, h));
+        float s = max(dot(d, sunDir), 0.0);
+        // Horizon glow brightest under the sun, sun disc (HDR → blooms) and halo
+        float side = pow(max(dot(normalize(vec3(d.x, 0.0, d.z)), normalize(vec3(sunDir.x, 0.0, sunDir.z))), 0.0), 3.0);
+        c += sunGlow * side * (1.0 - smoothstep(0.0, 0.35, abs(h - 0.02))) * 0.35;
+        c += sunGlow * (smoothstep(0.9985, 0.9993, s) * 6.0 + pow(s, 48.0) * 0.8 + pow(s, 6.0) * 0.22);
         gl_FragColor = vec4(c, 1.0);
       }`,
   });

@@ -201,7 +201,9 @@ export class Game {
     }
     let tod: TimeOfDay = 'noon';
     const savedTod = storageGet('kt3d.tod');
+    const askedTod = params.get('tod');
     if (params.has('monsoon') || params.get('weather') === 'monsoon') tod = 'monsoon';
+    else if (askedTod === 'noon' || askedTod === 'sunset' || askedTod === 'night' || askedTod === 'monsoon') tod = askedTod;
     else if (savedTod === 'noon' || savedTod === 'sunset' || savedTod === 'night' || savedTod === 'monsoon') tod = savedTod;
 
     const renderer = await Renderer.create(container, lowSpec);

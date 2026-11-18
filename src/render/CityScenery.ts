@@ -319,9 +319,9 @@ export class CityScenery {
       this.puddleMat.color.set(wet ? '#3f5364' : '#65757e');
       this.puddleMat.opacity = wet ? 0.84 : 0.56;
     }
-    if (this.shopSignMat) this.shopSignMat.emissiveIntensity = tod === 'night' ? 0.95 : tod === 'monsoon' ? 0.78 : tod === 'sunset' ? 0.35 : 0;
+    if (this.shopSignMat) this.shopSignMat.emissiveIntensity = tod === 'night' ? 1.7 : tod === 'monsoon' ? 1.3 : tod === 'sunset' ? 0.9 : 0;
     if (this.bannerMat) this.bannerMat.emissiveIntensity = tod === 'night' ? 0.55 : tod === 'monsoon' ? 0.42 : tod === 'sunset' ? 0.2 : 0;
-    if (this.lampBulbMat) this.lampBulbMat.emissiveIntensity = tod === 'night' ? 1.2 : tod === 'monsoon' ? 0.95 : tod === 'sunset' ? 0.45 : 0;
+    if (this.lampBulbMat) this.lampBulbMat.emissiveIntensity = tod === 'night' ? 3.0 : tod === 'monsoon' ? 2.4 : tod === 'sunset' ? 1.4 : 0;
     for (const m of this.litProps) m.emissiveIntensity = tod === 'night' ? 0.65 : tod === 'monsoon' ? 0.5 : tod === 'sunset' ? 0.25 : 0;
     const showGlow = tod !== 'noon';
     if (this.warmGlowMat) this.warmGlowMat.opacity = tod === 'night' ? 0.44 : tod === 'monsoon' ? 0.38 : 0.22;
