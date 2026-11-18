@@ -1,5 +1,5 @@
 /* Karachi Traffic 3D Offline Service Worker */
-const CACHE = 'kt3d-v-43e21120';
+const CACHE = 'kt3d-v-7f97efd4';
 const PRECACHE = [
   "./",
   "./index.html",
@@ -14,26 +14,26 @@ const PRECACHE = [
   "./models/cart.glb",
   "./models/car.glb",
   "./models/truck.glb",
-  "./assets/CityScenery-DFqHgF7m.js",
-  "./assets/CityWorld-Csfz9Lse.js",
-  "./assets/Environment-BMtCTS7l.js",
-  "./assets/FareVisuals-DdD9K94f.js",
-  "./assets/Landmarks-74lfgrSy.js",
-  "./assets/PropVisuals-B9zxhF5M.js",
-  "./assets/Props-C0hBFWgW.js",
-  "./assets/TrafficManager-D6jnw_Rd.js",
-  "./assets/World-B9AZoanA.js",
+  "./assets/CityScenery-Cm7D8if4.js",
+  "./assets/CityWorld-CzcF885i.js",
+  "./assets/Environment-n2RkiYnl.js",
+  "./assets/FareVisuals-BM2ow1PL.js",
+  "./assets/Landmarks-BDytHpgf.js",
+  "./assets/PropVisuals-BHWMzyBd.js",
+  "./assets/Props-BPmUbl-s.js",
+  "./assets/TrafficManager-CX8rknCE.js",
+  "./assets/World-CH59RV1z.js",
   "./assets/barlow-condensed-latin-600-normal-BN11TKSn.woff2",
   "./assets/barlow-condensed-latin-700-normal-B9NQhHK3.woff2",
   "./assets/barlow-condensed-latin-800-italic-BaEn-VSx.woff2",
   "./assets/barlow-condensed-latin-800-normal-jAD-BpyZ.woff2",
   "./assets/barlow-condensed-latin-900-italic-CNr-ajSH.woff2",
-  "./assets/cityMap-ZjVbJdhZ.js",
-  "./assets/index-Cmd5hX4B.js",
+  "./assets/cityMap-DFYQhkGV.js",
+  "./assets/index-C2c_zNSn.js",
   "./assets/index-D24cu38Y.css",
   "./assets/rng-DNxfwzzg.js",
-  "./assets/strip-Co5lGTIp.js",
-  "./assets/three-IYqxmJ37.js"
+  "./assets/strip-6zhomCdq.js",
+  "./assets/three-CKDewqfo.js"
 ];
 
 self.addEventListener('install', (event) => {
