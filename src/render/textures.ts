@@ -1336,3 +1336,119 @@ export function flagPavingTexture(): THREE.Texture {
     return finish(c, true);
   });
 }
+
+/**
+ * One verandah bay of Frere Hall (≈3.2 m × 11.5 m, two storeys): yellow
+ * limestone piers with red/grey sandstone banding, Venetian pointed arches
+ * with alternating red-and-cream voussoirs opening onto shaded verandahs,
+ * a quatrefoil over each upper arch and an upper balustrade.
+ * `glow` = night emissive mask (doors and windows deep in the verandahs).
+ */
+export function frereBayTexture(glow = false): THREE.Texture {
+  return cached(`frereBay:${glow}`, () => {
+    const W = 128, H = 460;
+    const [c, ctx] = canvas(W, H);
+    const px = H / 11.5;
+    const y = (m: number) => H - m * px;
+    const lime = '#dcc283', red = '#a5523a', grey = '#8f8b82', cream = '#efe0b8';
+    ctx.fillStyle = glow ? '#000' : lime;
+    ctx.fillRect(0, 0, W, H);
+    const band = (m: number, h: number, col: string) => {
+      if (glow) return;
+      ctx.fillStyle = col;
+      ctx.fillRect(0, y(m + h), W, h * px);
+    };
+    // Courses: alternating thin red & grey bands (Venetian polychromy)
+    if (!glow) {
+      ctx.fillStyle = 'rgba(110,80,40,0.22)';
+      for (let yy = H; yy > 0; yy -= 12) ctx.fillRect(0, yy, W, 1.2);
+    }
+    const storey = (base: number, hgt: number, hw: number) => {
+      const cx = W / 2;
+      // Voussoirs: alternate red and cream blocks around the arch
+      if (!glow) {
+        for (let k = 0; k < 9; k++) {
+          ctx.fillStyle = k % 2 ? red : cream;
+          ctx.save();
+          archPath(ctx, cx, y(base), hw + 10, hgt * px + 12);
+          ctx.clip();
+          const a0 = Math.PI + (k / 9) * Math.PI, a1 = Math.PI + ((k + 1) / 9) * Math.PI;
+          ctx.beginPath();
+          ctx.moveTo(cx, y(base) - hgt * px * 0.55);
+          ctx.arc(cx, y(base) - hgt * px * 0.55, 200, a0, a1);
+          ctx.closePath();
+          ctx.fill();
+          ctx.restore();
+        }
+        ctx.fillStyle = lime;
+        ctx.fillRect(cx - hw - 10, y(base) - hgt * px * 0.55, (hw + 10) * 2, hgt * px * 0.55);
+      }
+      // Shaded verandah behind the arch, with a door/window at the back
+      ctx.fillStyle = glow ? '#000' : '#4a3a2c';
+      archPath(ctx, cx, y(base), hw, hgt * px);
+      ctx.fill();
+      ctx.fillStyle = glow ? '#ffc56e' : '#2a2018';
+      archPath(ctx, cx, y(base), hw * 0.45, hgt * px * 0.72);
+      ctx.fill();
+      if (!glow) {
+        ctx.fillStyle = 'rgba(0,0,0,0.25)';
+        ctx.fillRect(cx - hw, y(base) - hgt * px * 0.5, hw * 2, hgt * px * 0.5 * 0.15);
+      }
+      // Slim column shafts either side (grey sandstone) with red capitals
+      if (!glow) {
+        for (const s of [-1, 1]) {
+          ctx.fillStyle = grey;
+          ctx.fillRect(cx + s * (hw + 13) - 4, y(base + hgt * 0.62), 8, hgt * 0.62 * px);
+          ctx.fillStyle = red;
+          ctx.fillRect(cx + s * (hw + 13) - 6, y(base + hgt * 0.62) - 4, 12, 5);
+        }
+      }
+    };
+    band(0, 0.7, grey);
+    storey(0.7, 4.6, 34);
+    band(5.6, 0.25, red);
+    band(5.85, 0.45, cream);
+    // Upper balustrade in front of the verandah
+    storey(6.3, 3.6, 30);
+    if (!glow) {
+      ctx.fillStyle = cream;
+      ctx.fillRect(0, y(7.4), W, 6);
+      for (let x = 6; x < W; x += 9) ctx.fillRect(x, y(7.35), 4, 0.9 * px);
+      ctx.fillRect(0, y(6.45), W, 5);
+    }
+    // Quatrefoil in the spandrel above the upper arch
+    if (!glow) {
+      ctx.fillStyle = red;
+      for (let i = 0; i < 4; i++) {
+        const a = (i / 4) * Math.PI * 2 + Math.PI / 4;
+        ctx.beginPath();
+        ctx.arc(W / 2 + Math.cos(a) * 6, y(10.55) + Math.sin(a) * 6, 6, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.fillStyle = cream;
+      ctx.beginPath();
+      ctx.arc(W / 2, y(10.55), 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    band(10.95, 0.25, red);
+    band(11.2, 0.3, cream);
+    return finish(c, true);
+  });
+}
+
+/** Mown lawn with faint mowing stripes and clover patches (one repeat ≈ 8 m). */
+export function lawnTexture(): THREE.Texture {
+  return cached('lawn', () => {
+    const [c, ctx] = canvas(256, 256);
+    const rng = new Rng(18);
+    for (let x = 0; x < 256; x += 32) {
+      ctx.fillStyle = (x / 32) % 2 ? '#7aa055' : '#6f9a4e';
+      ctx.fillRect(x, 0, 32, 256);
+    }
+    for (let i = 0; i < 900; i++) {
+      ctx.fillStyle = rng.next() < 0.5 ? 'rgba(40,70,25,0.18)' : 'rgba(170,200,110,0.16)';
+      ctx.fillRect(rng.next() * 256, rng.next() * 256, 2 + rng.next() * 4, 2 + rng.next() * 4);
+    }
+    return finish(c, true);
+  });
+}

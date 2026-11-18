@@ -14,6 +14,7 @@ import {
   BANNER_COUNT,
   dirtTexture,
   flagPavingTexture,
+  lawnTexture,
   kerbStripeTexture,
   saddarFacadeAtlas,
   SHOP_SIGN_COUNT,
@@ -217,6 +218,8 @@ export class CityScenery {
   private lampBulbMat!: THREE.MeshLambertMaterial;
   private warmGlowMat!: THREE.MeshBasicMaterial;
   private litProps: THREE.MeshLambertMaterial[] = [];
+  /** extra tree spots inside landmark gardens (sim x, z) */
+  private gardenTrees: Array<[number, number]> = [];
   private glowMeshes: THREE.InstancedMesh[] = [];
   private fountainJets: THREE.Mesh[] = [];
   private steamPos: Float32Array | null = null;
@@ -230,7 +233,8 @@ export class CityScenery {
     this.roads(map);
     this.puddles(map);
     this.pavements(map);
-    this.marketSquare(map, shadow);
+    this.marketSquare(map);
+    this.frereGarden(map);
     this.markings(map);
     this.islands(map, shadow);
     this.pedestrianBridges(map, shadow);
@@ -490,29 +494,26 @@ export class CityScenery {
   }
 
   /**
-   * Flag-paved square filling the open city block round Empress Market
-   * (otherwise a bare dirt slab), laid just above that slab. Flood-fills 1 m cells outward from the market
-   * until it meets the road pavements, then merges each row into strips.
+   * Flood-fills 1 m cells outward from a landmark, on a grid aligned with
+   * its heading (so edges run parallel to the streets), stopping at road
+   * pavements, at `R` metres and at `maxLr` in front. Returns the filled cells; `world` maps the
+   * landmark-local (lr across the front, + = street; lf along it) to sim x/z.
    */
-  private marketSquare(map: CityMap, shadow: boolean): void {
-    void shadow;
-    const em = map.landmarks.find((l) => l.kind === 'empress');
-    if (!em) return;
-    const C = 1, R = 95;
-    const N = Math.round((2 * R) / C);
-    // Grid aligned with the market (and so with the streets round the block):
-    // i steps across the facade (lr, + = street front), j along it (lf).
-    const hs = Math.sin(em.obb.heading), hc = Math.cos(em.obb.heading);
-    const world = (lr: number, lf: number): [number, number] => [em.obb.x + lf * hs + lr * hc, em.obb.z + lf * hc - lr * hs];
+  private landmarkCells(map: CityMap, kind: string, R: number, maxLr = Infinity) {
+    const lm = map.landmarks.find((l) => l.kind === kind);
+    if (!lm) return null;
+    const N = 2 * R;
+    const hs = Math.sin(lm.obb.heading), hc = Math.cos(lm.obb.heading);
+    const world = (lr: number, lf: number): [number, number] => [lm.obb.x + lf * hs + lr * hc, lm.obb.z + lf * hc - lr * hs];
     const idx = (i: number, j: number) => j * N + i;
-    const state = new Uint8Array(N * N); // 0 unknown, 1 paved, 2 blocked
+    const state = new Uint8Array(N * N); // 0 unknown, 1 filled, 2 blocked
     const open = (i: number, j: number) => {
-      const [x, z] = world(-R + (i + 0.5) * C, -R + (j + 0.5) * C);
+      if (-R + i + 0.5 > maxLr) return false;
+      const [x, z] = world(-R + i + 0.5, -R + j + 0.5);
       return !map.isRoad(x, z) && !map.nearRoad(x, z, SIDEWALK - 0.8);
     };
-    const start = [Math.floor(N / 2), Math.floor(N / 2)];
-    const stack = [start];
-    state[idx(start[0], start[1])] = 1;
+    const stack: Array<[number, number]> = [[R, R]];
+    state[idx(R, R)] = 1;
     while (stack.length) {
       const [i, j] = stack.pop()!;
       for (const [di, dj] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
@@ -524,22 +525,35 @@ export class CityScenery {
         } else state[idx(a, b)] = 2;
       }
     }
+    /** cell (i, j) centre in landmark-local metres */
+    const local = (i: number, j: number): [number, number] => [-R + i + 0.5, -R + j + 0.5];
+    const filled = (i: number, j: number) => i >= 0 && j >= 0 && i < N && j < N && state[idx(i, j)] === 1;
+    return { lm, N, R, world, local, filled };
+  }
+
+  /** One flat mesh at height `y` covering the cells where `keep(i, j)`, rows merged into strips. */
+  private cellSurface(
+    cells: NonNullable<ReturnType<CityScenery['landmarkCells']>>,
+    keep: (i: number, j: number) => boolean,
+    y: number,
+    mat: THREE.Material,
+    uvS: number,
+  ): void {
+    const { N, R, world } = cells;
     const pos: number[] = [];
     const uv: number[] = [];
     const ind: number[] = [];
-    const y = KERB_H + 0.02; // sits on the block's dirt slab
-    const uvS = 1 / 6;
     for (let j = 0; j < N; j++) {
       let i = 0;
       while (i < N) {
-        if (state[idx(i, j)] !== 1) {
+        if (!keep(i, j)) {
           i++;
           continue;
         }
         let e = i;
-        while (e + 1 < N && state[idx(e + 1, j)] === 1) e++;
-        const a = -R + i * C, b = -R + (e + 1) * C; // lr span
-        const f0 = -R + j * C, f1 = f0 + C; // lf span
+        while (e + 1 < N && keep(e + 1, j)) e++;
+        const a = -R + i, b = -R + e + 1; // lr span
+        const f0 = -R + j, f1 = f0 + 1; // lf span
         const v = pos.length / 3;
         for (const [lr, lf] of [[a, f0], [b, f0], [b, f1], [a, f1]]) {
           const [x, z] = world(lr, lf);
@@ -556,13 +570,56 @@ export class CityScenery {
     geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
     geo.setAttribute('normal', new THREE.Float32BufferAttribute(new Array(pos.length).fill(0).map((_, k) => (k % 3 === 1 ? 1 : 0)), 3));
     geo.setIndex(ind);
-    const tex = flagPavingTexture();
-    const mat = new THREE.MeshLambertMaterial({ color: '#efe2c8', map: tex, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
     this.ownedGeos.push(geo);
     this.ownedMats.push(mat);
     const m = new THREE.Mesh(geo, mat);
     m.receiveShadow = true;
     this.group.add(m);
+  }
+
+  /** Flag-paved square filling the open city block round Empress Market (otherwise a bare dirt slab). */
+  private marketSquare(map: CityMap): void {
+    const cells = this.landmarkCells(map, 'empress', 95);
+    if (!cells) return;
+    const mat = new THREE.MeshLambertMaterial({ color: '#efe2c8', map: flagPavingTexture(), polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
+    this.cellSurface(cells, cells.filled, KERB_H + 0.02, mat, 1 / 6);
+  }
+
+  /**
+   * Bagh-e-Jinnah round Frere Hall: mown lawns bounded by the streets (and
+   * 58 m out), gravel walks on the hall's axes and a ring round it, and
+   * shade trees scattered between the walks.
+   */
+  private frereGarden(map: CityMap): void {
+    // Stop at the hall's front street: the garden lies behind and beside it.
+    const fh = map.landmarks.find((l) => l.kind === 'frere_hall');
+    const cells = this.landmarkCells(map, 'frere_hall', 58, fh ? fh.obb.hw + 2 : Infinity);
+    if (!cells) return;
+    const { lm, local, filled } = cells;
+    const { hw, hl } = lm.obb;
+    const walk = (i: number, j: number) => {
+      const [lr, lf] = local(i, j);
+      const ring = Math.max(Math.abs(lr) - hw - 7, Math.abs(lf) - hl - 7);
+      return Math.abs(lf) < 2.2 || Math.abs(lr) < 1.6 || (ring > -2.2 && ring < 0);
+    };
+    const lawn = new THREE.MeshLambertMaterial({ color: '#ffffff', map: lawnTexture(), polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
+    const gravel = new THREE.MeshLambertMaterial({ color: '#e2d4b6', map: dirtTexture(), polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3 });
+    this.cellSurface(cells, (i, j) => filled(i, j) && !walk(i, j), KERB_H + 0.02, lawn, 1 / 8);
+    this.cellSurface(cells, (i, j) => filled(i, j) && walk(i, j), KERB_H + 0.025, gravel, 1 / 3);
+    // Shade trees on a loose grid, clear of the walks and the hall.
+    const rng = new Rng(1865);
+    for (let j = 4; j < cells.N - 4; j += 9) {
+      for (let i = 4; i < cells.N - 4; i += 9) {
+        const ii = i + Math.round(rng.range(-3, 3)), jj = j + Math.round(rng.range(-3, 3));
+        if (!filled(ii, jj) || walk(ii, jj)) continue;
+        // keep a 3 m margin to every non-garden cell (roads, pavements)
+        let ok = true;
+        for (let d = -3; d <= 3 && ok; d += 3) for (let e = -3; e <= 3 && ok; e += 3) if (!filled(ii + d, jj + e)) ok = false;
+        const [lr, lf] = local(ii, jj);
+        if (!ok || (Math.abs(lr) < hw + 4 && Math.abs(lf) < hl + 4)) continue;
+        this.gardenTrees.push(cells.world(lr, lf));
+      }
+    }
   }
 
   private pavements(map: CityMap): void {
@@ -1289,8 +1346,8 @@ export class CityScenery {
 
     const placed: Array<[number, number]> = [];
     const rng = new Rng(31);
-    const add = (x: number, z: number, minGap = 6) => {
-      if (!this.canPlaceOnPavement(map, x, z, 1.0, 1.0, 1.2)) return;
+    const add = (x: number, z: number, minGap = 6, garden = false) => {
+      if (!garden && !this.canPlaceOnPavement(map, x, z, 1.0, 1.0, 1.2)) return;
       for (const [px, pz] of placed) {
         if ((x - px) ** 2 + (z - pz) ** 2 < minGap * minGap) return;
       }
@@ -1306,6 +1363,7 @@ export class CityScenery {
         new THREE.Color().setHSL(rng.range(0.22, 0.28), 0.35, rng.range(0.3, 0.38)),
       );
     };
+    for (const [x, z] of this.gardenTrees) add(x, z, 5, true);
     // Jehangir Park scatter.
     for (const slab of map.slabs) {
       if (slab.kind !== 1) continue;

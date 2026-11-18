@@ -7,6 +7,7 @@ import { archFrameGeo, gableRoofGeo, mergeByMaterial, pointedArchShape } from '.
 import {
   cinemaPosterTexture,
   clockFaceTexture,
+  frereBayTexture,
   colonialVerandahTexture,
   gothicWallTexture,
   mazarFaceTexture,
@@ -1854,6 +1855,15 @@ function buildMazarQuaid(
 // 28. Frere Hall (1865 Venetian-Gothic Limestone Hall, Spire & Bagh-e-Jinnah)
 // ---------------------------------------------------------------------------
 
+/**
+ * Frere Hall (Henry Saint Clair Wilkins, 1863–65), Venetian Gothic in
+ * yellow Karachi limestone banded with red and grey sandstone. Two storeys
+ * of pointed-arch verandahs wrap all four faces (quatrefoils above the
+ * upper arches) under a steep tiled roof with dormers and iron cresting.
+ * The entrance tower rises from a porch through square stages to an
+ * octagonal belfry and spire crowned with an iron cage. It stands on a
+ * grey plinth in the Bagh-e-Jinnah lawns. Street front faces +x.
+ */
 function buildFrereHall(
   group: THREE.Group,
   hw: number,
@@ -1865,67 +1875,212 @@ function buildFrereHall(
   g.position.set(0, KERB_H, 0);
   group.add(g);
 
-  const d = hw * 2;
-  const len = hl * 2;
-  const h = 11.8;
-  const gizri = lam('#dfc282');
-  const redStone = lam('#9e3d2b');
-  const darkSlate = lam('#5e2d24');
-  const lawn = lam('#6fa050');
+  const lime = lam('#dcc283');
+  const red = lam('#a5523a');
+  const grey = lam('#8f8b82');
+  const cream = lam('#efe0b8');
+  const roofMat = lam('#5d4842');
+  const slate = lam('#4f5258');
+  const iron = lam('#26282b');
+  const dark = lam('#2c2219');
+  const lawnMat = lam('#6f9a4e');
+  const pathMat = lam('#d9cdb2');
 
-  // Bagh-e-Jinnah manicured garden terrace & red sandstone plinth
-  mesh(g, new THREE.BoxGeometry(d, 0.4, len), lawn, 0, 0.2, 0, false);
-  mesh(g, new THREE.BoxGeometry(d * 0.78, 1.4, len * 0.84), redStone, -0.8, 0.9, 0, shadow);
-
-  // Main Venetian-Gothic hall body in yellow Gizri limestone
-  const hallW = d * 0.68;
-  const hallL = len * 0.76;
-  mesh(g, new THREE.BoxGeometry(hallW, h, hallL), gizri, -0.8, 1.6 + h / 2, 0, shadow);
-
-  // Ground & upper arched Venetian loggia along the front (+x) and sides
-  const wallTex = tiled(gothicWallTexture(), Math.max(2, Math.round(hallL / 7)), 2);
-  const frontArcade = mesh(
-    g,
-    new THREE.PlaneGeometry(hallL - 0.6, h - 0.8),
-    lam('#f0d89c', wallTex),
-    -0.8 + hallW / 2 + 0.06,
-    1.6 + h / 2,
-    0,
-    false,
-  );
-  frontArcade.rotation.y = Math.PI / 2;
-
-  // Alternating red-and-yellow limestone stringcourses and crenellated cornice
-  for (const y of [5.4, 9.2, 1.6 + h]) {
-    mesh(g, new THREE.BoxGeometry(hallW + 0.4, 0.45, hallL + 0.4), redStone, -0.8, y, 0, false);
+  // ---- Garden: lawn, gravel walk to the porch, flower beds ----
+  const flat = (w: number, d: number, x: number, z: number, mat: THREE.Material, y: number) => {
+    const p = mesh(g, new THREE.PlaneGeometry(w, d), mat, x, y, z, false);
+    p.rotation.x = -Math.PI / 2;
+  };
+  flat(hw * 2, hl * 2, 0, 0, lawnMat, 0.02);
+  flat(hw * 2, 1.6, 0, hl - 0.8, pathMat, 0.03);
+  flat(hw * 2, 1.6, 0, -hl + 0.8, pathMat, 0.03);
+  for (const s of [-1, 1]) {
+    const bed = mesh(g, new THREE.CylinderGeometry(1.4, 1.5, 0.3, 10), lam('#7a4b2e'), hw - 2.6, 0.15, s * 5.2, false);
+    void bed;
+    mesh(g, new THREE.SphereGeometry(1.2, 10, 4, 0, Math.PI * 2, 0, Math.PI / 2).scale(1, 0.35, 1), lam(s > 0 ? '#c2185b' : '#f9a825'), hw - 2.6, 0.3, s * 5.2, false);
   }
 
-  // Steep pitched red-slate roof over the main hall
-  const roofGeo = new THREE.CylinderGeometry(hallW * 0.48, hallW * 0.48, hallL - 0.6, 3);
-  roofGeo.rotateX(Math.PI / 2);
-  roofGeo.rotateZ(Math.PI / 2);
-  roofGeo.scale(1, 0.68, 1);
-  mesh(g, roofGeo, darkSlate, -0.8, 1.6 + h + 2.4, 0, shadow);
+  // ---- Plinth & hall body ----
+  const x0 = -8.6, x1 = 5.4; // hall depth (front face at x1)
+  const zH = Math.min(11.5, hl - 2.5);
+  const hx = (x0 + x1) / 2, hd = x1 - x0, hL = zH * 2;
+  const P = 1.0; // plinth height
+  const WALL = 11.5;
+  mesh(g, new THREE.BoxGeometry(hd + 1.4, P, hL + 1.4), grey, hx, P / 2, 0);
+  mesh(g, new THREE.BoxGeometry(hd + 1.6, 0.15, hL + 1.6), cream, hx, P, 0, false);
+  mesh(g, new THREE.BoxGeometry(hd, WALL, hL), lime, hx, P + WALL / 2, 0);
 
-  // Iconic octagonal Venetian-Gothic bell/clock tower on the north-front corner
-  const tx = -0.8 + hallW * 0.32;
-  const tz = -hallL * 0.32;
-  const tH = 22.5;
-  mesh(g, new THREE.BoxGeometry(4.6, tH, 4.6), gizri, tx, 1.6 + tH / 2, tz, shadow);
-  mesh(g, new THREE.BoxGeometry(5.1, 0.6, 5.1), redStone, tx, 1.6 + tH, tz, false);
-  mesh(g, new THREE.CylinderGeometry(2.1, 2.3, 4.2, 8), gizri, tx, 1.6 + tH + 2.1, tz, shadow);
-  const spire = new THREE.ConeGeometry(2.4, 6.8, 8);
-  mesh(g, spire, darkSlate, tx, 1.6 + tH + 4.2 + 3.4, tz, shadow);
+  const bayMats = new Map<number, THREE.MeshLambertMaterial>();
+  const bayMat = (n: number) => {
+    let m = bayMats.get(n);
+    if (!m) {
+      m = new THREE.MeshLambertMaterial({
+        color: '#ffffff',
+        map: tiled(frereBayTexture(), n, 1),
+        emissive: new THREE.Color('#ffd49a'),
+        emissiveMap: tiled(frereBayTexture(true), n, 1),
+        emissiveIntensity: 0,
+      });
+      litMats.push(m);
+      bayMats.set(n, m);
+    }
+    return m;
+  };
+  const face = (w: number, x: number, z: number, a: number) => {
+    const n = Math.max(1, Math.round(w / 3.2));
+    mesh(g, new THREE.PlaneGeometry(w, WALL), bayMat(n), x + Math.sin(a) * 0.03, P + WALL / 2, z + Math.cos(a) * 0.03, false).rotation.y = a;
+    // Projecting piers at the bay divisions, each with a small pinnacle
+    const ux = Math.cos(a), uz = -Math.sin(a);
+    for (let k = 0; k <= n; k++) {
+      const t = -w / 2 + (k * w) / n;
+      const px = x + Math.sin(a) * 0.25 + ux * t, pz = z + Math.cos(a) * 0.25 + uz * t;
+      mesh(g, new THREE.BoxGeometry(0.55, WALL, 0.55), lime, px, P + WALL / 2, pz, false);
+      mesh(g, new THREE.ConeGeometry(0.34, 1.3, 4).rotateY(Math.PI / 4), cream, px, P + WALL + 0.95, pz, false);
+    }
+  };
+  face(hL, x1, 0, Math.PI / 2);
+  face(hL, x0, 0, -Math.PI / 2);
+  face(hd, hx, zH, 0);
+  face(hd, hx, -zH, Math.PI);
+  // Balcony ledge between storeys, red & cream cornice, parapet
+  mesh(g, new THREE.BoxGeometry(hd + 1.0, 0.3, hL + 1.0), cream, hx, P + 6.35, 0, false);
+  mesh(g, new THREE.BoxGeometry(hd + 0.9, 0.35, hL + 0.9), red, hx, P + WALL - 0.1, 0, false);
+  mesh(g, new THREE.BoxGeometry(hd + 1.2, 0.3, hL + 1.2), cream, hx, P + WALL + 0.2, 0, false);
 
+  // ---- Steep roof with iron ridge cresting, dormers, end gables ----
+  const top = P + WALL + 0.35;
+  const rise = 6.2;
+  const roof = gableRoofGeo(hd + 1.2, rise, hL + 0.4);
+  mesh(g, roof, roofMat, hx, top, 0);
+  for (let z = -zH + 0.6; z <= zH - 0.6; z += 0.9) {
+    mesh(g, new THREE.BoxGeometry(0.05, 0.6, 0.05), iron, hx, top + rise + 0.3, z, false);
+  }
+  mesh(g, new THREE.BoxGeometry(0.08, 0.06, hL), iron, hx, top + rise + 0.6, 0, false);
+  const slope = Math.atan2(rise, (hd + 1.2) / 2);
+  for (const s of [-1, 1]) {
+    for (const dz of [-6.5, 6.5]) {
+      // Gabled dormer sitting on the slope
+      const run = (hd + 1.2) / 2;
+      const dx = hx + s * run * 0.45;
+      const dy = top + rise * 0.55;
+      mesh(g, new THREE.BoxGeometry(1.6, 1.8, 1.8), lime, dx, dy, dz, false);
+      const dg = gableRoofGeo(2.2, 1.1, 2.0);
+      dg.rotateY(Math.PI / 2);
+      mesh(g, dg, roofMat, dx, dy + 0.9, dz, false);
+      const win = mesh(g, new THREE.ShapeGeometry(pointedArchShape(0.42, 1.3) as THREE.Shape), dark, dx + s * 0.81, dy - 0.75, dz, false);
+      win.rotation.y = s * Math.PI / 2;
+    }
+    void slope;
+    // End gable wall with a red quatrefoil roundel and stone coping
+    const gab = new THREE.Shape();
+    gab.moveTo(-hd / 2 - 0.4, 0);
+    gab.lineTo(hd / 2 + 0.4, 0);
+    gab.lineTo(0, rise + 0.2);
+    gab.lineTo(-hd / 2 - 0.4, 0);
+    const gm = mesh(g, new THREE.ExtrudeGeometry(gab, { depth: 0.6, bevelEnabled: false }), lime, hx, top - 0.05, s * (zH - 0.15) - 0.3, false);
+    void gm;
+    const ring = new THREE.Shape();
+    ring.absarc(0, 0, 1.15, 0, Math.PI * 2, false);
+    const hole = new THREE.Path();
+    hole.absarc(0, 0, 0.8, 0, Math.PI * 2, true);
+    ring.holes.push(hole);
+    const rg = mesh(g, new THREE.ExtrudeGeometry(ring, { depth: 0.12, bevelEnabled: false, curveSegments: 10 }), red, hx, top + 2.4, s * (zH + 0.32), false);
+    rg.rotation.y = s > 0 ? 0 : Math.PI;
+    const glass = mesh(g, new THREE.CircleGeometry(0.8, 10), dark, hx, top + 2.4, s * (zH + 0.33), false);
+    glass.rotation.y = s > 0 ? 0 : Math.PI;
+    const run = hd / 2 + 0.6;
+    for (const side of [-1, 1]) {
+      const cope = mesh(g, new THREE.BoxGeometry(Math.hypot(run, rise) + 0.3, 0.3, 0.9), cream, hx + side * run / 2, top + rise / 2 + 0.1, s * (zH + 0.05), false);
+      cope.rotation.z = -side * Math.atan2(rise, run);
+    }
+    mesh(g, new THREE.ConeGeometry(0.35, 1.6, 4).rotateY(Math.PI / 4), cream, hx, top + rise + 0.9, s * (zH + 0.05), false);
+  }
+
+  // ---- Entrance tower: porch, square stages, octagonal belfry, spire, iron cage ----
+  const T = 5.6;
+  const tx = Math.min(hw - T / 2 - 1.6, x1 + 0.4);
+  flat(hw - (tx + T / 2), 4.2, (hw + tx + T / 2) / 2, 0, pathMat, 0.03); // gravel walk to the porch
+  const s1 = P + 6.3; // porch top
+  const s2 = P + 17.0; // square shaft top
+  const s3 = s2 + 5.0; // octagonal belfry top
+  mesh(g, new THREE.BoxGeometry(T, s2 - P, T), lime, tx, (P + s2) / 2, 0);
+  for (const y of [s1, P + 11.5, s2]) {
+    mesh(g, new THREE.BoxGeometry(T + 0.3, 0.35, T + 0.3), red, tx, y, 0, false);
+    mesh(g, new THREE.BoxGeometry(T + 0.2, 0.25, T + 0.2), cream, tx, y + 0.3, 0, false);
+  }
+  // Grey sandstone bands, kept clear of the porch arch and the lancets
+  for (const y of [s1 + 4.3, P + 16.3]) mesh(g, new THREE.BoxGeometry(T + 0.06, 0.28, T + 0.06), grey, tx, y, 0, false);
+  for (let f = 0; f < 4; f++) {
+    const a = (f / 4) * Math.PI * 2 + Math.PI / 2; // f=0 faces the street
+    const ox = Math.sin(a), oz = Math.cos(a);
+    const r = T / 2;
+    if (f !== 2) {
+      // Porch arch through the base (front and both sides)
+      mesh(g, new THREE.ShapeGeometry(pointedArchShape(1.5, 5.0) as THREE.Shape), dark, tx + ox * (r + 0.02), P, oz * (r + 0.02), false).rotation.y = a;
+      mesh(g, archFrameGeo(1.5, 5.0, 0.4, 0.35), red, tx + ox * (r + 0.32), P, oz * (r + 0.32), false).rotation.y = a;
+    }
+    // Paired lancets in the middle stage, a single tall lancet above
+    for (const d of [-0.75, 0.75]) {
+      mesh(g, new THREE.ShapeGeometry(pointedArchShape(0.36, 2.6) as THREE.Shape), dark, tx + ox * (r + 0.02) + Math.cos(a) * d, s1 + 1.2, oz * (r + 0.02) - Math.sin(a) * d, false).rotation.y = a;
+    }
+    mesh(g, new THREE.ShapeGeometry(pointedArchShape(0.5, 3.6) as THREE.Shape), dark, tx + ox * (r + 0.02), P + 12.4, oz * (r + 0.02), false).rotation.y = a;
+    mesh(g, archFrameGeo(0.5, 3.6, 0.22, 0.2), cream, tx + ox * (r + 0.2), P + 12.4, oz * (r + 0.2), false).rotation.y = a;
+  }
+  // Corner pinnacles easing square into octagon
+  for (const cx of [-1, 1]) {
+    for (const cz of [-1, 1]) {
+      mesh(g, new THREE.BoxGeometry(0.7, 1.8, 0.7), lime, tx + cx * (T / 2 - 0.2), s2 + 0.9, cz * (T / 2 - 0.2), false);
+      mesh(g, new THREE.ConeGeometry(0.42, 2.0, 4).rotateY(Math.PI / 4), cream, tx + cx * (T / 2 - 0.2), s2 + 2.8, cz * (T / 2 - 0.2), false);
+    }
+  }
+  const oct = new THREE.CylinderGeometry(2.25, 2.4, s3 - s2, 8).toNonIndexed();
+  oct.computeVertexNormals();
+  mesh(g, oct, lime, tx, (s2 + s3) / 2, 0);
+  for (let f = 0; f < 8; f++) {
+    const a = ((f + 0.5) / 8) * Math.PI * 2;
+    const r = 2.25 * Math.cos(Math.PI / 8) + 0.03;
+    mesh(g, new THREE.ShapeGeometry(pointedArchShape(0.42, 2.8) as THREE.Shape), dark, tx + Math.sin(a) * r, s2 + 1.0, Math.cos(a) * r, false).rotation.y = a;
+  }
+  mesh(g, new THREE.CylinderGeometry(2.6, 2.6, 0.4, 8), red, tx, s3, 0, false);
+  const spire = new THREE.ConeGeometry(2.35, 9.0, 8).toNonIndexed();
+  spire.computeVertexNormals();
+  mesh(g, spire, slate, tx, s3 + 0.2 + 4.5, 0);
+  for (let f = 0; f < 4; f++) {
+    const a = (f / 4) * Math.PI * 2 + Math.PI / 8;
+    mesh(g, new THREE.ConeGeometry(0.5, 1.4, 4).rotateY(Math.PI / 4), cream, tx + Math.sin(a) * 1.7, s3 + 2.0, Math.cos(a) * 1.7, false);
+  }
+  // Iron cage crown: ring, eight bars, cap and finial
+  const cageY = s3 + 0.2 + 9.0 - 1.0;
+  mesh(g, new THREE.TorusGeometry(0.75, 0.05, 4, 12).rotateX(Math.PI / 2), iron, tx, cageY, 0, false);
+  mesh(g, new THREE.TorusGeometry(0.55, 0.05, 4, 12).rotateX(Math.PI / 2), iron, tx, cageY + 1.4, 0, false);
+  for (let k = 0; k < 8; k++) {
+    const a = (k / 8) * Math.PI * 2;
+    const bar = mesh(g, new THREE.BoxGeometry(0.06, 1.45, 0.06), iron, tx + Math.sin(a) * 0.65, cageY + 0.7, Math.cos(a) * 0.65, false);
+    bar.rotation.set(Math.cos(a) * 0.14, 0, -Math.sin(a) * 0.14);
+  }
+  mesh(g, new THREE.ConeGeometry(0.6, 0.8, 8), iron, tx, cageY + 1.8, 0, false);
+  mesh(g, new THREE.CylinderGeometry(0.04, 0.04, 2.0, 4), iron, tx, cageY + 3.0, 0, false);
+  mesh(g, new THREE.SphereGeometry(0.16, 6, 4), lam('#c9a24a'), tx, cageY + 2.25, 0, false);
+
+  // Porch steps
+  for (let k = 0; k < 3; k++) {
+    mesh(g, new THREE.BoxGeometry(1.0, P - k * 0.33, 4.2 - k * 0.3), grey, tx + T / 2 + 0.5 - k * 0.4, (P - k * 0.33) / 2, 0, false);
+  }
+
+  // Name stone on the lawn by the gate
+  const plaqueTex = signTexture(['FRERE HALL · فریئر ہال · 1865', 'BAGH-E-JINNAH · SADEQUAIN GALLERY'], '#7b1f16', '#ffecb3', 768, 128);
   const plaqueMat = new THREE.MeshLambertMaterial({
     color: '#ffffff',
-    map: signTexture(['FRERE HALL · فریئر ہال · 1865', 'BAGH-E-JINNAH · SADEQUAIN GALLERY'], '#7b1f16', '#ffecb3', 768, 128),
+    map: plaqueTex,
     emissive: new THREE.Color('#ffecb3'),
+    emissiveMap: plaqueTex,
     emissiveIntensity: 0,
   });
   litMats.push(plaqueMat);
-  const sign = mesh(g, new THREE.PlaneGeometry(14.5, 1.5), plaqueMat, hw + 0.12, 3.2, 0, false);
-  sign.rotation.y = Math.PI / 2;
+  mesh(g, new THREE.BoxGeometry(0.5, 1.6, 7.6), grey, hw - 0.6, 0.8, -hl + 5.0);
+  mesh(g, new THREE.PlaneGeometry(7.2, 1.0), plaqueMat, hw - 0.34, 1.0, -hl + 5.0, false).rotation.y = Math.PI / 2;
+
+  mergeByMaterial(g, shadow);
 }
 
 // ---------------------------------------------------------------------------
