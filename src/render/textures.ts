@@ -1452,3 +1452,24 @@ export function lawnTexture(): THREE.Texture {
     return finish(c, true);
   });
 }
+
+/** Plain coursed sandstone ashlar with soft tonal variation (tileable). */
+export function ashlarTexture(): THREE.Texture {
+  return cached('ashlar', () => {
+    const [c, ctx] = canvas(128, 128);
+    const rng = new Rng(102);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, 128, 128);
+    for (let r = 0; r < 8; r++) {
+      const off = r % 2 ? 0 : 21;
+      for (let x = -off; x < 128; x += 42) {
+        const v = 228 + rng.next() * 27;
+        ctx.fillStyle = `rgb(${v},${v - 4},${v - 12})`;
+        ctx.fillRect(x + 1, r * 16 + 1, 40, 14);
+      }
+    }
+    ctx.fillStyle = 'rgba(120,95,60,0.35)';
+    for (let r = 0; r <= 8; r++) ctx.fillRect(0, r * 16 - 0.5, 128, 1.2);
+    return finish(c, true);
+  });
+}

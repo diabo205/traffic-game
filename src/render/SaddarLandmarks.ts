@@ -6,7 +6,9 @@ import { buildEmpressMarketAt } from './Landmarks';
 import { archFrameGeo, gableRoofGeo, mergeByMaterial, pointedArchShape } from './landmarkKit';
 import {
   cinemaPosterTexture,
+  ashlarTexture,
   clockFaceTexture,
+  flagPavingTexture,
   frereBayTexture,
   colonialVerandahTexture,
   gothicWallTexture,
@@ -2087,6 +2089,15 @@ function buildFrereHall(
 // 29. Merewether Clock Tower (1892 Victorian Gothic Memorial Clock Tower)
 // ---------------------------------------------------------------------------
 
+/**
+ * Merewether Memorial Tower (James Strachan, 1892): a 102 ft (31 m) Gothic
+ * Revival clock tower in yellow sandstone, in the form of a medieval
+ * Eleanor cross. Buttressed square stages step in as they rise: an arched
+ * base on a stepped plinth, a gabled stage of blind tracery, the clock
+ * stage with four ~7 ft dials under crocketed gablets at about 21 m, an
+ * open pinnacled lantern and a crocketed spire with a finial. Floodlit at
+ * night. Stands on a railed, flag-paved island. Street front faces +x.
+ */
 function buildMerewetherTower(
   group: THREE.Group,
   hw: number,
@@ -2098,80 +2109,172 @@ function buildMerewetherTower(
   g.position.set(0, KERB_H, 0);
   group.add(g);
 
-  const d = hw * 2;
-  const len = hl * 2;
-  const stone = lam('#dcc08a');
-  const trim = lam('#a8844c');
-  const roofCol = lam('#6e472b');
+  // Floodlit stone: a faint warm emissive that only shows after dark.
+  const lit = (hex: string, glow: string, map?: THREE.Texture) => {
+    const m = lam(hex, map);
+    m.emissive.set(glow);
+    litMats.push(m);
+    return m;
+  };
+  const stone = lit('#d8bd85', '#6b5530', tiled(ashlarTexture(), 2, 3));
+  const dressed = lit('#ecdcb4', '#7a6844');
+  const shade = lam('#b0925c');
+  const slate = lam('#6b5a48');
+  const iron = lam('#26282b');
+  const dark = lam('#2a2018');
+  const paving = lam('#cfc3a8', tiled(flagPavingTexture(), 3, 3));
+  const lawnMat = lam('#6f9a4e');
 
-  // Ornamental octagonal stone courtyard & red-trimmed railings
-  mesh(g, new THREE.BoxGeometry(d * 0.88, 0.8, len * 0.88), trim, 0, 0.4, 0, shadow);
-  mesh(g, new THREE.BoxGeometry(9.6, 2.4, 9.6), stone, 0, 1.6, 0, shadow);
+  // ---- Island: paving, lawn beds, iron railing ----
+  const flat = (w: number, d: number, x: number, z: number, mat: THREE.Material, y: number) => {
+    const p = mesh(g, new THREE.PlaneGeometry(w, d), mat, x, y, z, false);
+    p.rotation.x = -Math.PI / 2;
+  };
+  flat(hw * 2, hl * 2, 0, 0, paving, 0.02);
+  const R = Math.min(hw, hl) - 1.2; // railing half-size
+  for (const s of [-1, 1]) {
+    flat(R * 2 - 1, 1.8, 0, s * (R - 1.6), lawnMat, 0.04);
+    flat(1.8, R * 2 - 4.6, s * (R - 1.6), 0, lawnMat, 0.04);
+  }
+  for (let f = 0; f < 4; f++) {
+    const a = (f / 4) * Math.PI * 2;
+    const ox = Math.sin(a), oz = Math.cos(a);
+    const ux = Math.cos(a), uz = -Math.sin(a);
+    mesh(g, new THREE.BoxGeometry(R * 2, 0.45, 0.35).rotateY(a), shade, ox * R, 0.22, oz * R, false);
+    mesh(g, new THREE.BoxGeometry(R * 2, 0.05, 0.05).rotateY(a), iron, ox * R, 1.25, oz * R, false);
+    for (let t = -R + 0.25; t < R; t += 0.3) {
+      if (f === 1 && Math.abs(t) < 1.2) continue; // gate on the street side
+      mesh(g, new THREE.BoxGeometry(0.04, 0.85, 0.04), iron, ox * R + ux * t, 0.85, oz * R + uz * t, false);
+    }
+    // Corner piers with lamp standards
+    const cx = (ox + ux) * R, cz = (oz + uz) * R;
+    mesh(g, new THREE.BoxGeometry(0.6, 1.2, 0.6), stone, cx, 0.6, cz);
+    mesh(g, new THREE.CylinderGeometry(0.06, 0.08, 3.0, 6), iron, cx, 2.7, cz, false);
+    mesh(g, new THREE.BoxGeometry(0.34, 0.5, 0.34), lit('#fff3d0', '#ffd27a'), cx, 4.35, cz, false);
+    mesh(g, new THREE.ConeGeometry(0.3, 0.3, 4).rotateY(Math.PI / 4), iron, cx, 4.75, cz, false);
+  }
 
-  // Cruciform buttressed lower shaft, gothic lancet stage, and clock stage
-  const tH = 25.0;
-  const wallTex = tiled(gothicWallTexture(), 1, 3);
-  mesh(g, new THREE.BoxGeometry(5.6, tH, 5.6), lam('#e5cb97', wallTex), 0, 2.8 + tH / 2, 0, shadow);
-  // Corner angle buttresses
-  for (const sx of [-1, 1]) {
-    for (const sz of [-1, 1]) {
-      mesh(g, new THREE.BoxGeometry(1.1, tH * 0.78, 1.1), trim, sx * 2.75, 2.8 + (tH * 0.78) / 2, sz * 2.75, shadow);
-      mesh(g, new THREE.ConeGeometry(0.75, 2.6, 4), roofCol, sx * 2.75, 2.8 + tH * 0.78 + 1.3, sz * 2.75, false);
+  // ---- Stepped plinth ----
+  const B = Math.min(9.6, R * 2 - 4.5); // base stage width
+  for (let k = 0; k < 3; k++) {
+    const w = B + 2.4 - k * 0.8;
+    mesh(g, new THREE.BoxGeometry(w, 0.3, w), k % 2 ? dressed : stone, 0, 0.15 + k * 0.3, 0, false);
+  }
+  const y0 = 0.9;
+
+  /** Square stage with clasping corner buttresses topped by pinnacles. */
+  const stage = (w: number, h: number, y: number, butt: number, pin: number) => {
+    mesh(g, new THREE.BoxGeometry(w, h, w), stone, 0, y + h / 2, 0);
+    mesh(g, new THREE.BoxGeometry(w + 0.35, 0.3, w + 0.35), dressed, 0, y + h - 0.05, 0, false);
+    for (const cx of [-1, 1]) {
+      for (const cz of [-1, 1]) {
+        const bx = cx * (w / 2), bz = cz * (w / 2);
+        mesh(g, new THREE.BoxGeometry(butt, h * 0.55, butt), stone, bx, y + (h * 0.55) / 2, bz);
+        mesh(g, new THREE.BoxGeometry(butt * 0.75, h * 0.45 + pin * 0.3, butt * 0.75), stone, bx, y + h * 0.55 + (h * 0.45 + pin * 0.3) / 2, bz);
+        // Weathering offset between the two buttress steps
+        mesh(g, new THREE.ConeGeometry(butt * 0.72, 0.45, 4).rotateY(Math.PI / 4), dressed, bx, y + h * 0.55 + 0.15, bz, false);
+        mesh(g, new THREE.ConeGeometry(butt * 0.5, pin, 4).rotateY(Math.PI / 4), dressed, bx, y + h + pin * 0.3 + pin / 2, bz, false);
+        for (let c = 0; c < 2; c++) {
+          // Crockets on the pinnacles
+          mesh(g, new THREE.ConeGeometry(0.08, 0.22, 4), dressed, bx + butt * 0.28, y + h + pin * 0.3 + pin * (0.25 + c * 0.3), bz + butt * 0.28, false);
+        }
+      }
+    }
+  };
+  /** A crocketed gablet over each face of a stage. */
+  const gablets = (w: number, y: number, rise: number) => {
+    for (let f = 0; f < 4; f++) {
+      const a = (f / 4) * Math.PI * 2;
+      const sh = new THREE.Shape();
+      sh.moveTo(-w / 2 + 0.3, 0);
+      sh.lineTo(w / 2 - 0.3, 0);
+      sh.lineTo(0, rise);
+      sh.lineTo(-w / 2 + 0.3, 0);
+      mesh(g, new THREE.ExtrudeGeometry(sh, { depth: 0.35, bevelEnabled: false }), stone, Math.sin(a) * (w / 2 - 0.2), y, Math.cos(a) * (w / 2 - 0.2), false).rotation.y = a;
+      mesh(g, new THREE.ConeGeometry(0.16, 0.6, 4), dressed, Math.sin(a) * (w / 2 + 0.05), y + rise + 0.25, Math.cos(a) * (w / 2 + 0.05), false);
+    }
+  };
+  /** Pointed openings (dark) with moulded hoods on all four faces. */
+  const openings = (w: number, y: number, ahw: number, ah: number, n: number, deep: boolean) => {
+    for (let f = 0; f < 4; f++) {
+      const a = (f / 4) * Math.PI * 2;
+      const ox = Math.sin(a), oz = Math.cos(a), ux = Math.cos(a), uz = -Math.sin(a);
+      for (let k = 0; k < n; k++) {
+        const t = n === 1 ? 0 : (k - (n - 1) / 2) * (ahw * 2 + 0.35);
+        const r = w / 2 + 0.03;
+        mesh(g, new THREE.ShapeGeometry(pointedArchShape(ahw, ah) as THREE.Shape), deep ? dark : shade, ox * r + ux * t, y, oz * r + uz * t, false).rotation.y = a;
+        mesh(g, archFrameGeo(ahw, ah, 0.16, 0.22), dressed, ox * (r + 0.2) + ux * t, y, oz * (r + 0.2) + uz * t, false).rotation.y = a;
+      }
+    }
+  };
+
+  // Stage 1: arched base with inscription panels
+  const h1 = 8.2;
+  stage(B, h1, y0, 1.3, 2.0);
+  openings(B, y0 + 0.4, 1.7, 5.6, 1, true);
+  const plaqueTex = signTexture(['MEREWETHER MEMORIAL · 1892', 'میری ویدر ٹاور'], '#4e342e', '#ffecb3', 512, 128);
+  const plaque = new THREE.MeshLambertMaterial({ color: '#ffffff', map: plaqueTex, emissive: new THREE.Color('#ffecb3'), emissiveMap: plaqueTex, emissiveIntensity: 0 });
+  litMats.push(plaque);
+  for (let f = 0; f < 4; f++) {
+    const a = (f / 4) * Math.PI * 2;
+    mesh(g, new THREE.PlaneGeometry(3.4, 0.85), plaque, Math.sin(a) * (B / 2 + 0.04), y0 + 6.9, Math.cos(a) * (B / 2 + 0.04), false).rotation.y = a;
+  }
+  gablets(B, y0 + h1 - 0.1, 1.6);
+
+  // Stage 2: narrower, paired blind lancets
+  const W2 = B * 0.7, h2 = 6.4, y2 = y0 + h1;
+  stage(W2, h2, y2, 0.95, 1.6);
+  openings(W2, y2 + 1.0, 0.55, 3.9, 2, false);
+  gablets(W2, y2 + h2 - 0.1, 1.3);
+
+  // Stage 3: clock stage, four ~2.1 m dials at about 21 m
+  const W3 = W2 * 0.82, h3 = 5.6, y3 = y2 + h2;
+  stage(W3, h3, y3, 0.8, 1.4);
+  const clockTex = clockFaceTexture();
+  const clock = new THREE.MeshLambertMaterial({ color: '#ffffff', map: clockTex, emissiveMap: clockTex, emissive: new THREE.Color('#fff2c4'), emissiveIntensity: 0 });
+  litMats.push(clock);
+  const cy = y3 + h3 * 0.5;
+  for (let f = 0; f < 4; f++) {
+    const a = (f / 4) * Math.PI * 2;
+    const r = W3 / 2 + 0.06;
+    mesh(g, new THREE.CircleGeometry(1.08, 24), clock, Math.sin(a) * r, cy, Math.cos(a) * r, false).rotation.y = a;
+    mesh(g, new THREE.RingGeometry(1.08, 1.32, 24), dressed, Math.sin(a) * (r + 0.01), cy, Math.cos(a) * (r + 0.01), false).rotation.y = a;
+  }
+  gablets(W3, y3 + h3 - 0.1, 1.6);
+
+  // Stage 4: open lantern of slender shafts with a pinnacled corona
+  const W4 = W3 * 0.72, h4 = 3.0, y4 = y3 + h3;
+  mesh(g, new THREE.BoxGeometry(W4 - 0.9, h4, W4 - 0.9), dark, 0, y4 + h4 / 2, 0);
+  for (const cx of [-1, 1]) {
+    for (const cz of [-1, 1]) {
+      mesh(g, new THREE.BoxGeometry(0.5, h4, 0.5), stone, cx * (W4 / 2 - 0.25), y4 + h4 / 2, cz * (W4 / 2 - 0.25));
+      mesh(g, new THREE.ConeGeometry(0.3, 1.5, 4).rotateY(Math.PI / 4), dressed, cx * (W4 / 2 - 0.25), y4 + h4 + 0.95, cz * (W4 / 2 - 0.25), false);
     }
   }
-
-  // Decorative stone cornices dividing the 4 Gothic stages
-  for (const y of [9.0, 15.5, 21.8, 27.8]) {
-    mesh(g, new THREE.BoxGeometry(6.5, 0.65, 6.5), trim, 0, y, 0, false);
+  for (let f = 0; f < 4; f++) {
+    const a = (f / 4) * Math.PI * 2;
+    mesh(g, archFrameGeo(W4 / 2 - 0.6, h4 - 0.4, 0.18, 0.3), stone, Math.sin(a) * (W4 / 2), y4, Math.cos(a) * (W4 / 2), false).rotation.y = a;
   }
+  mesh(g, new THREE.BoxGeometry(W4 + 0.3, 0.3, W4 + 0.3), dressed, 0, y4 + h4 + 0.15, 0, false);
 
-  // 4 illuminated Victorian clock faces
-  const cTex = clockFaceTexture();
-  const clockMat = new THREE.MeshLambertMaterial({
-    color: '#ffffff',
-    map: cTex,
-    emissiveMap: cTex,
-    emissive: new THREE.Color('#fff2c4'),
-    emissiveIntensity: 0,
-  });
-  litMats.push(clockMat);
-  for (let i = 0; i < 4; i++) {
-    const a = (i / 4) * Math.PI * 2;
-    const cf = mesh(
-      g,
-      new THREE.PlaneGeometry(3.1, 3.1),
-      clockMat,
-      Math.sin(a) * 2.88,
-      24.8,
-      Math.cos(a) * 2.88,
-      false,
-    );
-    cf.rotation.y = a;
-  }
-
-  // Open Gothic belfry canopy & tall pointed spire with 4 corner spirelets
-  const topY = 27.8;
-  for (const sx of [-2.1, 2.1]) {
-    for (const sz of [-2.1, 2.1]) {
-      mesh(g, new THREE.BoxGeometry(0.85, 4.4, 0.85), stone, sx, topY + 2.2, sz, shadow);
-      mesh(g, new THREE.ConeGeometry(0.6, 2.4, 4), roofCol, sx, topY + 5.6, sz, false);
+  // Crocketed octagonal spire to ~31 m, ball and vane finial
+  const sy = y4 + h4 + 0.3;
+  const spireH = Math.max(3, 31 + y0 - 0.9 - sy - 1.2);
+  const sp = new THREE.ConeGeometry(W4 * 0.48, spireH, 8).toNonIndexed();
+  sp.computeVertexNormals();
+  mesh(g, sp, slate, 0, sy + spireH / 2, 0);
+  for (let k = 0; k < 8; k++) {
+    const a = ((k + 0.5) / 8) * Math.PI * 2;
+    for (const t of [0.25, 0.5, 0.72]) {
+      const r = W4 * 0.48 * (1 - t) + 0.05;
+      mesh(g, new THREE.ConeGeometry(0.09, 0.3, 4), dressed, Math.sin(a) * r, sy + spireH * t, Math.cos(a) * r, false);
     }
   }
-  mesh(g, new THREE.BoxGeometry(5.8, 0.7, 5.8), trim, 0, topY + 4.6, 0, false);
-  const spire = new THREE.ConeGeometry(3.4, 8.8, 4);
-  spire.rotateY(Math.PI / 4);
-  mesh(g, spire, roofCol, 0, topY + 5.0 + 4.4, 0, shadow);
+  mesh(g, new THREE.SphereGeometry(0.22, 8, 6), lam('#c9a24a'), 0, sy + spireH + 0.15, 0, false);
+  mesh(g, new THREE.CylinderGeometry(0.035, 0.035, 1.1, 4), iron, 0, sy + spireH + 0.7, 0, false);
+  mesh(g, new THREE.BoxGeometry(0.7, 0.2, 0.03), iron, 0.2, sy + spireH + 1.05, 0, false);
 
-  const sign = mesh(
-    g,
-    new THREE.PlaneGeometry(13.5, 1.45),
-    lam('#ffffff', signTexture(['MEREWETHER CLOCK TOWER · میری ویدر ٹاور', 'M.A. JINNAH RD · I.I. CHUNDRIGAR RD · 1892'], '#4e342e', '#ffecb3', 768, 128)),
-    hw + 0.12,
-    3.2,
-    0,
-    false,
-  );
-  sign.rotation.y = Math.PI / 2;
+  mergeByMaterial(g, shadow);
 }
 
 // ---------------------------------------------------------------------------
