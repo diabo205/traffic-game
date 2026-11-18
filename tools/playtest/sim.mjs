@@ -16,6 +16,7 @@ import { createServer } from 'vite';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import { createCityBot, createRouteBot } from './bot.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const args = process.argv.slice(2);
@@ -43,6 +44,8 @@ const SCENARIOS = {
   launch: { mode: 'city', about: 'Hold gas+brake at standstill 0.6 s, release brake (launch boost).', segments: [seg(0.6, { throttle: 1, brake: 1 }), seg(4, { throttle: 1, steer: 'auto' })] },
   'reverse-flip': { mode: 'city', about: 'Drive forward, brake to stop, hold brake (does it reverse cleanly?), then forward again.', segments: [seg(3, { throttle: 1, steer: 'auto' }), seg(3, { brake: 1 }), seg(2, { throttle: 1, steer: 'auto' })] },
   'traffic-run': { mode: 'route', about: 'Full gas down the route with lane autopilot for 60 s — how much traffic/hazards you eat.', segments: [seg(60, { throttle: 1, steer: 'auto' })] },
+  'route-bot': { mode: 'route', about: 'Smart dodging Route Run bot for up to 220 s (full route completion probe).', segments: [seg(220, { bot: true })] },
+  'city-bot': { mode: 'city', about: 'Smart Saddar taxi bot for 120 s (follows navPath, picks up & drops off fares).', segments: [seg(120, { bot: true })] },
   'chaos-mash': { mode: 'city', about: 'Random input mashing for 40 s (seeded): looks for NaNs, tunnelling, soft-locks.', chaos: 40, segments: [] },
 };
 
@@ -113,6 +116,7 @@ function autoSteer(world, mode, road) {
 function run(world, segments, mode, road, trace) {
   const DT = 1 / 60;
   const p = world.player;
+  const botStep = mode === 'city' ? createCityBot() : createRouteBot(road);
   world.start();
   world.drainEvents();
   const events = {};
@@ -128,8 +132,10 @@ function run(world, segments, mode, road, trace) {
   for (const s of segments) {
     const n = Math.round(s.t * 60);
     for (let i = 0; i < n; i++) {
-      const steer = s.steer === 'auto' ? autoSteer(world, mode, road) : s.steer;
-      const input = { throttle: s.throttle, brake: s.brake, steer, horn: !!s.horn, dipper: false };
+      if (s.bot && world.phase !== 'running') break;
+      const input = s.bot
+        ? botStep(world)
+        : { throttle: s.throttle, brake: s.brake, steer: s.steer === 'auto' ? autoSteer(world, mode, road) : s.steer, horn: !!s.horn, dipper: false };
       const v0 = p.speed;
       world.step(input);
       t += DT;

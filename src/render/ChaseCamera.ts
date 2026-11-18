@@ -57,8 +57,13 @@ export class ChaseCamera {
   baseFov = 62;
   /** Player setting: 1 = near, >1 pulls the camera further back. */
   zoom = 1;
-  /** Vehicle scale multiplier (1 for Alto/rickshaw, >1 for tall minibus). */
-  vehicleScale = 1;
+  /** Per-vehicle camera framing multipliers (set by Renderer for Alto / Rickshaw / W-11). */
+  distScale = 1;
+  heightScale = 1;
+  lookHeight = 1.05;
+  aheadScale = 1;
+  /** Minimum horizontal clearance from vehicle center for camera clipping. */
+  minClipDist = 2.1;
   /** Extra degrees of FOV at full speed. */
   speedFov = 14;
 
@@ -113,8 +118,8 @@ export class ChaseCamera {
 
     // ---- Desired position: dolly-compensated FOV + steady reverse sightline ------------
     const revPush = reversing ? 1.15 : 1;
-    const dist = Math.max(3.6, (this.distance - ratio * 0.28) * this.zoom * this.vehicleScale * revPush);
-    const height = (this.height - ratio * 0.22 + (reversing ? 0.45 : 0)) * (1 + (this.zoom - 1) * 0.8) * (1 + (this.vehicleScale - 1) * 0.7);
+    const dist = Math.max(3.6, (this.distance - ratio * 0.28) * this.zoom * this.distScale * revPush);
+    const height = (this.height - ratio * 0.22 + (reversing ? 0.45 : 0)) * (1 + (this.zoom - 1) * 0.8) * this.heightScale;
     this.desired.set(
       target.x - Math.sin(this.yaw) * dist,
       target.y + height,
@@ -157,8 +162,8 @@ export class ChaseCamera {
     this.pos.y = Math.max(this.pos.y, target.y + 0.9);
 
     // Look ahead of the car, further at speed (or closer when reversing).
-    const ahead = reversing ? 3 : 6 + ratio * 4;
-    this.lookAhead.set(target.x + Math.sin(this.yaw) * ahead, target.y + 1.05 * this.vehicleScale, target.z - Math.cos(this.yaw) * ahead);
+    const ahead = (reversing ? 3 : 6 + ratio * 4) * this.aheadScale;
+    this.lookAhead.set(target.x + Math.sin(this.yaw) * ahead, target.y + this.lookHeight, target.z - Math.cos(this.yaw) * ahead);
     this.look.lerp(this.lookAhead, 1 - Math.exp(-dt * 12));
 
     // ---- Shake ------------------------------------------------------------------------------
