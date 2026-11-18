@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Landmark Viewer</title>
+    <style>
+      html, body { margin: 0; height: 100%; background: #d3d5cc; overflow: hidden; }
+      #hud { position: fixed; left: 8px; top: 8px; font: 600 13px system-ui, sans-serif; color: #1b1b1b;
+             background: #ffffffcc; padding: 6px 8px; border-radius: 6px; }
+      #hud select { font: inherit; }
+    </style>
+  </head>
+  <body>
+    <div id="hud"></div>
+    <script type="module" src="/src/dev/landmarkViewer.ts"></script>
+  </body>
+</html>

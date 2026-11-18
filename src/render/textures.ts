@@ -925,118 +925,173 @@ export function tollBoardTexture(): THREE.Texture {
 // Saddar Free-Roam Landmark Textures
 // ---------------------------------------------------------------------------
 
-/** Gothic Revival front facade of St. Patrick's Cathedral: rose window + triple arched portal. */
-export function stPatricksFrontTexture(): THREE.Texture {
-  return cached('stPatricksFront', () => {
-    const [c, ctx] = canvas(256, 256);
-    ctx.fillStyle = '#d8b77c';
-    ctx.fillRect(0, 0, 256, 256);
-    // Stone courses
-    ctx.strokeStyle = 'rgba(110,75,38,0.32)';
-    ctx.lineWidth = 1;
-    for (let y = 0; y < 256; y += 10) {
-      ctx.beginPath();
-      ctx.moveTo(0, y);
-      ctx.lineTo(256, y);
+/**
+ * St. Patrick's Cathedral west front (between the towers): yellow Gizri
+ * limestone ashlar, triple moulded portals, a great two-light traceried
+ * window with a quatrefoil head, and a small quatrefoil in the gable zone.
+ * `glow` returns the matching night emissive mask (glass only, rest black).
+ */
+export function stPatricksFrontTexture(glow = false): THREE.Texture {
+  return cached(`stPatricksFront:${glow}`, () => {
+    const W = 512;
+    const [c, ctx] = canvas(W, W);
+    const stone = glow ? '#000000' : '#dcc28a';
+    const dressed = glow ? '#000000' : '#eadbb4';
+    const shade = glow ? '#000000' : '#a88d58';
+    ctx.fillStyle = stone;
+    ctx.fillRect(0, 0, W, W);
+    if (!glow) {
+      const rng = new Rng(41);
+      for (let y = 0; y < W; y += 16) {
+        ctx.fillStyle = 'rgba(120,88,45,0.22)';
+        ctx.fillRect(0, y, W, 1.5);
+        const off = (y / 16) % 2 ? 0 : 22;
+        for (let x = off; x < W; x += 44) ctx.fillRect(x, y, 1.5, 16);
+        for (let i = 0; i < 6; i++) {
+          ctx.fillStyle = `rgba(${rng.next() < 0.5 ? '255,245,215' : '140,105,60'},0.10)`;
+          ctx.fillRect(rng.next() * W, y + 2, 20 + rng.next() * 30, 12);
+        }
+      }
+      // Plinth and string courses
+      ctx.fillStyle = shade;
+      ctx.fillRect(0, W - 22, W, 22);
+      ctx.fillStyle = dressed;
+      ctx.fillRect(0, W - 26, W, 5);
+      ctx.fillRect(0, 262, W, 9);
+      ctx.fillStyle = shade;
+      ctx.fillRect(0, 271, W, 3);
+    }
+    const glass = ['#1e5fb4', '#b3261e', '#e9b42c', '#2f7d3b', '#7b3fa0', '#1e5fb4'];
+    const leaded = (x0: number, y0: number, w: number, h: number, seed: number) => {
+      for (let y = y0; y < y0 + h; y += 12) {
+        for (let x = x0; x < x0 + w; x += 10) {
+          ctx.fillStyle = glass[(seed + ((x / 10) | 0) + ((y / 12) | 0) * 2) % glass.length];
+          ctx.fillRect(x + 1, y + 1, 8, 10);
+        }
+      }
+    };
+    // Great west window: pointed arch with two lancets + quatrefoil head
+    const wcx = W / 2, wBase = 250, wHw = 82, wH = 225;
+    ctx.fillStyle = dressed;
+    archPath(ctx, wcx, wBase + 6, wHw + 12, wH + 14);
+    ctx.fill();
+    ctx.fillStyle = '#1b1a20';
+    archPath(ctx, wcx, wBase, wHw, wH);
+    ctx.fill();
+    ctx.save();
+    archPath(ctx, wcx, wBase, wHw - 4, wH - 4);
+    ctx.clip();
+    leaded(wcx - wHw, wBase - wH, wHw * 2, wH, 0);
+    ctx.restore();
+    // Tracery: mullion, two sub-arches, quatrefoil
+    ctx.strokeStyle = dressed;
+    ctx.lineWidth = 7;
+    ctx.beginPath();
+    ctx.moveTo(wcx, wBase);
+    ctx.lineTo(wcx, wBase - 120);
+    ctx.stroke();
+    ctx.lineWidth = 5;
+    for (const s of [-1, 1]) {
+      archPath(ctx, wcx + s * wHw * 0.5, wBase - 60, wHw * 0.5 - 3, 100);
       ctx.stroke();
     }
-    // Terracotta / red-sandstone Gothic trim bands
-    ctx.fillStyle = '#9e4733';
-    ctx.fillRect(0, 148, 256, 6);
-    ctx.fillRect(16, 0, 10, 256);
-    ctx.fillRect(230, 0, 10, 256);
-
-    // Grand Rose Window in the upper centre
-    const rcx = 128, rcy = 76, rr = 46;
-    ctx.fillStyle = '#9e4733';
-    ctx.beginPath();
-    ctx.arc(rcx, rcy, rr + 6, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = '#1f1c24';
-    ctx.beginPath();
-    ctx.arc(rcx, rcy, rr, 0, Math.PI * 2);
-    ctx.fill();
-    const glassCols = ['#d32f2f', '#1976d2', '#fbc02d', '#388e3c', '#8e24aa', '#f57c00'];
-    for (let i = 0; i < 12; i++) {
-      const a0 = (i / 12) * Math.PI * 2;
-      const a1 = ((i + 0.82) / 12) * Math.PI * 2;
-      ctx.fillStyle = glassCols[i % glassCols.length];
+    const qy = wBase - 168, qr = 17;
+    for (let i = 0; i < 4; i++) {
+      const a = (i / 4) * Math.PI * 2 + Math.PI / 4;
       ctx.beginPath();
-      ctx.moveTo(rcx, rcy);
-      ctx.arc(rcx, rcy, rr - 4, a0, a1);
-      ctx.closePath();
-      ctx.fill();
+      ctx.arc(wcx + Math.cos(a) * qr, qy + Math.sin(a) * qr, qr, 0, Math.PI * 2);
+      ctx.stroke();
     }
-    ctx.fillStyle = '#ffeb3b';
-    ctx.beginPath();
-    ctx.arc(rcx, rcy, 12, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = '#d8b77c';
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.arc(rcx, rcy, rr * 0.58, 0, Math.PI * 2);
-    ctx.stroke();
-
-    // Triple pointed-arch entrance portals at the bottom
+    // Side lancets above the side portals
+    for (const s of [-1, 1]) {
+      const lx = wcx + s * 170;
+      ctx.fillStyle = dressed;
+      archPath(ctx, lx, 246, 26, 150);
+      ctx.fill();
+      ctx.fillStyle = '#1b1a20';
+      archPath(ctx, lx, 240, 19, 138);
+      ctx.fill();
+      ctx.save();
+      archPath(ctx, lx, 240, 17, 134);
+      ctx.clip();
+      leaded(lx - 20, 100, 40, 140, 3);
+      ctx.restore();
+    }
+    // Triple moulded portals (doors stay dark at night)
     const portals: ReadonlyArray<[number, number, number]> = [
-      [62, 24, 78],
-      [128, 34, 96],
-      [194, 24, 78],
+      [wcx - 170, 40, 150],
+      [wcx, 58, 200],
+      [wcx + 170, 40, 150],
     ];
     for (const [px, hw, h] of portals) {
-      ctx.fillStyle = '#9e4733';
-      archPath(ctx, px, 256, hw + 5, h + 6);
+      for (let k = 3; k >= 1; k--) {
+        ctx.fillStyle = glow ? '#000' : k % 2 ? dressed : shade;
+        archPath(ctx, px, W - 22, hw + k * 7, h + k * 8);
+        ctx.fill();
+      }
+      ctx.fillStyle = glow ? '#000' : '#4a2c1a';
+      archPath(ctx, px, W - 22, hw, h);
       ctx.fill();
-      ctx.fillStyle = '#3b2416';
-      archPath(ctx, px, 256, hw, h);
-      ctx.fill();
-      ctx.strokeStyle = '#d8b77c';
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.moveTo(px, 256 - h + 10);
-      ctx.lineTo(px, 256);
-      ctx.stroke();
+      if (!glow) {
+        // Tympanum panel + door planks
+        ctx.fillStyle = '#c9ad74';
+        archPath(ctx, px, W - 22 - h * 0.62, hw, h * 0.38);
+        ctx.fill();
+        ctx.fillStyle = 'rgba(0,0,0,0.25)';
+        for (let x = px - hw + 6; x < px + hw; x += 9) ctx.fillRect(x, W - 22 - h * 0.6, 2, h * 0.6);
+        ctx.fillStyle = '#b38a3a';
+        ctx.fillRect(px - 2, W - 22 - h * 0.6, 4, h * 0.6);
+      }
     }
     return finish(c);
   });
 }
 
-/** Tiled stained-glass lancet windows + Gizri stone buttresses for St. Patrick's nave & towers. */
-export function stainedLancetTexture(): THREE.Texture {
-  return cached('stainedLancet', () => {
-    const [c, ctx] = canvas(256, 256);
-    ctx.fillStyle = '#d8b77c';
-    ctx.fillRect(0, 0, 256, 256);
-    ctx.strokeStyle = 'rgba(110,75,38,0.3)';
-    for (let y = 0; y < 256; y += 12) {
-      ctx.beginPath();
-      ctx.moveTo(0, y);
-      ctx.lineTo(256, y);
-      ctx.stroke();
-    }
-    // Buttress piers
-    ctx.fillStyle = '#bfa065';
-    ctx.fillRect(0, 0, 18, 256);
-    ctx.fillRect(119, 0, 18, 256);
-    ctx.fillRect(238, 0, 18, 256);
-    const cols = ['#1565c0', '#c62828', '#f9a825', '#2e7d32'];
-    for (const [idx, cx] of [[0, 68], [1, 188]] as const) {
-      ctx.fillStyle = '#9e4733';
-      archPath(ctx, cx, 214, 34, 168);
-      ctx.fill();
-      ctx.fillStyle = '#221f26';
-      archPath(ctx, cx, 210, 27, 156);
-      ctx.fill();
-      // Stained glass diamond panes
-      for (let y = 78; y < 204; y += 18) {
-        ctx.fillStyle = cols[(idx + (y / 18 | 0)) % cols.length];
-        ctx.fillRect(cx - 20, y, 17, 14);
-        ctx.fillStyle = cols[(idx + (y / 18 | 0) + 2) % cols.length];
-        ctx.fillRect(cx + 3, y, 17, 14);
+/**
+ * One nave/aisle bay of St. Patrick's: limestone wall, a stained-glass
+ * pointed lancet with hood moulding. Tile horizontally, one bay per repeat.
+ * `glow` = night emissive mask.
+ */
+export function stainedLancetTexture(glow = false): THREE.Texture {
+  return cached(`stainedLancet:${glow}`, () => {
+    const [c, ctx] = canvas(128, 256);
+    ctx.fillStyle = glow ? '#000' : '#dcc28a';
+    ctx.fillRect(0, 0, 128, 256);
+    if (!glow) {
+      ctx.fillStyle = 'rgba(120,88,45,0.22)';
+      for (let y = 0; y < 256; y += 14) {
+        ctx.fillRect(0, y, 128, 1.5);
+        const off = (y / 14) % 2 ? 0 : 20;
+        for (let x = off; x < 128; x += 40) ctx.fillRect(x, y, 1.5, 14);
       }
-      ctx.fillStyle = '#d8b77c';
-      ctx.fillRect(cx - 2, 62, 4, 148);
+      ctx.fillStyle = '#eadbb4';
+      ctx.fillRect(0, 226, 128, 6); // sill course
+      ctx.fillStyle = '#eadbb4';
+      archPath(ctx, 64, 222, 34, 196); // hood moulding
+      ctx.fill();
     }
+    ctx.fillStyle = '#1b1a20';
+    archPath(ctx, 64, 218, 27, 186);
+    ctx.fill();
+    const cols = ['#1e5fb4', '#b3261e', '#e9b42c', '#2f7d3b', '#7b3fa0'];
+    ctx.save();
+    archPath(ctx, 64, 218, 24, 180);
+    ctx.clip();
+    for (let y = 30; y < 220; y += 13) {
+      for (let x = 38; x < 92; x += 11) {
+        ctx.fillStyle = cols[(((x / 11) | 0) + ((y / 13) | 0) * 3) % cols.length];
+        ctx.fillRect(x + 1, y + 1, 9, 11);
+      }
+    }
+    ctx.restore();
+    // Mullion + small trefoil head
+    ctx.fillStyle = glow ? '#000' : '#eadbb4';
+    ctx.fillRect(62, 70, 4, 150);
+    ctx.strokeStyle = glow ? '#000' : '#eadbb4';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(64, 62, 10, 0, Math.PI * 2);
+    ctx.stroke();
     return finish(c, true);
   });
 }

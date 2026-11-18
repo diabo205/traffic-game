@@ -456,7 +456,7 @@ export class CityMap {
 
     const landmarkSpecs: ReadonlyArray<Landmark> = [
       { kind: 'empress', name: 'Empress Market', obb: { ...SADDAR_EMPRESS } },
-      { kind: 'st_patricks', name: "St. Patrick's Cathedral", obb: { x: 413.6, z: 251.1, hw: 13.5, hl: 17.0, heading: 1.227 } },
+      { kind: 'st_patricks', name: "St. Patrick's Cathedral", obb: { x: 412.6, z: 253.9, hw: 16.5, hl: 18.5, heading: 1.227 } },
       { kind: 'dawakhana', name: 'Saddar Dawakhana', obb: { x: 3.1, z: 162.9, hw: 9.0, hl: 14.0, heading: -2.130 } },
       { kind: 'bohri_bazaar', name: 'Bohri Bazaar', obb: { x: -191.3, z: -1.2, hw: 10.0, hl: 13.0, heading: 2.693 } },
       { kind: 'zainab_market', name: 'Zainab Market', obb: { x: -193.9, z: -534.2, hw: 10.0, hl: 11.9, heading: 2.868 } },

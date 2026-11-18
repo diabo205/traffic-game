@@ -90,7 +90,7 @@ export function buildSaddarLandmark(
   switch (l.kind) {
     case 'st_patricks':
       sub.rotation.y = -heading + Math.PI / 2;
-      buildStPatricksCathedral(sub, rectZ, shadow);
+      buildStPatricksCathedral(sub, rectZ, shadow, litMats);
       break;
     case 'dawakhana':
       sub.rotation.y = -heading;
@@ -272,174 +272,450 @@ export function buildSaddarLandmark(
 // 2. St. Patrick's Cathedral (Shahrah-e-Iraq, Gothic Revival + Christ the King)
 // ---------------------------------------------------------------------------
 
-function buildStPatricksCathedral(group: THREE.Group, l: LocalLandmark, shadow: boolean): void {
+/** Pointed (Gothic) arch outline, springing at y = h - hw, apex at y = h. */
+function pointedArchShape(hw: number, h: number, shape: THREE.Shape | THREE.Path = new THREE.Shape()): THREE.Shape | THREE.Path {
+  const spring = Math.max(0, h - hw * 1.25);
+  shape.moveTo(-hw, 0);
+  shape.lineTo(-hw, spring);
+  shape.quadraticCurveTo(-hw, h - hw * 0.25, 0, h);
+  shape.quadraticCurveTo(hw, h - hw * 0.25, hw, spring);
+  shape.lineTo(hw, 0);
+  shape.lineTo(-hw, 0);
+  return shape;
+}
+
+/** Moulded stone frame around a pointed opening, `depth` deep, front face at z = 0. */
+function archFrameGeo(hw: number, h: number, band: number, depth: number): THREE.BufferGeometry {
+  const outer = pointedArchShape(hw + band, h + band) as THREE.Shape;
+  outer.holes.push(pointedArchShape(hw, h, new THREE.Path()) as THREE.Path);
+  const geo = new THREE.ExtrudeGeometry(outer, { depth, bevelEnabled: false, curveSegments: 6 });
+  geo.translate(0, 0, -depth);
+  return geo;
+}
+
+/** Symmetric gable roof prism: ridge along z, eaves at y = 0, total width `w`. */
+function gableRoofGeo(w: number, rise: number, len: number): THREE.BufferGeometry {
+  const s = new THREE.Shape();
+  s.moveTo(-w / 2, 0);
+  s.lineTo(w / 2, 0);
+  s.lineTo(0, rise);
+  s.lineTo(-w / 2, 0);
+  const geo = new THREE.ExtrudeGeometry(s, { depth: len, bevelEnabled: false });
+  geo.translate(0, 0, -len / 2);
+  return geo;
+}
+
+/** Merge every direct child mesh of `g` that shares a material into one mesh (draw-call budget). */
+function mergeByMaterial(g: THREE.Group, shadow: boolean): void {
+  const buckets = new Map<THREE.Material, THREE.BufferGeometry[]>();
+  const keep: THREE.Object3D[] = [];
+  for (const child of g.children) {
+    if (!(child instanceof THREE.Mesh) || Array.isArray(child.material)) {
+      keep.push(child);
+      continue;
+    }
+    child.updateMatrix();
+    let geo = child.geometry.clone().applyMatrix4(child.matrix);
+    if (geo.index) geo = geo.toNonIndexed();
+    for (const name of Object.keys(geo.attributes)) {
+      if (name !== 'position' && name !== 'normal' && name !== 'uv') geo.deleteAttribute(name);
+    }
+    geo.clearGroups();
+    const list = buckets.get(child.material) ?? [];
+    list.push(geo);
+    buckets.set(child.material, list);
+  }
+  g.clear();
+  for (const k of keep) g.add(k);
+  for (const [mat, geos] of buckets) {
+    const merged = mergeGeometries(geos, false);
+    for (const geo of geos) geo.dispose();
+    if (!merged) continue;
+    const m = new THREE.Mesh(merged, mat);
+    m.castShadow = shadow;
+    m.receiveShadow = true;
+    g.add(m);
+  }
+}
+
+/**
+ * Gothic Revival cathedral (Fr. Karl Wagner SJ, 1881) in yellow Gizri
+ * limestone: twin-towered west front on the street, five-bay nave with
+ * clerestory over lean-to aisles and flying buttresses, a shallow transept
+ * and a polygonal apse. In the forecourt stands the white Renaissance-style
+ * Christ the King monument (1931). Everything stays inside the collider;
+ * meshes are merged per material at the end.
+ */
+function buildStPatricksCathedral(
+  group: THREE.Group,
+  l: LocalLandmark,
+  shadow: boolean,
+  litMats: THREE.MeshLambertMaterial[],
+): void {
   const g = new THREE.Group();
-  const cx = (l.rect.x0 + l.rect.x1) / 2;
-  const zFront = -l.rect.z0; // South edge facing Shahrah-e-Iraq (+z in three space)
-  g.position.set(cx, KERB_H, zFront);
+  const W = l.rect.x1 - l.rect.x0; // street frontage
+  const D = l.rect.z1 - l.rect.z0; // depth back from the street
+  // Origin at the middle of the street edge; the building extends toward -z.
+  g.position.set((l.rect.x0 + l.rect.x1) / 2, KERB_H, l.rect.z1);
   group.add(g);
 
-  const w = l.rect.x1 - l.rect.x0;
-  const d = l.rect.z1 - l.rect.z0;
-  const stone = lam('#d8b77c');
-  const darkStone = lam('#b89352');
-  const redTrim = lam('#9e4733');
-  const roofMat = lam('#7d4e38');
-  const marble = lam('#f5f4ef');
-  const lancet = stainedLancetTexture();
+  const stone = lam('#d9be86');
+  const dressed = lam('#ecdcb4');
+  const shade = lam('#b39762');
+  const roof = lam('#5d6168');
+  const marble = lam('#f4f2ec');
+  // The Christ the King monument is floodlit at night.
+  marble.emissive.set('#fff1d8');
+  litMats.push(marble);
+  const gold = lam('#d6aa45');
+  const iron = lam('#24262a');
+  const dark = lam('#2a2018');
+  const paving = lam('#d8cfbd');
+  const lawnMat = lam('#7f9a57');
+  const glassMat = (rx: number) =>
+    new THREE.MeshLambertMaterial({
+      color: '#ffffff',
+      map: tiled(stainedLancetTexture(), rx, 1),
+      emissive: new THREE.Color('#ffe2a8'),
+      emissiveMap: tiled(stainedLancetTexture(true), rx, 1),
+      emissiveIntensity: 0,
+    });
 
-  // Courtyard lawn & paved central approach walk
-  const lawn = mesh(g, new THREE.PlaneGeometry(w, d), lam('#7e9958'), 0, 0.02, -d / 2, false);
-  lawn.rotation.x = -Math.PI / 2;
-  const walk = mesh(g, new THREE.PlaneGeometry(11, d - 4), lam('#dfd7c6'), 0, 0.03, -d / 2, false);
-  walk.rotation.x = -Math.PI / 2;
+  // ---- Layout (z measured back from the street edge) ----
+  const facadeZ = -11.5; // west front face
+  const naveHalf = 6.2;
+  const naveWallH = 13.5;
+  const naveEnd = -(D - 4.6); // where the apse begins
+  const aisleOut = 10.6;
+  const aisleH = 7.6;
+  const towerX = 9.0;
+  const towerS = 5.4;
+  const towerZ = facadeZ - towerS / 2 + 0.6; // towers project slightly ahead of the front
+  const tranZ0 = naveEnd + 9.5;
+  const tranZ1 = naveEnd + 3.0;
+  const tranHalf = Math.min(W / 2 - 1.5, 15);
+  const tranH = 12.5;
 
-  // Low stone compound wall + iron fence along Shahrah-e-Iraq with wide open gate
-  for (const side of [-1, 1]) {
-    const segW = (w - 12) / 2;
-    const sx = side * (6 + segW / 2);
-    mesh(g, new THREE.BoxGeometry(segW, 0.85, 0.5), stone, sx, 0.425, -0.25, false);
-    mesh(g, new THREE.BoxGeometry(segW, 0.9, 0.12), lam('#222426'), sx, 1.3, -0.25, false);
-    // Gate piers
-    mesh(g, new THREE.BoxGeometry(1.1, 2.6, 1.1), darkStone, side * 6, 1.3, -0.3, shadow);
-    mesh(g, new THREE.ConeGeometry(0.85, 1.1, 4).rotateY(Math.PI / 4), redTrim, side * 6, 3.15, -0.3, false);
-  }
-  // Entrance arch sign
-  const gateSign = mesh(
-    g,
-    new THREE.PlaneGeometry(9.5, 1.3),
-    lam('#ffffff', signTexture(["ST. PATRICK'S CATHEDRAL", 'ARCHDIOCESE OF KARACHI · 1881'], '#5d291e', '#f7e7c4', 512, 128), true),
-    0,
-    3.6,
-    -0.3,
-    false,
-  );
-  void gateSign;
-
-  // ---- Monument to Christ the King (1931) in the forecourt (z = -8.5) ----
-  const mz = -8.5;
-  mesh(g, new THREE.CylinderGeometry(3.4, 3.8, 0.8, 8), marble, 0, 0.4, mz, shadow);
-  mesh(g, new THREE.CylinderGeometry(2.5, 2.9, 1.1, 8), marble, 0, 1.35, mz, shadow);
-  // Four marble canopy pillars + octagonal cupola
-  for (const dx of [-1.2, 1.2]) {
-    for (const dz of [-1.2, 1.2]) {
-      mesh(g, new THREE.CylinderGeometry(0.22, 0.25, 3.2, 8), marble, dx, 3.5, mz + dz, shadow);
+  // ---- Grounds: paved forecourt, lawns, compound wall with iron railings & gate ----
+  const ground = (w: number, d: number, x: number, z: number, mat: THREE.Material, y: number) => {
+    const p = mesh(g, new THREE.PlaneGeometry(w, d), mat, x, y, z, false);
+    p.rotation.x = -Math.PI / 2;
+  };
+  ground(W, D, 0, -D / 2, lawnMat, 0.02);
+  ground(10, -facadeZ, 0, facadeZ / 2, paving, 0.03);
+  ground(2 * aisleOut + 2, 1.6, 0, facadeZ - 0.2, paving, 0.035);
+  const gateHalf = 5.0;
+  const segW = W / 2 - gateHalf - 0.7;
+  for (const s of [-1, 1]) {
+    const sx = s * (gateHalf + 0.7 + segW / 2);
+    mesh(g, new THREE.BoxGeometry(segW, 0.9, 0.45), stone, sx, 0.45, -0.3);
+    mesh(g, new THREE.BoxGeometry(segW, 0.12, 0.55), dressed, sx, 0.96, -0.3);
+    mesh(g, new THREE.BoxGeometry(segW, 0.06, 0.06), iron, sx, 2.05, -0.3);
+    mesh(g, new THREE.BoxGeometry(segW, 0.06, 0.06), iron, sx, 1.25, -0.3);
+    for (let x = -segW / 2 + 0.2; x <= segW / 2; x += 0.32) {
+      mesh(g, new THREE.BoxGeometry(0.05, 1.25, 0.05), iron, sx + x, 1.62, -0.3);
+      mesh(g, new THREE.ConeGeometry(0.06, 0.16, 4), gold, sx + x, 2.32, -0.3);
     }
+    // Intermediate piers along the railing
+    for (const f of [-0.5, 0, 0.5]) {
+      mesh(g, new THREE.BoxGeometry(0.6, 2.3, 0.6), stone, sx + f * segW, 1.15, -0.3);
+      mesh(g, new THREE.BoxGeometry(0.75, 0.15, 0.75), dressed, sx + f * segW, 2.35, -0.3);
+    }
+    // Gate piers with gabled caps & lanterns
+    const gx = s * (gateHalf + 0.35);
+    mesh(g, new THREE.BoxGeometry(1.2, 3.4, 1.2), stone, gx, 1.7, -0.3);
+    mesh(g, new THREE.BoxGeometry(1.4, 0.25, 1.4), dressed, gx, 3.45, -0.3);
+    mesh(g, new THREE.ConeGeometry(0.95, 1.2, 4).rotateY(Math.PI / 4), dressed, gx, 4.15, -0.3);
+      }
+  const gateSignMat = new THREE.MeshLambertMaterial({
+    color: '#ffffff',
+    map: signTexture(["ST. PATRICK'S CATHEDRAL", 'ARCHDIOCESE OF KARACHI · 1881'], '#3d2a1a', '#f3e3bc', 512, 96),
+    emissive: new THREE.Color('#f3e3bc'),
+    emissiveMap: signTexture(["ST. PATRICK'S CATHEDRAL", 'ARCHDIOCESE OF KARACHI · 1881'], '#3d2a1a', '#f3e3bc', 512, 96),
+    emissiveIntensity: 0,
+    side: THREE.DoubleSide,
+  });
+  litMats.push(gateSignMat);
+  // Wrought-iron gate arch carrying the name board
+  mesh(g, new THREE.BoxGeometry(gateHalf * 2, 0.14, 0.14), iron, 0, 3.3, -0.3);
+  mesh(g, new THREE.BoxGeometry(gateHalf * 2, 0.1, 0.1), iron, 0, 4.5, -0.3);
+  for (const s of [-1, 1]) {
+    // Scrolled iron bracing between the two rails
+    for (const f of [0.25, 0.55, 0.85]) {
+      mesh(g, new THREE.BoxGeometry(0.06, 1.2, 0.06), iron, s * gateHalf * f, 3.9, -0.3, false);
+    }
+    const lamp = mesh(g, new THREE.BoxGeometry(0.3, 0.45, 0.3), gold, s * (gateHalf + 0.35), 5.2, -0.3, false);
+    void lamp;
   }
-  mesh(g, new THREE.BoxGeometry(3.2, 0.45, 3.2), marble, 0, 5.3, mz, shadow);
-  mesh(g, new THREE.SphereGeometry(1.45, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2), marble, 0, 5.5, mz, shadow);
-  // Statue of Christ the King with outstretched arms atop the dome
-  mesh(g, new THREE.CylinderGeometry(0.28, 0.36, 2.1, 8), marble, 0, 7.8, mz, shadow);
-  mesh(g, new THREE.BoxGeometry(1.75, 0.24, 0.26), marble, 0, 8.35, mz, shadow); // outstretched arms
-  mesh(g, new THREE.SphereGeometry(0.24, 8, 6), marble, 0, 9.05, mz, false);
-  mesh(g, new THREE.CylinderGeometry(0.35, 0.35, 0.06, 12).rotateX(Math.PI / 2), lam('#e0b94b'), 0, 9.15, mz - 0.1, false); // halo
-
-  // ---- Cathedral Nave, Side Aisles & Cruciform Transept (z = -16 to -48) ----
-  const naveLen = 32;
-  const naveW = 16.5;
-  const naveH = 14.5;
-  const naveZc = -16 - naveLen / 2;
-  mesh(g, new THREE.BoxGeometry(naveW, naveH, naveLen), stone, 0, naveH / 2, naveZc, shadow);
-  // Side aisles (lower flanking wings)
-  mesh(g, new THREE.BoxGeometry(24, 9.2, naveLen - 4), darkStone, 0, 4.6, naveZc - 1, shadow);
-  // Cruciform transept crossing
-  const tranW = 36, tranLen = 9.5, tranH = 14.0, tranZc = -36;
-  mesh(g, new THREE.BoxGeometry(tranW, tranH, tranLen), stone, 0, tranH / 2, tranZc, shadow);
-
-  // Pitched gable roofs over nave and transept
-  const naveRoof = new THREE.ConeGeometry(naveW * 0.62, naveLen, 3);
-  naveRoof.rotateX(Math.PI / 2);
-  naveRoof.scale(1, 0.45, 1);
-  mesh(g, naveRoof, roofMat, 0, naveH + 2.2, naveZc, shadow);
-
-  const tranRoof = new THREE.ConeGeometry(tranLen * 0.65, tranW, 3);
-  tranRoof.rotateZ(Math.PI / 2);
-  tranRoof.scale(1, 0.45, 1);
-  mesh(g, tranRoof, roofMat, 0, tranH + 2.0, tranZc, shadow);
-
-  // Front Gothic facade with Rose Window & triple portals
   mesh(
     g,
-    new THREE.PlaneGeometry(naveW, naveH),
-    lam('#ffffff', stPatricksFrontTexture()),
+    new THREE.PlaneGeometry(6.4, 0.9),
+    gateSignMat,
     0,
-    naveH / 2,
-    -16 + 0.05,
+    3.95,
+    -0.22,
     false,
   );
-  // Triangular front gable + central stone cross
-  const gableShape = new THREE.Shape();
-  gableShape.moveTo(-naveW / 2, 0);
-  gableShape.lineTo(naveW / 2, 0);
-  gableShape.lineTo(0, 5.2);
-  gableShape.closePath();
-  mesh(g, new THREE.ShapeGeometry(gableShape), stone, 0, naveH, -16 + 0.04, false);
-  mesh(g, new THREE.BoxGeometry(0.35, 2.4, 0.35), marble, 0, naveH + 6.0, -16, false);
-  mesh(g, new THREE.BoxGeometry(1.4, 0.35, 0.35), marble, 0, naveH + 6.4, -16, false);
 
-  // Stained-glass lancet side walls & buttresses
-  for (const s of [-1, 1]) {
-    const sidePlane = mesh(
-      g,
-      new THREE.PlaneGeometry(naveLen - 4, 9.0),
-      lam('#ffffff', tiled(lancet, 4, 1)),
-      s * 12.04,
-      4.5,
-      naveZc - 1,
-      false,
-    );
-    sidePlane.rotation.y = s > 0 ? Math.PI / 2 : -Math.PI / 2;
-    // Clerestory lancets
-    const clPlane = mesh(
-      g,
-      new THREE.PlaneGeometry(naveLen - 4, 5.0),
-      lam('#ffffff', tiled(lancet, 5, 1)),
-      s * (naveW / 2 + 0.04),
-      11.8,
-      naveZc,
-      false,
-    );
-    clPlane.rotation.y = s > 0 ? Math.PI / 2 : -Math.PI / 2;
-    // Stone buttresses along side aisle
-    for (let bz = -20; bz >= -44; bz -= 6) {
-      mesh(g, new THREE.BoxGeometry(0.9, 9.8, 1.1), redTrim, s * 12.3, 4.9, bz, false);
+  // ---- Christ the King monument (1931): white Renaissance aedicule + statue ----
+  const mz = facadeZ / 2 - 0.4;
+  mesh(g, new THREE.CylinderGeometry(2.7, 2.9, 0.35, 8), marble, 0, 0.175, mz);
+  mesh(g, new THREE.CylinderGeometry(2.25, 2.45, 0.35, 8), marble, 0, 0.525, mz);
+  mesh(g, new THREE.BoxGeometry(3.2, 1.6, 3.2), marble, 0, 1.5, mz);
+  mesh(g, new THREE.BoxGeometry(3.45, 0.2, 3.45), marble, 0, 2.38, mz);
+  for (let f = 0; f < 4; f++) {
+    // Arched niches on the plinth faces
+    const a = (f / 4) * Math.PI * 2;
+    const niche = mesh(g, new THREE.ShapeGeometry(pointedArchShape(0.45, 1.05) as THREE.Shape), dark, Math.sin(a) * 1.61, 0.85, mz + Math.cos(a) * 1.61, false);
+    niche.rotation.y = a;
+  }
+  for (const dx of [-1.15, 1.15]) {
+    for (const dz of [-1.15, 1.15]) {
+      mesh(g, new THREE.CylinderGeometry(0.18, 0.2, 3.0, 8), marble, dx, 3.98, mz + dz);
+      mesh(g, new THREE.BoxGeometry(0.42, 0.18, 0.42), marble, dx, 2.57, mz + dz);
+      mesh(g, new THREE.BoxGeometry(0.42, 0.22, 0.42), marble, dx, 5.53, mz + dz);
     }
   }
-
-  // ---- Twin Gothic Bell Towers & Spires flanking the South entrance ----
-  const towerH = 22.5;
+  mesh(g, new THREE.BoxGeometry(3.0, 0.45, 3.0), marble, 0, 5.85, mz);
+  mesh(g, new THREE.BoxGeometry(3.2, 0.14, 3.2), marble, 0, 6.12, mz);
+  mesh(g, new THREE.CylinderGeometry(1.15, 1.15, 0.5, 12), marble, 0, 6.44, mz);
+  mesh(g, new THREE.SphereGeometry(1.15, 12, 6, 0, Math.PI * 2, 0, Math.PI / 2), marble, 0, 6.69, mz);
+  mesh(g, new THREE.CylinderGeometry(0.42, 0.55, 1.2, 8), marble, 0, 8.3, mz);
+  // Statue: robed figure, arms outstretched in blessing, gilt crown
+  mesh(g, new THREE.CylinderGeometry(0.3, 0.5, 2.2, 8), marble, 0, 10.0, mz);
+  mesh(g, new THREE.CylinderGeometry(0.32, 0.3, 0.45, 8), marble, 0, 11.3, mz);
   for (const s of [-1, 1]) {
-    const tx = s * 9.8;
-    const tz = -17.5;
-    mesh(g, new THREE.BoxGeometry(5.6, towerH, 5.6), stone, tx, towerH / 2, tz, shadow);
-    // Terracotta cornice bands
-    for (const bh of [8, 15, towerH]) {
-      mesh(g, new THREE.BoxGeometry(6.1, 0.55, 6.1), redTrim, tx, bh, tz, false);
-    }
-    // Belfry lancet openings on all 4 faces of each tower
-    for (let f = 0; f < 4; f++) {
-      const a = (f / 4) * Math.PI * 2;
-      const bf = mesh(
-        g,
-        new THREE.PlaneGeometry(4.8, 6.5),
-        lam('#ffffff', tiled(lancet, 1, 1)),
-        tx + Math.sin(a) * 2.83,
-        towerH - 3.8,
-        tz + Math.cos(a) * 2.83,
-        false,
-      );
-      bf.rotation.y = a;
-    }
-    // Corner pinnacles + tall octagonal spire + cross
-    for (const dx of [-2.4, 2.4]) {
-      for (const dz of [-2.4, 2.4]) {
-        mesh(g, new THREE.ConeGeometry(0.55, 2.6, 4).rotateY(Math.PI / 4), redTrim, tx + dx, towerH + 1.3, tz + dz, false);
+    const arm = mesh(g, new THREE.BoxGeometry(1.0, 0.2, 0.22), marble, s * 0.74, 11.15, mz);
+    arm.rotation.z = s * -0.38;
+  }
+  mesh(g, new THREE.SphereGeometry(0.24, 8, 6), marble, 0, 11.78, mz);
+  mesh(g, new THREE.CylinderGeometry(0.21, 0.18, 0.18, 8), gold, 0, 12.06, mz);
+
+  // ---- Nave with clerestory, lean-to aisles, buttresses ----
+  const naveLen = facadeZ - naveEnd;
+  const naveZc = (facadeZ + naveEnd) / 2;
+  mesh(g, new THREE.BoxGeometry(naveHalf * 2, naveWallH, naveLen), stone, 0, naveWallH / 2, naveZc);
+  mesh(g, new THREE.BoxGeometry(naveHalf * 2 + 0.3, 0.35, naveLen + 0.3), dressed, 0, naveWallH + 0.1, naveZc);
+  const naveRoof = gableRoofGeo(naveHalf * 2 + 1.0, 5.6, naveLen + 0.6);
+  mesh(g, naveRoof, roof, 0, naveWallH + 0.25, naveZc);
+  // Ridge cresting
+  mesh(g, new THREE.BoxGeometry(0.18, 0.35, naveLen), dressed, 0, naveWallH + 5.9, naveZc, false);
+
+  const aisleZ0 = towerZ - towerS / 2;
+  const aisleLen = aisleZ0 - naveEnd;
+  const aisleZc = (aisleZ0 + naveEnd) / 2;
+  const aisleW = aisleOut - naveHalf;
+  const bays = Math.max(3, Math.round(aisleLen / 3.4));
+  const bay = aisleLen / bays;
+  const aisleGlass = glassMat(bays);
+  const clereGlass = glassMat(bays);
+  litMats.push(aisleGlass, clereGlass);
+  for (const s of [-1, 1]) {
+    const ax = s * (naveHalf + aisleW / 2);
+    mesh(g, new THREE.BoxGeometry(aisleW, aisleH, aisleLen), stone, ax, aisleH / 2, aisleZc);
+    // Lean-to roof from the aisle eaves up against the nave wall
+    const lean = new THREE.Shape();
+    lean.moveTo(0, aisleH + 2.3);
+    lean.lineTo(s * (aisleW + 0.5), aisleH - 0.15);
+    lean.lineTo(s * (aisleW + 0.5), aisleH - 0.4);
+    lean.lineTo(0, aisleH + 2.05);
+    const leanGeo = new THREE.ExtrudeGeometry(lean, { depth: aisleLen + 0.3, bevelEnabled: false });
+    leanGeo.translate(0, 0, -(aisleLen + 0.3) / 2);
+    mesh(g, leanGeo, roof, s * naveHalf, 0, aisleZc);
+    // Aisle windows (one lancet per bay) and clerestory lancets above the lean-to
+    const aw = mesh(g, new THREE.PlaneGeometry(aisleLen, aisleH - 1.6), aisleGlass, s * (aisleOut + 0.02), aisleH / 2 + 0.2, aisleZc, false);
+    aw.rotation.y = s * Math.PI / 2;
+    const cw = mesh(g, new THREE.PlaneGeometry(aisleLen, naveWallH - aisleH - 3.0), clereGlass, s * (naveHalf + 0.02), (naveWallH + aisleH + 2.6) / 2, aisleZc, false);
+    cw.rotation.y = s * Math.PI / 2;
+    // Stepped buttresses with pinnacles + flying buttresses to the clerestory
+    for (let i = 0; i <= bays; i++) {
+      const bz = aisleZ0 - i * bay;
+      const bx = s * (aisleOut + 0.45);
+      mesh(g, new THREE.BoxGeometry(0.9, aisleH - 1.2, 0.8), stone, bx, (aisleH - 1.2) / 2, bz);
+      mesh(g, new THREE.BoxGeometry(0.7, 2.2, 0.65), stone, bx - s * 0.1, aisleH + 0.0, bz);
+      mesh(g, new THREE.ConeGeometry(0.42, 1.5, 4).rotateY(Math.PI / 4), dressed, bx - s * 0.1, aisleH + 1.85, bz, false);
+      if (i > 0 && i < bays) {
+        const span = aisleOut - naveHalf;
+        const fly = mesh(g, new THREE.BoxGeometry(Math.hypot(span, 3.2), 0.4, 0.4), dressed, s * (naveHalf + span / 2), aisleH + 2.7, bz, false);
+        fly.rotation.z = s * Math.atan2(3.2, span);
       }
     }
-    mesh(g, new THREE.ConeGeometry(3.1, 11.5, 8), roofMat, tx, towerH + 5.75, tz, shadow);
-    mesh(g, new THREE.BoxGeometry(0.24, 2.0, 0.24), marble, tx, towerH + 12.2, tz, false);
-    mesh(g, new THREE.BoxGeometry(1.1, 0.24, 0.24), marble, tx, towerH + 12.5, tz, false);
+    mesh(g, new THREE.BoxGeometry(aisleW + 0.3, 0.3, aisleLen + 0.2), dressed, ax, aisleH - 0.1, aisleZc, false);
+    mesh(g, new THREE.BoxGeometry(0.15, 0.8, aisleLen), shade, s * (aisleOut + 0.05), 0.4, aisleZc, false);
   }
+
+  // ---- Shallow transept with its own gables and lancet groups ----
+  const tranLen = tranZ0 - tranZ1;
+  const tranZc = (tranZ0 + tranZ1) / 2;
+  mesh(g, new THREE.BoxGeometry(tranHalf * 2, tranH, tranLen), stone, 0, tranH / 2, tranZc);
+  const tranRoof = gableRoofGeo(tranLen + 0.9, 4.4, tranHalf * 2 + 0.6);
+  tranRoof.rotateY(Math.PI / 2);
+  mesh(g, tranRoof, roof, 0, tranH + 0.2, tranZc);
+  const tranGlass = glassMat(1);
+  litMats.push(tranGlass);
+  for (const s of [-1, 1]) {
+    const gab = new THREE.Shape();
+    gab.moveTo(-tranLen / 2 - 0.4, 0);
+    gab.lineTo(tranLen / 2 + 0.4, 0);
+    gab.lineTo(0, 4.9);
+    gab.lineTo(-tranLen / 2 - 0.4, 0);
+    const gabGeo = new THREE.ExtrudeGeometry(gab, { depth: 0.5, bevelEnabled: false });
+    const gm = mesh(g, gabGeo, stone, s * (tranHalf - 0.25), tranH, tranZc, false);
+    gm.rotation.y = s * Math.PI / 2;
+    const tw = mesh(g, new THREE.PlaneGeometry(tranLen * 0.55, tranH - 3.5), tranGlass, s * (tranHalf + 0.02), tranH / 2 + 0.6, tranZc, false);
+    tw.rotation.y = s * Math.PI / 2;
+    for (const dz of [-1, 1]) {
+      mesh(g, new THREE.BoxGeometry(0.9, tranH + 1.0, 0.9), stone, s * (tranHalf + 0.1), (tranH + 1.0) / 2, tranZc + dz * (tranLen / 2 + 0.1));
+      mesh(g, new THREE.ConeGeometry(0.5, 1.8, 4).rotateY(Math.PI / 4), dressed, s * (tranHalf + 0.1), tranH + 1.9, tranZc + dz * (tranLen / 2 + 0.1), false);
+    }
+    mesh(g, new THREE.BoxGeometry(0.2, 1.6, 0.2), dressed, s * (tranHalf + 0.1), tranH + 5.4, tranZc, false);
+    mesh(g, new THREE.BoxGeometry(0.2, 0.2, 0.9), dressed, s * (tranHalf + 0.1), tranH + 5.7, tranZc, false);
+  }
+
+  // ---- Polygonal apse (half-octagon) closing the east end ----
+  const apseR = naveHalf + 0.2;
+  const apseDepth = Math.min(4.3, D + naveEnd - 0.3);
+  const apse = new THREE.CylinderGeometry(apseR, apseR, naveWallH - 1.5, 8, 1, false, Math.PI / 2, Math.PI);
+  apse.scale(1, 1, apseDepth / apseR);
+  const apseFlat = apse.toNonIndexed();
+  apseFlat.computeVertexNormals(); // crisp polygonal facets rather than a smooth drum
+  mesh(g, apseFlat, stone, 0, (naveWallH - 1.5) / 2, naveEnd);
+  const apseRoof = new THREE.ConeGeometry(apseR + 0.5, 5.0, 8, 1, false, Math.PI / 2, Math.PI).toNonIndexed();
+  apseRoof.scale(1, 1, (apseDepth + 0.4) / (apseR + 0.5));
+  apseRoof.computeVertexNormals();
+  mesh(g, apseRoof, roof, 0, naveWallH - 1.5 + 2.5, naveEnd);
+  const apseGlass = glassMat(1);
+  litMats.push(apseGlass);
+  for (let k = 0; k <= 8; k++) {
+    // Buttress at each polygon vertex, a tall lancet on each facet
+    const a = Math.PI / 2 + (k / 8) * Math.PI;
+    const vx = Math.sin(a) * (apseR + 0.3);
+    const vz = Math.cos(a) * (apseDepth + 0.3);
+    if (k > 0 && k < 8) {
+      mesh(g, new THREE.BoxGeometry(0.7, naveWallH - 3.0, 0.7), stone, vx, (naveWallH - 3.0) / 2, naveEnd + vz);
+      mesh(g, new THREE.ConeGeometry(0.4, 1.4, 4).rotateY(Math.PI / 4), dressed, vx, naveWallH - 2.3, naveEnd + vz, false);
+    }
+    if (k < 8 && k % 2 === 1) {
+      const am = a + Math.PI / 16;
+      const facet = mesh(g, new THREE.PlaneGeometry(1.5, 5.5), apseGlass, Math.sin(am) * (apseR * Math.cos(Math.PI / 16) + 0.05), 5.0, naveEnd + Math.cos(am) * (apseDepth * Math.cos(Math.PI / 16) + 0.05), false);
+      facet.rotation.y = Math.atan2(Math.sin(am) / apseR, Math.cos(am) / apseDepth);
+    }
+  }
+
+  // ---- West front: gabled centre between twin towers ----
+  const frontW = (towerX - towerS / 2) * 2;
+  const frontMat = new THREE.MeshLambertMaterial({
+    color: '#ffffff',
+    map: stPatricksFrontTexture(),
+    emissive: new THREE.Color('#ffe2a8'),
+    emissiveMap: stPatricksFrontTexture(true),
+    emissiveIntensity: 0,
+  });
+  litMats.push(frontMat);
+  mesh(g, new THREE.PlaneGeometry(frontW, naveWallH), frontMat, 0, naveWallH / 2, facadeZ + 0.03, false);
+  // Projecting portal hoods (three moulded arches matching the texture)
+  const px = frontW / 512;
+  for (const [cx, hw, h] of [
+    [-170, 40, 150],
+    [0, 58, 200],
+    [170, 40, 150],
+  ] as const) {
+    const fr = mesh(g, archFrameGeo(hw * px + 0.05, h * px * (naveWallH / frontW) + 0.05, 0.28, 0.45), dressed, cx * px, 22 * px * (naveWallH / frontW), facadeZ + 0.48, false);
+    void fr;
+  }
+  // Great window hood
+  mesh(g, archFrameGeo(94 * px, 239 * px * (naveWallH / frontW), 0.22, 0.3), dressed, 0, (512 - 256) * px * (naveWallH / frontW), facadeZ + 0.33, false);
+  // Front gable with coping, quatrefoil-carved tympanum, apex cross
+  const gableRise = 5.6;
+  const gab = new THREE.Shape();
+  gab.moveTo(-frontW / 2, 0);
+  gab.lineTo(frontW / 2, 0);
+  gab.lineTo(0, gableRise);
+  gab.lineTo(-frontW / 2, 0);
+  mesh(g, new THREE.ExtrudeGeometry(gab, { depth: 0.6, bevelEnabled: false }), stone, 0, naveWallH, facadeZ - 0.55);
+  const slope = Math.atan2(gableRise, frontW / 2);
+  const copeLen = Math.hypot(gableRise, frontW / 2) + 0.4;
+  for (const s of [-1, 1]) {
+    const cope = mesh(g, new THREE.BoxGeometry(copeLen, 0.35, 0.85), dressed, s * frontW / 4, naveWallH + gableRise / 2 + 0.15, facadeZ - 0.25, false);
+    cope.rotation.z = -s * slope;
+    // Crockets along the coping
+    for (let k = 1; k <= 3; k++) {
+      const t = k / 4;
+      mesh(g, new THREE.ConeGeometry(0.16, 0.5, 4), dressed, s * (frontW / 2) * (1 - t), naveWallH + gableRise * t + 0.55, facadeZ - 0.25, false);
+    }
+  }
+  const qf = new THREE.Shape();
+  qf.absarc(0, 0, 0.95, 0, Math.PI * 2, false);
+  const qfHole = new THREE.Path();
+  qfHole.absarc(0, 0, 0.7, 0, Math.PI * 2, true);
+  qf.holes.push(qfHole);
+  mesh(g, new THREE.ExtrudeGeometry(qf, { depth: 0.15, bevelEnabled: false, curveSegments: 10 }), dressed, 0, naveWallH + 2.1, facadeZ + 0.05, false);
+  mesh(g, new THREE.CircleGeometry(0.7, 10), dark, 0, naveWallH + 2.1, facadeZ + 0.06, false);
+  mesh(g, new THREE.BoxGeometry(0.26, 2.0, 0.26), dressed, 0, naveWallH + gableRise + 1.0, facadeZ - 0.25, false);
+  mesh(g, new THREE.BoxGeometry(1.1, 0.26, 0.26), dressed, 0, naveWallH + gableRise + 1.35, facadeZ - 0.25, false);
+  // Entrance steps across the front
+  for (let k = 0; k < 3; k++) {
+    mesh(g, new THREE.BoxGeometry(frontW + 2 - k * 0.6, 0.18, 1.6 - k * 0.45), dressed, 0, 0.09 + k * 0.18, facadeZ + 1.0 - k * 0.22, false);
+  }
+
+  // ---- Twin west towers: buttressed shaft, belfry, pinnacled parapet, octagonal spire ----
+  const shaftH = 17.0;
+  const belfryH = 5.0;
+  const towerGlass = glassMat(1);
+  litMats.push(towerGlass);
+  for (const s of [-1, 1]) {
+    const tx = s * towerX;
+    mesh(g, new THREE.BoxGeometry(towerS, shaftH + belfryH, towerS), stone, tx, (shaftH + belfryH) / 2, towerZ);
+    // String courses
+    for (const y of [aisleH, shaftH]) {
+      mesh(g, new THREE.BoxGeometry(towerS + 0.3, 0.3, towerS + 0.3), dressed, tx, y, towerZ, false);
+    }
+    // Clasping corner buttresses, stepping in as they rise
+    for (const cx of [-1, 1]) {
+      for (const cz of [-1, 1]) {
+        const bx = tx + cx * (towerS / 2 + 0.05);
+        const bz = towerZ + cz * (towerS / 2 + 0.05);
+        mesh(g, new THREE.BoxGeometry(0.9, aisleH, 0.9), stone, bx, aisleH / 2, bz);
+        mesh(g, new THREE.BoxGeometry(0.7, shaftH - aisleH, 0.7), stone, bx, (shaftH + aisleH) / 2, bz);
+        mesh(g, new THREE.BoxGeometry(0.55, belfryH + 1.2, 0.55), shade, bx, shaftH + (belfryH + 1.2) / 2, bz);
+        mesh(g, new THREE.ConeGeometry(0.45, 2.6, 4).rotateY(Math.PI / 4), dressed, bx, shaftH + belfryH + 2.5, bz, false);
+      }
+    }
+    // Faces: lancet window mid-shaft (street + outer side), louvred belfry openings on all four
+    for (let f = 0; f < 4; f++) {
+      const a = (f / 4) * Math.PI * 2;
+      const ox = Math.sin(a), oz = Math.cos(a);
+      const r = towerS / 2 + 0.02;
+      if (f === 0 || (f === 1 && s > 0) || (f === 3 && s < 0)) {
+        const lw = mesh(g, new THREE.PlaneGeometry(2.0, 5.2), towerGlass, tx + ox * r, aisleH + 4.3, towerZ + oz * r, false);
+        lw.rotation.y = a;
+      }
+      for (const dx of [-0.7, 0.7]) {
+        const op = mesh(g, new THREE.ShapeGeometry(pointedArchShape(0.48, 3.6) as THREE.Shape), dark, 0, 0, 0, false);
+        op.rotation.y = a;
+        op.position.set(tx + ox * r + Math.cos(a) * dx, shaftH + 0.6, towerZ + oz * r - Math.sin(a) * dx);
+        const hood = mesh(g, archFrameGeo(0.48, 3.6, 0.14, 0.2), dressed, 0, 0, 0, false);
+        hood.rotation.y = a;
+        hood.position.set(tx + ox * (r + 0.18) + Math.cos(a) * dx, shaftH + 0.6, towerZ + oz * (r + 0.18) - Math.sin(a) * dx);
+      }
+    }
+    // Pierced parapet + octagonal spire with lucarnes, gilt cross
+    const topY = shaftH + belfryH;
+    mesh(g, new THREE.BoxGeometry(towerS + 0.5, 0.35, towerS + 0.5), dressed, tx, topY + 0.1, towerZ, false);
+    mesh(g, new THREE.BoxGeometry(towerS + 0.2, 0.9, towerS + 0.2), stone, tx, topY + 0.7, towerZ, false);
+    mesh(g, new THREE.CylinderGeometry(2.0, 2.3, 1.0, 8), stone, tx, topY + 0.8, towerZ, false);
+    mesh(g, new THREE.ConeGeometry(2.05, 8.6, 8), roof, tx, topY + 1.3 + 4.3, towerZ);
+    for (let f = 0; f < 4; f++) {
+      const a = (f / 4) * Math.PI * 2;
+      const lu = mesh(g, new THREE.ConeGeometry(0.42, 1.3, 4).rotateY(Math.PI / 4), dressed, tx + Math.sin(a) * 1.55, topY + 3.0, towerZ + Math.cos(a) * 1.55, false);
+      void lu;
+    }
+    mesh(g, new THREE.SphereGeometry(0.2, 6, 4), gold, tx, topY + 10.0, towerZ, false);
+    mesh(g, new THREE.BoxGeometry(0.16, 1.4, 0.16), gold, tx, topY + 10.8, towerZ, false);
+    mesh(g, new THREE.BoxGeometry(0.75, 0.16, 0.16), gold, tx, topY + 11.05, towerZ, false);
+  }
+
+  mergeByMaterial(g, shadow);
 }
 
 // ---------------------------------------------------------------------------
