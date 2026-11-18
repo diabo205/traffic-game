@@ -9,6 +9,7 @@
     "pack": "SINGLE_FILE=1 vite build && node tools/pack_html.mjs",
     "preview": "vite preview --host",
     "playtest:sim": "node tools/playtest/sim.mjs",
+    "playtest:balance": "node tools/playtest/balance.mjs",
     "playtest:metrics": "bash tools/playtest/metrics.sh",
     "playtest:browser": "node tools/playtest/browser.mjs"
   },

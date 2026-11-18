@@ -302,7 +302,25 @@ export class Renderer {
       this.flame.position.set(...FLAME_POS[veh]);
       this.player.body.add(this.flame);
     }
-    this.chase.vehicleScale = veh === 'minibus' ? 1.48 : 1.0;
+    if (veh === 'minibus') {
+      this.chase.distScale = 1.95;
+      this.chase.heightScale = 2.1;
+      this.chase.lookHeight = 2.15;
+      this.chase.aheadScale = 1.75;
+      this.chase.minClipDist = 4.35;
+    } else if (veh === 'rickshaw') {
+      this.chase.distScale = 1.12;
+      this.chase.heightScale = 1.32;
+      this.chase.lookHeight = 1.3;
+      this.chase.aheadScale = 1.25;
+      this.chase.minClipDist = 2.1;
+    } else {
+      this.chase.distScale = 1.0;
+      this.chase.heightScale = 1.0;
+      this.chase.lookHeight = 1.05;
+      this.chase.aheadScale = 1.0;
+      this.chase.minClipDist = 2.1;
+    }
     for (const [id, v] of this.npcVisuals) this.release(v, id);
     this.npcVisuals.clear();
     this.chase.reset();
@@ -401,7 +419,7 @@ export class Renderer {
   private clipCamera(world: CityWorld, camPos: THREE.Vector3, target: THREE.Vector3): void {
     const horizDist = Math.hypot(camPos.x - target.x, camPos.z - target.z);
     // Keep camera outside the player's own vehicle body (minibus is ~4.15m half-length).
-    const minT = Math.min(0.86, Math.max(0.35, (this.chase.vehicleScale > 1.05 ? 4.35 : 2.1) / Math.max(1, horizDist)));
+    const minT = Math.min(0.86, Math.max(0.35, this.chase.minClipDist / Math.max(1, horizDist)));
     let bestT = 1;
     for (const t of [minT, 0.55, 0.72, 0.86, 1.0]) {
       const x = target.x + (camPos.x - target.x) * t;
