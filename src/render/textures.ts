@@ -1559,3 +1559,90 @@ export function mazarMarbleTexture(): THREE.Texture {
     return finish(c, true);
   });
 }
+
+/**
+ * One bay of the Sindh High Court wings (≈4 m × 12.4 m, two storeys) in red
+ * Jodhpur sandstone with cream dressings: a rusticated ground floor with a
+ * round-arched opening (cream voussoirs and keystone) onto a shaded
+ * verandah, a cornice band, and above a tall window with a cream
+ * architrave, small pediment and a balustraded balcony at its foot.
+ * `glow` = night emissive mask (doors and windows).
+ */
+export function highCourtBayTexture(glow = false): THREE.Texture {
+  return cached(`shcBay:${glow}`, () => {
+    const W = 128, H = 400;
+    const [c, ctx] = canvas(W, H);
+    const px = H / 12.4;
+    const y = (m: number) => H - m * px;
+    const red = '#b9654e', cream = '#ead9b4', shade = '#8f4a39';
+    ctx.fillStyle = glow ? '#000' : red;
+    ctx.fillRect(0, 0, W, H);
+    if (!glow) {
+      // Rustication on the ground floor, fine ashlar above
+      ctx.fillStyle = 'rgba(70,30,20,0.35)';
+      for (let yy = y(0); yy > y(6.0); yy -= 0.55 * px) ctx.fillRect(0, yy - 2, W, 2.5);
+      ctx.fillStyle = 'rgba(70,30,20,0.18)';
+      for (let yy = y(6.6); yy > 0; yy -= 0.4 * px) ctx.fillRect(0, yy, W, 1.2);
+      // Pilaster strips
+      ctx.fillStyle = shade;
+      ctx.fillRect(0, y(12.4), 8, 12.4 * px);
+      ctx.fillRect(W - 8, y(12.4), 8, 12.4 * px);
+      // Plinth, first-floor cornice, crowning cornice
+      ctx.fillStyle = cream;
+      ctx.fillRect(0, y(0.5), W, 0.5 * px);
+      ctx.fillRect(0, y(6.4), W, 0.4 * px);
+      ctx.fillRect(0, 0, W, 0.45 * px);
+      ctx.fillStyle = shade;
+      ctx.fillRect(0, y(6.0), W, 0.12 * px);
+    }
+    // Ground floor: round arch
+    const cx = W / 2, aw = 1.25 * px, base = y(0.5), sh = 3.3 * px;
+    if (!glow) {
+      ctx.fillStyle = cream;
+      ctx.beginPath();
+      ctx.arc(cx, base - sh, aw + 9, Math.PI, 0);
+      ctx.lineTo(cx + aw + 9, base);
+      ctx.lineTo(cx - aw - 9, base);
+      ctx.fill();
+      ctx.fillStyle = shade;
+      ctx.fillRect(cx - 5, base - sh - aw - 12, 10, 14); // keystone shadow
+      ctx.fillStyle = cream;
+      ctx.fillRect(cx - 4, base - sh - aw - 12, 8, 13);
+    }
+    ctx.fillStyle = glow ? '#000' : '#3a2620';
+    ctx.beginPath();
+    ctx.arc(cx, base - sh, aw, Math.PI, 0);
+    ctx.lineTo(cx + aw, base);
+    ctx.lineTo(cx - aw, base);
+    ctx.fill();
+    ctx.fillStyle = glow ? '#ffc97a' : '#5a3a28';
+    ctx.fillRect(cx - aw * 0.45, base - sh * 0.95, aw * 0.9, sh * 0.95); // door at the back
+    // Upper floor: tall window, architrave, pediment, balcony
+    const ww = 0.75 * px, wb = y(7.4), wt = y(10.9);
+    if (!glow) {
+      ctx.fillStyle = cream;
+      ctx.fillRect(cx - ww - 6, wt - 6, (ww + 6) * 2, wb - wt + 6);
+      ctx.beginPath();
+      ctx.moveTo(cx - ww - 10, wt - 6);
+      ctx.lineTo(cx + ww + 10, wt - 6);
+      ctx.lineTo(cx, wt - 24);
+      ctx.closePath();
+      ctx.fill();
+    }
+    ctx.fillStyle = glow ? '#ffd28a' : '#2c2a2c';
+    ctx.fillRect(cx - ww, wt, ww * 2, wb - wt);
+    if (!glow) {
+      ctx.fillStyle = 'rgba(190,210,220,0.35)';
+      ctx.fillRect(cx - 1, wt, 2, wb - wt);
+      ctx.fillRect(cx - ww, wt + (wb - wt) * 0.35, ww * 2, 2);
+      // Balcony slab + balusters
+      // Balcony: slab at floor level, balustrade rising in front of the sill
+      const fl = y(6.85), rail = y(7.85);
+      ctx.fillStyle = cream;
+      ctx.fillRect(cx - ww - 14, fl - 4, (ww + 14) * 2, 6);
+      ctx.fillRect(cx - ww - 14, rail, (ww + 14) * 2, 4);
+      for (let x = cx - ww - 12; x < cx + ww + 12; x += 7) ctx.fillRect(x, rail + 4, 3.5, fl - rail - 8);
+    }
+    return finish(c, true);
+  });
+}

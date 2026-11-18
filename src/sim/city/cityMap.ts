@@ -485,7 +485,8 @@ export class CityMap {
       { kind: 'gul_plaza', name: 'Gul Plaza', obb: { x: -662.9, z: 460.1, hw: 10.5, hl: 15.0, heading: 0.981 } },
       { kind: 'tibet_centre', name: 'Tibet Centre', obb: { x: -847.7, z: 277.2, hw: 9.5, hl: 14.0, heading: -2.167 } },
       { kind: 'panorama_centre', name: 'Panorama Centre', obb: { x: -39.2, z: -541.5, hw: 9.5, hl: 10.5, heading: 2.847 } },
-      { kind: 'sindh_high_court', name: 'Sindh High Court', obb: { x: -732.0, z: -374.2, hw: 12.0, hl: 16.0, heading: -0.469 } },
+      // Widened and deepened into the open ground behind it; the street front is unchanged.
+      { kind: 'sindh_high_court', name: 'Sindh High Court', obb: { x: -734.7, z: -375.6, hw: 15.0, hl: 26.0, heading: -0.469 } },
       { kind: 'passport_office', name: 'Passport Office Saddar', obb: { x: -692.4, z: -308.2, hw: 9.5, hl: 13.0, heading: 1.196 } },
       { kind: 'preedy_police', name: 'Preedy Police Station', obb: { x: -871.5, z: 134.5, hw: 9.5, hl: 13.0, heading: 2.581 } },
       { kind: 'press_club', name: 'Karachi Press Club', obb: { x: -396.5, z: -608.4, hw: 9.0, hl: 12.0, heading: 2.848 } },

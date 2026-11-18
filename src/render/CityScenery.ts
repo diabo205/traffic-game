@@ -244,6 +244,7 @@ export class CityScenery {
     this.marketSquare(map);
     this.landmarkGarden(map, 'frere_hall', 58, 7, 9);
     this.landmarkGarden(map, 'mazar_quaid', 60, 6, 10);
+    this.landmarkGarden(map, 'sindh_high_court', 45, 5, 11);
     this.markings(map);
     this.islands(map, shadow);
     this.pedestrianBridges(map, shadow);

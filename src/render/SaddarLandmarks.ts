@@ -10,6 +10,7 @@ import {
   clockFaceTexture,
   flagPavingTexture,
   frereBayTexture,
+  highCourtBayTexture,
   lawnTexture,
   colonialVerandahTexture,
   gothicWallTexture,
@@ -149,7 +150,7 @@ export function buildSaddarLandmark(
       break;
     case 'sindh_high_court':
       sub.rotation.y = -heading;
-      buildSindhHighCourt(sub, hw, hl, shadow);
+      buildSindhHighCourt(sub, hw, hl, shadow, litMats);
       break;
     case 'grammar_school':
       sub.rotation.y = -heading;
@@ -1433,49 +1434,211 @@ function buildLuckyStarHotel(group: THREE.Group, l: LocalLandmark, shadow: boole
 // 15. Sindh High Court (1929 Red Jodhpur Sandstone Colonnade & Twin Cupolas)
 // ---------------------------------------------------------------------------
 
-function buildSindhHighCourt(group: THREE.Group, hw: number, hl: number, shadow: boolean): void {
+/**
+ * Sindh High Court (1923–29): a long, symmetrical Renaissance-style range
+ * in red Jodhpur sandstone with cream dressings. Two tall storeys of bays
+ * (rusticated round-arched ground floor, balconied pedimented windows
+ * above) run between projecting corner pavilions crowned by open
+ * cupolas. The centre is a projecting frontispiece with a giant order of
+ * columns rising through both storeys under an entablature and
+ * balustrade, and a large ribbed dome on a windowed drum behind it. A
+ * balustraded parapet with urns runs along the roofline. Street front +x.
+ */
+function buildSindhHighCourt(
+  group: THREE.Group,
+  hw: number,
+  hl: number,
+  shadow: boolean,
+  litMats: THREE.MeshLambertMaterial[],
+): void {
   const g = new THREE.Group();
   g.position.set(0, KERB_H, 0);
   group.add(g);
 
-  const d = hw * 2;
-  const len = hl * 2;
-  const h = 15.5;
-  const redStone = lam('#b85d47');
-  const buffStone = lam('#dfc392');
-  const domeMat = lam('#e8d8b8');
-  const tex = colonialVerandahTexture('#b85d47', '#4a2518');
+  const red = lam('#b9654e', tiled(ashlarTexture(), 6, 3));
+  const cream = lam('#ead9b4');
+  const creamShade = lam('#d2bd93');
+  const domeMat = lam('#c9b48c');
+  const dark = lam('#2c2420');
+  const lawnMat = lam('#6f9a4e');
+  const paving = lam('#d9cdb4', tiled(flagPavingTexture(), 6, 10));
+  const bayMats = new Map<number, THREE.MeshLambertMaterial>();
+  const bayMat = (n: number) => {
+    let m = bayMats.get(n);
+    if (!m) {
+      m = new THREE.MeshLambertMaterial({
+        color: '#ffffff',
+        map: tiled(highCourtBayTexture(), n, 1),
+        emissive: new THREE.Color('#ffd49a'),
+        emissiveMap: tiled(highCourtBayTexture(true), n, 1),
+        emissiveIntensity: 0,
+      });
+      litMats.push(m);
+      bayMats.set(n, m);
+    }
+    return m;
+  };
 
-  // Main sandstone judicial block set back behind a ceremonial forecourt
-  mesh(g, new THREE.BoxGeometry(d - 4, h, len), redStone, -2, h / 2, 0, shadow);
-  const f = mesh(g, new THREE.PlaneGeometry(len, h), lam('#ffffff', tiled(tex, len / 10, 1)), hw - 3.95, h / 2, 0, false);
-  f.rotation.y = Math.PI / 2;
+  // ---- Layout ----
+  const P = 1.0; // plinth
+  const WALL = 12.4;
+  const top = P + WALL;
+  const x1 = hw - 4.5; // main front face
+  const x0 = Math.max(-hw + 4, x1 - 18); // back face
+  const zH = hl - 1.0; // half-length of the range
+  const pavW = 7.5, pavProj = 1.3; // corner pavilions
+  const cenW = 15, cenProj = 1.6; // central frontispiece
+  const xc = (x0 + x1) / 2;
 
-  // Grand neoclassical portico with 6 tall Corinthian sandstone columns + triangular pediment
-  const px = hw - 2.0;
-  for (let z = -7.5; z <= 7.5; z += 3.0) {
-    mesh(g, new THREE.CylinderGeometry(0.42, 0.5, h - 1.5, 10), buffStone, px, (h - 1.5) / 2, z, shadow);
+  // ---- Grounds: forecourt paving, lawns, central steps ----
+  const flat = (w: number, d: number, x: number, z: number, mat: THREE.Material, y: number) => {
+    mesh(g, new THREE.PlaneGeometry(w, d), mat, x, y, z, false).rotation.x = -Math.PI / 2;
+  };
+  flat(hw * 2, hl * 2, 0, 0, lawnMat, 0.02);
+  flat(hw - x1, cenW + 6, (hw + x1) / 2, 0, paving, 0.03);
+  for (let k = 0; k < 4; k++) {
+    mesh(g, new THREE.BoxGeometry(0.6, P - k * 0.25, cenW - 2 - k * 0.6), creamShade, x1 + cenProj + 2.9 + (3 - k) * 0.6 - 1.8, (P - k * 0.25) / 2, 0, false);
   }
-  mesh(g, new THREE.BoxGeometry(3.8, 1.6, 17.5), buffStone, px - 0.6, h - 0.4, 0, shadow);
 
-  // Twin corner pavilion towers topped with Indo-Saracenic chhatri cupolas
+  /** A face of `n`-ish bays of width w at (x, z) facing angle a, on the plinth. */
+  const face = (w: number, x: number, z: number, a: number) => {
+    const n = Math.max(1, Math.round(w / 4));
+    mesh(g, new THREE.PlaneGeometry(w, WALL), bayMat(n), x + Math.sin(a) * 0.03, P + WALL / 2, z + Math.cos(a) * 0.03, false).rotation.y = a;
+  };
+  /** Balustrade with urns along a line from (ax, az) to (bx, bz) at height y. */
+  const balustrade = (ax: number, az: number, bx: number, bz: number, y: number, urns: number) => {
+    const len = Math.hypot(bx - ax, bz - az);
+    const ang = Math.atan2(bx - ax, bz - az);
+    const mx = (ax + bx) / 2, mz = (az + bz) / 2;
+    mesh(g, new THREE.BoxGeometry(0.5, 0.18, len).rotateY(ang), cream, mx, y + 0.09, mz, false);
+    mesh(g, new THREE.BoxGeometry(0.55, 0.2, len).rotateY(ang), cream, mx, y + 1.0, mz, false);
+    const n = Math.floor(len / 0.45);
+    for (let k = 0; k <= n; k++) {
+      const t = k / n;
+      mesh(g, new THREE.CylinderGeometry(0.1, 0.13, 0.72, 4, 1, true), cream, ax + (bx - ax) * t, y + 0.54, az + (bz - az) * t, false);
+    }
+    for (let k = 0; k <= urns; k++) {
+      const t = k / urns;
+      const ux = ax + (bx - ax) * t, uz = az + (bz - az) * t;
+      mesh(g, new THREE.BoxGeometry(0.6, 1.1, 0.6), cream, ux, y + 0.55, uz, false);
+      mesh(g, new THREE.SphereGeometry(0.3, 8, 6), cream, ux, y + 1.45, uz, false);
+      mesh(g, new THREE.ConeGeometry(0.1, 0.35, 6), cream, ux, y + 1.85, uz, false);
+    }
+  };
+
+  // ---- Main range ----
+  mesh(g, new THREE.BoxGeometry(x1 - x0 + 1.0, P, zH * 2 + 1.0), creamShade, xc, P / 2, 0);
+  mesh(g, new THREE.BoxGeometry(x1 - x0, WALL, zH * 2), red, xc, top - WALL / 2, 0);
+  const wingL = zH - pavW - cenW / 2;
   for (const s of [-1, 1]) {
-    const tz = s * (hl - 3.2);
-    mesh(g, new THREE.BoxGeometry(6.5, h + 3.5, 6.5), redStone, hw - 3.5, (h + 3.5) / 2, tz, shadow);
-    mesh(g, new THREE.CylinderGeometry(2.4, 2.4, 2.6, 8), buffStone, hw - 3.5, h + 4.8, tz, shadow);
-    mesh(g, new THREE.SphereGeometry(2.5, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2), domeMat, hw - 3.5, h + 6.1, tz, shadow);
+    face(wingL, x1, s * (cenW / 2 + wingL / 2), Math.PI / 2);
+    face(zH * 2 - pavW * 2, x0, 0, -Math.PI / 2);
+  }
+  face(x1 - x0 - 2, xc, zH, 0);
+  face(x1 - x0 - 2, xc, -zH, Math.PI);
+  mesh(g, new THREE.BoxGeometry(x1 - x0 + 0.8, 0.55, zH * 2 + 0.8), cream, xc, top + 0.2, 0, false);
+  balustrade(x1 + 0.2, -zH + pavW, x1 + 0.2, -cenW / 2, top + 0.45, 4);
+  balustrade(x1 + 0.2, cenW / 2, x1 + 0.2, zH - pavW, top + 0.45, 4);
+  balustrade(x0 - 0.2, -zH, x0 - 0.2, zH, top + 0.45, 8);
+  for (const s of [-1, 1]) balustrade(x0, s * (zH + 0.2), x1, s * (zH + 0.2), top + 0.45, 3);
+
+  // ---- Corner pavilions with open cupolas ----
+  for (const s of [-1, 1]) {
+    const pz = s * (zH - pavW / 2);
+    const px = x1 - pavW / 2 + pavProj;
+    mesh(g, new THREE.BoxGeometry(pavW, WALL + 1.6, pavW), red, px, P + (WALL + 1.6) / 2, pz);
+    face(pavW - 1.2, x1 + pavProj, pz, Math.PI / 2);
+    face(pavW - 1.2, px, s * (zH + 0.0) + s * 0.01, s > 0 ? 0 : Math.PI);
+    for (const cz of [-1, 1]) {
+      mesh(g, new THREE.BoxGeometry(0.9, WALL + 1.6, 0.9), cream, x1 + pavProj + 0.1, P + (WALL + 1.6) / 2, pz + cz * (pavW / 2 - 0.3));
+    }
+    const pt = P + WALL + 1.6;
+    mesh(g, new THREE.BoxGeometry(pavW + 0.6, 0.6, pavW + 0.6), cream, px, pt + 0.1, pz, false);
+    // Open cupola: eight columns round a drum base, dome, finial
+    mesh(g, new THREE.CylinderGeometry(2.7, 2.9, 0.8, 8), cream, px, pt + 0.8, pz);
+    for (let k = 0; k < 8; k++) {
+      const a = (k / 8) * Math.PI * 2;
+      mesh(g, new THREE.CylinderGeometry(0.17, 0.2, 2.6, 8), cream, px + Math.sin(a) * 2.3, pt + 2.5, pz + Math.cos(a) * 2.3, false);
+    }
+    mesh(g, new THREE.CylinderGeometry(1.5, 1.5, 2.4, 8), dark, px, pt + 2.4, pz, false);
+    mesh(g, new THREE.CylinderGeometry(2.8, 2.7, 0.5, 8), cream, px, pt + 4.0, pz, false);
+    mesh(g, new THREE.SphereGeometry(2.45, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2).scale(1, 1.15, 1), domeMat, px, pt + 4.2, pz);
+    mesh(g, new THREE.CylinderGeometry(0.12, 0.2, 1.2, 6), cream, px, pt + 7.3, pz, false);
   }
 
-  const sign = mesh(
-    g,
-    new THREE.PlaneGeometry(15.5, 1.6),
-    lam('#ffffff', signTexture(['SINDH HIGH COURT · سندھ ہائی کورٹ', 'HIGH COURT OF SINDH AT KARACHI · ESTD. 1929'], '#01411c', '#ffd54f', 768, 128)),
-    px + 0.45,
-    h - 0.4,
-    0,
-    false,
-  );
-  sign.rotation.y = Math.PI / 2;
+  // ---- Central frontispiece: giant columns, entablature, attic, dome ----
+  const fx = x1 + cenProj;
+  mesh(g, new THREE.BoxGeometry(cenProj + 0.2, WALL + 2.2, cenW), red, x1 + cenProj / 2, P + (WALL + 2.2) / 2, 0);
+  face(cenW - 2.5, fx, 0, Math.PI / 2);
+  // Grand entrance arch over the doorway
+  mesh(g, new THREE.ShapeGeometry(new THREE.Shape().absarc(0, 3.6, 1.9, 0, Math.PI, false).lineTo(-1.9, 0).lineTo(1.9, 0).lineTo(1.9, 3.6), 12), dark, fx + 0.06, P, 0, false).rotation.y = Math.PI / 2;
+  const colX = fx + 2.3;
+  const colH = WALL - 0.6;
+  for (let k = 0; k < 6; k++) {
+    const z = (k - 2.5) * 2.4;
+    mesh(g, new THREE.BoxGeometry(1.3, 0.5, 1.3), cream, colX, P + 0.25, z);
+    mesh(g, new THREE.CylinderGeometry(0.48, 0.56, colH - 1.0, 14), cream, colX, P + 0.5 + (colH - 1.0) / 2, z);
+    // Capital: necking, bell and abacus
+    mesh(g, new THREE.CylinderGeometry(0.72, 0.5, 0.55, 12), creamShade, colX, P + colH - 0.2, z, false);
+    mesh(g, new THREE.BoxGeometry(1.35, 0.25, 1.35), cream, colX, P + colH + 0.15, z, false);
+  }
+  // Pilasters on the wall behind the columns
+  for (let k = 0; k < 6; k++) mesh(g, new THREE.BoxGeometry(0.3, colH, 0.9), creamShade, fx + 0.15, P + colH / 2, (k - 2.5) * 2.4, false);
+  // Entablature (architrave, frieze, cornice) bridging columns to wall, porch ceiling
+  const eY = P + colH + 0.3;
+  mesh(g, new THREE.BoxGeometry(colX - fx + 1.0, 0.6, 2.4 * 5 + 1.6), cream, (fx + colX) / 2 + 0.2, eY + 0.3, 0);
+  mesh(g, new THREE.BoxGeometry(colX - fx + 1.0, 0.7, 2.4 * 5 + 1.6), lam('#c9735a'), (fx + colX) / 2 + 0.2, eY + 0.95, 0, false);
+  mesh(g, new THREE.BoxGeometry(colX - fx + 1.5, 0.35, 2.4 * 5 + 2.2), cream, (fx + colX) / 2 + 0.2, eY + 1.45, 0, false);
+  const nameTex = signTexture(['HIGH COURT OF SINDH', 'سندھ ہائی کورٹ · 1929'], '#7a3424', '#f6e7c4', 768, 112);
+  const nameMat = new THREE.MeshLambertMaterial({ color: '#ffffff', map: nameTex, emissive: new THREE.Color('#f6e7c4'), emissiveMap: nameTex, emissiveIntensity: 0 });
+  litMats.push(nameMat);
+  mesh(g, new THREE.PlaneGeometry(9.5, 0.62), nameMat, colX + 0.71, eY + 0.95, 0, false).rotation.y = Math.PI / 2;
+  // Attic storey with balustrade
+  const aY = eY + 1.6;
+  mesh(g, new THREE.BoxGeometry(cenProj + 3.0, 2.2, cenW - 1), red, x1 + (cenProj + 2.0) / 2 + 0.5, aY + 1.1, 0);
+  mesh(g, new THREE.BoxGeometry(cenProj + 3.3, 0.35, cenW - 0.6), cream, x1 + (cenProj + 2.0) / 2 + 0.5, aY + 2.3, 0, false);
+  balustrade(colX + 0.4, -cenW / 2 + 0.6, colX + 0.4, cenW / 2 - 0.6, aY + 2.45, 4);
+
+  // Great dome on a windowed drum, set back over the centre of the range
+  const dx = x1 - 3.5;
+  const dBase = top + 0.45;
+  mesh(g, new THREE.BoxGeometry(11, 2.4, 11), red, dx, dBase + 1.2, 0);
+  mesh(g, new THREE.BoxGeometry(11.6, 0.4, 11.6), cream, dx, dBase + 2.5, 0, false);
+  const R = 4.8;
+  const drumH = 3.6;
+  mesh(g, new THREE.CylinderGeometry(R, R + 0.15, drumH, 24), red, dx, dBase + 2.7 + drumH / 2, 0);
+  for (let k = 0; k < 12; k++) {
+    const a = (k / 12) * Math.PI * 2;
+    // Paired pilasters and round-headed windows round the drum
+    mesh(g, new THREE.BoxGeometry(0.45, drumH, 0.3).rotateY(a), cream, dx + Math.sin(a) * (R + 0.12), dBase + 2.7 + drumH / 2, Math.cos(a) * (R + 0.12), false);
+    const wa = a + Math.PI / 12;
+    const win = new THREE.Shape().absarc(0, 1.7, 0.55, 0, Math.PI, false).lineTo(-0.55, 0).lineTo(0.55, 0).lineTo(0.55, 1.7);
+    mesh(g, new THREE.ShapeGeometry(win, 8), dark, dx + Math.sin(wa) * (R + 0.04), dBase + 3.2, Math.cos(wa) * (R + 0.04), false).rotation.y = wa;
+  }
+  mesh(g, new THREE.CylinderGeometry(R + 0.45, R + 0.45, 0.45, 24), cream, dx, dBase + 2.7 + drumH, 0, false);
+  const domeY = dBase + 2.7 + drumH + 0.2;
+  const prof: THREE.Vector2[] = [];
+  for (let i = 0; i <= 14; i++) {
+    const t = (i / 14) * (Math.PI / 2);
+    prof.push(new THREE.Vector2(Math.cos(t) * (R + 0.1), Math.sin(t) * R * 1.12));
+  }
+  mesh(g, new THREE.LatheGeometry(prof, 32), domeMat, dx, domeY, 0);
+  for (let k = 0; k < 12; k++) {
+    // Cream ribs running up the dome
+    const a = (k / 12) * Math.PI * 2;
+    const rib = new THREE.TorusGeometry(R + 0.1, 0.09, 4, 16, Math.PI / 2);
+    rib.scale(1, 1.12, 1);
+    const m = mesh(g, rib, cream, dx, domeY, 0, false);
+    m.rotation.set(0, a, 0);
+  }
+  // Lantern with finial
+  const lY = domeY + R * 1.12;
+  mesh(g, new THREE.CylinderGeometry(1.0, 1.1, 1.8, 8), cream, dx, lY + 0.9, 0);
+  mesh(g, new THREE.ConeGeometry(1.15, 1.0, 8), domeMat, dx, lY + 2.3, 0, false);
+  mesh(g, new THREE.SphereGeometry(0.3, 8, 6), lam('#c9a24a'), dx, lY + 3.0, 0, false);
+  mesh(g, new THREE.CylinderGeometry(0.05, 0.05, 1.4, 4), lam('#2b2b2b'), dx, lY + 3.8, 0, false);
+
+  mergeByMaterial(g, shadow);
 }
 
 // ---------------------------------------------------------------------------
