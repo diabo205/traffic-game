@@ -499,8 +499,9 @@ export class CityMap {
       // On the central island of its roundabout, front facing east up M.A. Jinnah Road.
       { kind: 'merewether_tower', name: 'Merewether Clock Tower', obb: { x: MEREWETHER_CHOWK.x, z: MEREWETHER_CHOWK.z, hw: 6.5, hl: 6.5, heading: -0.6 } },
       { kind: 'arts_council', name: 'Art Council Roundabout', obb: { x: -812.4, z: -768.4, hw: 9.5, hl: 12.5, heading: 0.907 } },
-      // Deepened into the open ground behind; street front unchanged.
-      { kind: 'dj_science_college', name: 'DJ Science College', obb: { x: -816.9, z: -176.3, hw: 12.5, hl: 13.5, heading: -0.411 } },
+      // Full-length street front (~90 m) running away from the side road into
+      // the open ground (4 filler buildings culled), deepened behind.
+      { kind: 'dj_science_college', name: 'DJ Science College', obb: { x: -804.3, z: -205.2, hw: 12.5, hl: 45.0, heading: -0.411 } },
     ];
     for (const l of landmarkSpecs) this.landmarks.push(l);
 

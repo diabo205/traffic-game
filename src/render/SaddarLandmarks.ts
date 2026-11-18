@@ -2509,9 +2509,9 @@ function buildDjScienceCollege(
   mesh(g, new THREE.BoxGeometry(frontD, WALL, zH * 2), stone, x1 - frontD / 2, P + WALL / 2, 0);
   for (const s of [-1, 1]) mesh(g, new THREE.BoxGeometry(x1 - frontD - x0, WALL, wingW), stone, (x0 + x1 - frontD) / 2, P + WALL / 2, s * (zH - wingW / 2));
   const porW = 12.4; // portico width
-  const endW = 6.5; // gabled end pavilion (at -z)
+  const endW = 6.5; // gabled end pavilions at both ends of the street front
   const wingFront = (za: number, zb: number) => face(Math.abs(zb - za), x1, (za + zb) / 2, Math.PI / 2);
-  wingFront(porW / 2, zH);
+  wingFront(porW / 2, zH - endW);
   wingFront(-zH + endW, -porW / 2);
   for (const s of [-1, 1]) {
     face(x1 - x0, (x0 + x1) / 2, s * zH, s > 0 ? 0 : Math.PI);
@@ -2526,21 +2526,30 @@ function buildDjScienceCollege(
   const cy = (x0 + x1 - frontD) / 2;
   mesh(g, new THREE.PlaneGeometry(x1 - frontD - x0, zH * 2 - wingW * 2), lam('#d9cdb4', tiled(flagPavingTexture(), 3, 4)), cy, 0.04, 0, false).rotation.x = -Math.PI / 2;
 
-  // ---- Gabled end pavilion with a slender belfry tower (the -z end) ----
-  const ez = -zH + endW / 2;
-  mesh(g, new THREE.BoxGeometry(1.0, WALL, endW), stone, x1 + 0.5, P + WALL / 2, ez);
-  face(endW - 0.8, x1 + 1.0, ez, Math.PI / 2);
-  const gab = new THREE.Shape();
-  gab.moveTo(-endW / 2 - 0.3, 0);
-  gab.lineTo(endW / 2 + 0.3, 0);
-  gab.lineTo(0, 2.4);
-  gab.lineTo(-endW / 2 - 0.3, 0);
-  mesh(g, new THREE.ExtrudeGeometry(gab, { depth: 0.6, bevelEnabled: false }), light, x1 + 0.6, top + 0.2, ez, false).rotation.y = Math.PI / 2;
-  const roofG = gableRoofGeo(endW + 0.6, 2.3, 7.5);
-  roofG.rotateY(Math.PI / 2);
-  mesh(g, roofG, tile, x1 - 3.0, top + 0.3, ez, false);
+  // A cross range behind the dome tower splits the quadrangle into two courts
+  const crossW = 8;
+  mesh(g, new THREE.BoxGeometry(x1 - frontD - x0, WALL, crossW), stone, (x0 + x1 - frontD) / 2, P + WALL / 2, 0);
+  for (const s2 of [-1, 1]) face(x1 - frontD - x0, (x0 + x1 - frontD) / 2, s2 * crossW / 2, s2 > 0 ? 0 : Math.PI);
+  mesh(g, new THREE.BoxGeometry(x1 - frontD - x0 + 0.8, 0.5, crossW + 0.8), light, (x0 + x1 - frontD) / 2, top + 0.15, 0, false);
+
+  // ---- Gabled end pavilions; the belfry rises behind the +z one (left, seen from the street) ----
+  for (const s2 of [-1, 1]) {
+    const pz = s2 * (zH - endW / 2);
+    mesh(g, new THREE.BoxGeometry(1.0, WALL, endW), stone, x1 + 0.5, P + WALL / 2, pz);
+    face(endW - 0.8, x1 + 1.0, pz, Math.PI / 2);
+    const gab = new THREE.Shape();
+    gab.moveTo(-endW / 2 - 0.3, 0);
+    gab.lineTo(endW / 2 + 0.3, 0);
+    gab.lineTo(0, 2.4);
+    gab.lineTo(-endW / 2 - 0.3, 0);
+    mesh(g, new THREE.ExtrudeGeometry(gab, { depth: 0.6, bevelEnabled: false }), light, x1 + 0.6, top + 0.2, pz, false).rotation.y = Math.PI / 2;
+    const roofG = gableRoofGeo(endW + 0.6, 2.3, 7.5);
+    roofG.rotateY(Math.PI / 2);
+    mesh(g, roofG, tile, x1 - 3.0, top + 0.3, pz, false);
+  }
+  const ez = zH - endW / 2;
   // Belfry tower set just behind the gable
-  const bx = x1 - 4.0, bz = ez - 0.2, T = 3.4;
+  const bx = x1 - 4.0, bz = ez + 0.2, T = 3.4;
   mesh(g, new THREE.BoxGeometry(T, 5.5, T), stone, bx, top + 2.75, bz);
   mesh(g, new THREE.BoxGeometry(T + 0.4, 0.4, T + 0.4), light, bx, top + 5.6, bz, false);
   const bY = top + 5.8;
