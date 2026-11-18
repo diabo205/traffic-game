@@ -1,4 +1,4 @@
-import { obbOverlap } from '../math';
+import { obbOverlap, pointObbDistance } from '../math';
 import { Rng } from '../rng';
 import type { Obb } from '../types';
 import {
@@ -13,6 +13,8 @@ import {
   SADDAR_SLABS,
   SADDAR_YARDS,
 } from './saddarData';
+import { applyRoadPatches, MEREWETHER_CHOWK, PATCHED_ROUNDABOUTS, ringOuterR } from './saddarPatches';
+import type { RoadData } from './saddarPatches';
 
 /**
  * Static open-city map: Real Saddar (Karachi) road network converted from
@@ -249,9 +251,18 @@ export class CityMap {
   private paths = new Map<string, JunctionPath>();
 
   constructor() {
+    // Baked OSM data plus hand-made fixes (e.g. the Merewether Tower roundabout).
+    const road: RoadData = {
+      nodes: [...SADDAR_NODES],
+      links: [...SADDAR_LINKS],
+      segs: [...SADDAR_SEGS],
+      islands: [...SADDAR_ISLANDS],
+    };
+    applyRoadPatches(road);
+
     // ---- Nodes --------------------------------------------------------------
-    for (let i = 0; i < SADDAR_NODES.length; i++) {
-      const [x, z, ra] = SADDAR_NODES[i];
+    for (let i = 0; i < road.nodes.length; i++) {
+      const [x, z, ra] = road.nodes[i];
       this.nodes.push({
         id: i,
         x,
@@ -266,7 +277,7 @@ export class CityMap {
     }
 
     // ---- Undirected road strips (matched to baked pavement cutouts) ---------
-    for (const [u, v, hw] of SADDAR_SEGS) {
+    for (const [u, v, hw] of road.segs) {
       const a = this.nodes[u], b = this.nodes[v];
       this.roadSegs.push({ ax: a.x, az: a.z, bx: b.x, bz: b.z, hw });
       if (hw > this.nodeCapR[u]) this.nodeCapR[u] = hw;
@@ -286,8 +297,8 @@ export class CityMap {
     const raw: RawEdge[] = [];
     const byPair = new Map<string, number>();
 
-    for (let i = 0; i < SADDAR_LINKS.length; i++) {
-      const [u, v, clsCode, ln, lw, ow, tr, name] = SADDAR_LINKS[i];
+    for (let i = 0; i < road.links.length; i++) {
+      const [u, v, clsCode, ln, lw, ow, tr, name] = road.links[i];
       const from = this.nodes[u], to = this.nodes[v];
       const ddx = to.x - from.x, ddz = to.z - from.z;
       const d = Math.hypot(ddx, ddz) || 1;
@@ -414,7 +425,7 @@ export class CityMap {
 
     // ---- Pre-baked slabs, islands, landmarks, yards, POIs & buildings -------
     for (const [kind, pts, tris] of SADDAR_SLABS) this.slabs.push({ kind, pts, tris });
-    for (const [x, z, r, mon] of SADDAR_ISLANDS) this.islands.push({ x, z, r, monumental: mon === 1 });
+    for (const [x, z, r, mon] of road.islands) this.islands.push({ x, z, r, monumental: mon === 1 });
     const raNext = new Map<number, number>();
     for (const l of this.links) {
       if (this.nodes[l.from].roundabout && this.nodes[l.to].roundabout && !raNext.has(l.from)) raNext.set(l.from, l.to);
@@ -483,7 +494,8 @@ export class CityMap {
       { kind: 'madina_mall', name: 'Madina Mall', obb: { x: -160.5, z: -655.0, hw: 9.5, hl: 12.5, heading: 2.868 } },
       { kind: 'mazar_quaid', name: 'Mazar-e-Quaid', obb: { x: 644.0, z: 579.0, hw: 11.5, hl: 14.5, heading: 1.010 } },
       { kind: 'frere_hall', name: 'Frere Hall', obb: { x: -138.5, z: -821.6, hw: 10.0, hl: 14.0, heading: 2.818 } },
-      { kind: 'merewether_tower', name: 'Merewether Clock Tower', obb: { x: -899.1, z: 241.1, hw: 8.5, hl: 10.5, heading: -0.671 } },
+      // On the central island of its roundabout, front facing east up M.A. Jinnah Road.
+      { kind: 'merewether_tower', name: 'Merewether Clock Tower', obb: { x: MEREWETHER_CHOWK.x, z: MEREWETHER_CHOWK.z, hw: 6.5, hl: 6.5, heading: -0.6 } },
       { kind: 'arts_council', name: 'Art Council Roundabout', obb: { x: -812.4, z: -768.4, hw: 9.5, hl: 12.5, heading: 0.907 } },
       { kind: 'dj_science_college', name: 'DJ Science College', obb: { x: -814.1, z: -175.1, hw: 9.5, hl: 13.5, heading: -0.411 } },
     ];
@@ -519,6 +531,8 @@ export class CityMap {
       ) {
         continue;
       }
+      // Keep patched roundabouts (and a pavement's width round them) clear.
+      if (PATCHED_ROUNDABOUTS.some((ra) => pointObbDistance(ra.x, ra.z, b) < ringOuterR(ra) + 3)) continue;
       this.buildings.push(b);
       this.solids.push(b);
     }

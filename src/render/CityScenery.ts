@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { cityMap, KERB_H, SIDEWALK } from '../sim/city/cityMap';
+import { PATCHED_ROUNDABOUTS, ringOuterR } from '../sim/city/saddarPatches';
 import type { CityLink, CityMap } from '../sim/city/cityMap';
 import { pointObbDistance } from '../sim/math';
 import { Rng } from '../sim/rng';
@@ -29,6 +30,13 @@ import {
 type V3 = readonly [number, number, number];
 
 /** Collects textured triangles & quads (auto-oriented to a facing hint) into one geometry. */
+/** Distance from (px, pz) to segment a–b. */
+function segDistToPoint(ax: number, az: number, bx: number, bz: number, px: number, pz: number): number {
+  const ex = bx - ax, ez = bz - az;
+  const t = Math.max(0, Math.min(1, ((px - ax) * ex + (pz - az) * ez) / (ex * ex + ez * ez || 1)));
+  return Math.hypot(ax + ex * t - px, az + ez * t - pz);
+}
+
 class Tris {
   private pos: number[] = [];
   private uv: number[] = [];
@@ -626,16 +634,31 @@ export class CityScenery {
     const top = new Tris();
     const kerb = new Tris();
     const uvS = 1 / 3;
+    const cuts = PATCHED_ROUNDABOUTS.map((ra) => ({ x: ra.x, z: ra.z, r: ringOuterR(ra) }));
     for (const slab of map.slabs) {
       const pts = slab.pts;
       const n = pts.length / 2;
       if (n < 3) continue;
       const col = slab.kind === 1 ? PARK_TINT : WHITE;
-      for (let i = 0; i < slab.tris.length; i += 3) {
-        const i0 = slab.tris[i] * 2, i1 = slab.tris[i + 1] * 2, i2 = slab.tris[i + 2] * 2;
-        const x0 = pts[i0], z0 = pts[i0 + 1];
-        const x1 = pts[i1], z1 = pts[i1 + 1];
-        const x2 = pts[i2], z2 = pts[i2 + 1];
+      const emit = (x0: number, z0: number, x1: number, z1: number, x2: number, z2: number, depth: number): void => {
+        // Clip against patched roundabouts: subdivide triangles near a ring
+        // and drop the pieces that reach into its asphalt (the pavement
+        // collar laid in roundaboutCollars() covers the stepped edge).
+        const cut = cuts.find((c) => Math.min(x0, x1, x2) < c.x + c.r && Math.max(x0, x1, x2) > c.x - c.r && Math.min(z0, z1, z2) < c.z + c.r && Math.max(z0, z1, z2) > c.z - c.r);
+        if (cut) {
+          const inside = (x: number, z: number) => (x - cut.x) ** 2 + (z - cut.z) ** 2 < cut.r * cut.r;
+          const ins = (inside(x0, z0) ? 1 : 0) + (inside(x1, z1) ? 1 : 0) + (inside(x2, z2) ? 1 : 0);
+          if (ins === 3) return;
+          if (depth < 7) {
+            const ax = (x0 + x1) / 2, az = (z0 + z1) / 2, bx = (x1 + x2) / 2, bz = (z1 + z2) / 2, cx = (x2 + x0) / 2, cz = (z2 + z0) / 2;
+            emit(x0, z0, ax, az, cx, cz, depth + 1);
+            emit(ax, az, x1, z1, bx, bz, depth + 1);
+            emit(cx, cz, bx, bz, x2, z2, depth + 1);
+            emit(ax, az, bx, bz, cx, cz, depth + 1);
+            return;
+          }
+          if (ins > 0) return;
+        }
         top.tri(
           [x0, KERB_H, -z0],
           [x1, KERB_H, -z1],
@@ -644,6 +667,10 @@ export class CityScenery {
           UP,
           col,
         );
+      };
+      for (let i = 0; i < slab.tris.length; i += 3) {
+        const i0 = slab.tris[i] * 2, i1 = slab.tris[i + 1] * 2, i2 = slab.tris[i + 2] * 2;
+        emit(pts[i0], pts[i0 + 1], pts[i1], pts[i1 + 1], pts[i2], pts[i2 + 1], 0);
       }
       // Road-facing kerbs around the slab perimeter.
       let area = 0;
@@ -667,10 +694,27 @@ export class CityScenery {
           (map.isRoad(ax + ex * 0.5 + nx * 0.45, az + ez * 0.5 + nz * 0.45) ? 1 : 0) +
           (map.isRoad(ax + ex * 0.8 + nx * 0.45, az + ez * 0.8 + nz * 0.45) ? 1 : 0);
         const u1 = u + len;
-        if (hits >= (len > 6 ? 2 : 1)) {
+        const inRing = cuts.some((c) => segDistToPoint(ax, az, bx, bz, c.x, c.z) < c.r + 0.2);
+        if (!inRing && hits >= (len > 6 ? 2 : 1)) {
           kerb.quad([ax, 0, -az], [bx, 0, -bz], [bx, KERB_H, -bz], [ax, KERB_H, -az], [u, 0, u1, 0, u1, 1, u, 1], [nx, 0, -nz]);
         }
         u = u1;
+      }
+    }
+    // Pavement collar and kerb round each patched roundabout, broken where roads join.
+    for (const c of cuts) {
+      const K = 72, W = 2.8;
+      for (let k = 0; k < K; k++) {
+        const a0 = (k / K) * Math.PI * 2, a1 = ((k + 1) / K) * Math.PI * 2, am = (a0 + a1) / 2;
+        const out = (a: number, r: number): [number, number] => [c.x + Math.cos(a) * r, c.z + Math.sin(a) * r];
+        const [mx, mz] = out(am, c.r + W / 2);
+        if (map.isRoad(mx, mz) || map.nearRoad(mx, mz, 0.6)) continue;
+        const p00 = out(a0, c.r), p01 = out(a1, c.r), p11 = out(a1, c.r + W), p10 = out(a0, c.r + W);
+        const y = KERB_H + 0.006;
+        top.quad([p00[0], y, -p00[1]], [p01[0], y, -p01[1]], [p11[0], y, -p11[1]], [p10[0], y, -p10[1]],
+          [p00[0] * uvS, p00[1] * uvS, p01[0] * uvS, p01[1] * uvS, p11[0] * uvS, p11[1] * uvS, p10[0] * uvS, p10[1] * uvS], UP);
+        const nx = Math.cos(am), nz = Math.sin(am);
+        kerb.quad([p00[0], 0, -p00[1]], [p01[0], 0, -p01[1]], [p01[0], y, -p01[1]], [p00[0], y, -p00[1]], [0, 0, 1, 0, 1, 1, 0, 1], [-nx, 0, nz]);
       }
     }
     const pave = dirtTexture().clone();

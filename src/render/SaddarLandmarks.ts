@@ -19,6 +19,9 @@ import {
   stripesTexture,
 } from './textures';
 
+/** Top of a roundabout island's grass (CityScenery.islands). */
+const ISLAND_TOP = 0.35;
+
 const lam = (color: THREE.ColorRepresentation, map?: THREE.Texture, doubleSide = false) =>
   new THREE.MeshLambertMaterial({
     color,
@@ -2096,7 +2099,8 @@ function buildFrereHall(
  * base on a stepped plinth, a gabled stage of blind tracery, the clock
  * stage with four ~7 ft dials under crocketed gablets at about 21 m, an
  * open pinnacled lantern and a crocketed spire with a finial. Floodlit at
- * night. Stands on a railed, flag-paved island. Street front faces +x.
+ * night. Stands on a railed, flag-paved plot on the central island of
+ * Merewether Tower Chowk. Front faces +x (east, up M.A. Jinnah Road).
  */
 function buildMerewetherTower(
   group: THREE.Group,
@@ -2106,7 +2110,7 @@ function buildMerewetherTower(
   litMats: THREE.MeshLambertMaterial[],
 ): void {
   const g = new THREE.Group();
-  g.position.set(0, KERB_H, 0);
+  g.position.set(0, ISLAND_TOP, 0); // stands on its roundabout island
   group.add(g);
 
   // Floodlit stone: a faint warm emissive that only shows after dark.
