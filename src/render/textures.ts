@@ -1735,3 +1735,66 @@ export function djBayTexture(glow = false): THREE.Texture {
     return finish(c, true);
   });
 }
+
+/**
+ * One bay (≈4.6 m × 13.5 m, three storeys) of Karachi Grammar School's
+ * 1875 range: smooth buff Gizri sandstone ashlar, thin string courses, and
+ * on each floor a group of tall narrow windows filled with pierced stone
+ * jali screens. `glow` = night mask (light through the jali).
+ */
+export function kgsBayTexture(glow = false): THREE.Texture {
+  return cached(`kgsBay:${glow}`, () => {
+    const W = 160, H = 470;
+    const [c, ctx] = canvas(W, H);
+    const px = H / 13.5;
+    const y = (m: number) => H - m * px;
+    const stone = '#d9bd8a', light = '#e8d3a8', shade = '#b59a6a';
+    ctx.fillStyle = glow ? '#000' : stone;
+    ctx.fillRect(0, 0, W, H);
+    if (!glow) {
+      const rng = new Rng(1875);
+      for (let r = 0, yy = H; yy > 0; r++, yy -= 0.38 * px) {
+        ctx.fillStyle = 'rgba(120,95,55,0.18)';
+        ctx.fillRect(0, yy, W, 1);
+        for (let x = (r % 2) * 22; x < W; x += 44) {
+          ctx.fillRect(x, yy - 0.38 * px, 1, 0.38 * px);
+          ctx.fillStyle = `rgba(${rng.next() < 0.5 ? '255,245,220' : '150,120,80'},0.08)`;
+          ctx.fillRect(x + 1, yy - 0.38 * px + 1, 42, 0.38 * px - 2);
+          ctx.fillStyle = 'rgba(120,95,55,0.18)';
+        }
+      }
+      ctx.fillStyle = shade;
+      ctx.fillRect(0, y(0.6), W, 0.6 * px);
+      ctx.fillStyle = light;
+      for (const m of [4.55, 9.0]) ctx.fillRect(0, y(m), W, 0.18 * px);
+    }
+    const jali = (cx: number, base: number, w: number, h: number) => {
+      ctx.fillStyle = glow ? '#000' : light;
+      ctx.fillRect(cx - w / 2 - 3, base - h - 3, w + 6, h + 6);
+      ctx.fillStyle = glow ? '#ffcf86' : '#4c3f30';
+      ctx.fillRect(cx - w / 2, base - h, w, h);
+      // pierced lattice: diagonal stone grid leaving small diamonds open
+      ctx.strokeStyle = glow ? '#000' : '#cdb183';
+      ctx.lineWidth = 2.6;
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(cx - w / 2, base - h, w, h);
+      ctx.clip();
+      for (let d = -h; d < w + h; d += 6) {
+        ctx.beginPath();
+        ctx.moveTo(cx - w / 2 + d, base - h);
+        ctx.lineTo(cx - w / 2 + d - h, base);
+        ctx.moveTo(cx - w / 2 + d - h, base - h);
+        ctx.lineTo(cx - w / 2 + d, base);
+        ctx.stroke();
+      }
+      ctx.restore();
+    };
+    // Each floor: three tall narrow jali windows (ground floor slightly shorter)
+    const floors: ReadonlyArray<[number, number]> = [[1.3, 2.6], [5.4, 2.8], [9.8, 2.8]];
+    for (const [b, hh] of floors) {
+      for (const dx of [-30, 0, 30]) jali(W / 2 + dx, y(b), 0.42 * px, hh * px);
+    }
+    return finish(c, true);
+  });
+}

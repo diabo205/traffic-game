@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { KERB_H } from '../sim/city/cityMap';
+import { Rng } from '../sim/rng';
 import type { Landmark } from '../sim/city/cityMap';
 import { buildEmpressMarketAt, buildMazarModel } from './Landmarks';
 import { archFrameGeo, gableRoofGeo, mergeByMaterial, pointedArchShape } from './landmarkKit';
@@ -11,6 +12,7 @@ import {
   flagPavingTexture,
   frereBayTexture,
   highCourtBayTexture,
+  kgsBayTexture,
   djBayTexture,
   lawnTexture,
   colonialVerandahTexture,
@@ -155,7 +157,7 @@ export function buildSaddarLandmark(
       break;
     case 'grammar_school':
       sub.rotation.y = -heading;
-      buildKarachiGrammarSchool(sub, hw, hl, shadow);
+      buildKarachiGrammarSchool(sub, hw, hl, shadow, litMats);
       break;
     case 'press_club':
       sub.rotation.y = -heading;
@@ -1646,43 +1648,151 @@ function buildSindhHighCourt(
 // 16. Karachi Grammar School (1854 Gothic Sandstone Quadrangle at Depot Lines)
 // ---------------------------------------------------------------------------
 
-function buildKarachiGrammarSchool(group: THREE.Group, hw: number, hl: number, shadow: boolean): void {
+/**
+ * Karachi Grammar School, Saddar (the 1875 building), from a reference
+ * photo: a long, plain three-storey range of buff sandstone with a flat
+ * roof and parapet, rows of tall narrow windows filled with pierced stone
+ * jali screens, and slightly taller projecting end pavilions (an oculus
+ * high on each). A round-arched entrance arcade sits at the centre behind
+ * bougainvillea, facing a large playing-field lawn. Street front +x; the
+ * field lies between the street and the building.
+ */
+function buildKarachiGrammarSchool(
+  group: THREE.Group,
+  hw: number,
+  hl: number,
+  shadow: boolean,
+  litMats: THREE.MeshLambertMaterial[],
+): void {
   const g = new THREE.Group();
   g.position.set(0, KERB_H, 0);
   group.add(g);
 
-  const d = hw * 2;
-  const len = hl * 2;
-  const h = 11.5;
-  const stone = lam('#d8b878');
-  const darkStone = lam('#a68246');
-  const redRoof = lam('#8e3b2e');
-  const wallTex = gothicWallTexture();
+  const stone = lam('#d9bd8a', tiled(ashlarTexture(), 8, 4));
+  const light = lam('#e8d3a8');
+  const shade = lam('#b59a6a');
+  const dark = lam('#2e261d');
+  const iron = lam('#2b2d2f');
+  const white = lam('#f2f2f2');
+  const pot = lam('#a5552f');
+  const bays = new Map<number, THREE.MeshLambertMaterial>();
+  const bayMat = (n: number) => {
+    let m = bays.get(n);
+    if (!m) {
+      m = new THREE.MeshLambertMaterial({
+        color: '#ffffff',
+        map: tiled(kgsBayTexture(), n, 1),
+        emissive: new THREE.Color('#ffd49a'),
+        emissiveMap: tiled(kgsBayTexture(true), n, 1),
+        emissiveIntensity: 0,
+      });
+      litMats.push(m);
+      bays.set(n, m);
+    }
+    return m;
+  };
+  const WALL = 13.5;
+  const face = (w: number, x: number, z: number, a: number, h = WALL) => {
+    const n = Math.max(1, Math.round(w / 4.6));
+    const p = mesh(g, new THREE.PlaneGeometry(w, h), bayMat(n), x + Math.sin(a) * 0.03, h / 2, z + Math.cos(a) * 0.03, false);
+    p.rotation.y = a;
+    if (h !== WALL) {
+      const uv = p.geometry.getAttribute('uv');
+      for (let i = 0; i < uv.count; i++) uv.setY(i, uv.getY(i) * (h / WALL));
+    }
+  };
 
-  // Main Gothic Revival stone wing + pitched tile roof
-  mesh(g, new THREE.BoxGeometry(d - 3, h, len), stone, -1.5, h / 2, 0, shadow);
-  const f = mesh(g, new THREE.PlaneGeometry(len, h), lam('#ffffff', tiled(wallTex, len / 10, 1)), hw - 2.95, h / 2, 0, false);
-  f.rotation.y = Math.PI / 2;
-  const roof = new THREE.CylinderGeometry((d - 3) * 0.42, (d - 3) * 0.42, len, 3);
-  roof.rotateX(Math.PI / 2);
-  roof.rotateZ(Math.PI / 2);
-  roof.scale(1, 0.48, 1);
-  mesh(g, roof, redRoof, -1.5, h + 1.8, 0, shadow);
+  // ---- Grounds: playing field in front, paved walk along the building ----
+  const flat = (w: number, d: number, x: number, z: number, mat: THREE.Material, yy: number) => {
+    mesh(g, new THREE.PlaneGeometry(w, d), mat, x, yy, z, false).rotation.x = -Math.PI / 2;
+  };
+  flat(hw * 2, hl * 2, 0, 0, lam('#ffffff', tiled(lawnTexture(), hw / 4, hl / 4)), 0.02);
+  const D = 14; // range depth
+  const x0 = -hw + 0.8, x1 = x0 + D; // back and front faces
+  flat(4, hl * 2 - 2, x1 + 2, 0, lam('#cfc3a8', tiled(flagPavingTexture(), 1, 12)), 0.03);
+  // Boundary wall with railings along the street, gate in the middle
+  for (const s of [-1, 1]) {
+    const segL = hl - 4;
+    mesh(g, new THREE.BoxGeometry(0.4, 0.9, segL), stone, hw - 0.3, 0.45, s * (4 + segL / 2));
+    mesh(g, new THREE.BoxGeometry(0.06, 0.06, segL), iron, hw - 0.3, 1.9, s * (4 + segL / 2), false);
+    for (let z = 4.2; z < hl; z += 0.35) mesh(g, new THREE.BoxGeometry(0.04, 1.0, 0.04), iron, hw - 0.3, 1.4, s * z, false);
+    mesh(g, new THREE.BoxGeometry(0.9, 2.4, 0.9), stone, hw - 0.3, 1.2, s * 4);
+  }
+  // Goal posts at each end of the field
+  const fieldX = (x1 + 4 + hw) / 2;
+  for (const s of [-1, 1]) {
+    const gz = s * (hl - 4);
+    for (const d of [-2.4, 2.4]) mesh(g, new THREE.CylinderGeometry(0.06, 0.06, 2.2, 6), white, fieldX + d, 1.1, gz, false);
+    mesh(g, new THREE.BoxGeometry(4.9, 0.1, 0.1), white, fieldX, 2.2, gz, false);
+  }
 
-  // Central bell-gable tower over entrance arch
-  mesh(g, new THREE.BoxGeometry(4.5, h + 5.5, 6.8), darkStone, hw - 2.2, (h + 5.5) / 2, 0, shadow);
-  mesh(g, new THREE.ConeGeometry(4.2, 4.2, 4).rotateY(Math.PI / 4), redRoof, hw - 2.2, h + 7.6, 0, shadow);
+  // ---- Main range ----
+  const L = hl * 2 - 6; // range length
+  const pavW = 9, pavProj = 1.0, pavH = WALL + 2.4;
+  const xc = (x0 + x1) / 2;
+  mesh(g, new THREE.BoxGeometry(D, WALL, L), stone, xc, WALL / 2, 0);
+  const midL = L - pavW * 2;
+  const cenW = 10;
+  for (const s of [-1, 1]) face((midL - cenW) / 2, x1, s * (cenW / 2 + (midL - cenW) / 4), Math.PI / 2);
+  face(midL, x0, 0, -Math.PI / 2);
+  // Cornice and parapet
+  mesh(g, new THREE.BoxGeometry(D + 0.5, 0.35, L + 0.5), light, xc, WALL + 0.05, 0, false);
+  mesh(g, new THREE.BoxGeometry(D + 0.2, 1.0, L + 0.2), stone, xc, WALL + 0.7, 0, false);
+  mesh(g, new THREE.BoxGeometry(D + 0.35, 0.15, L + 0.35), light, xc, WALL + 1.25, 0, false);
+  // Flagpole on the roof
+  mesh(g, new THREE.CylinderGeometry(0.04, 0.05, 5, 6), lam('#d0d0d0'), xc + 2, WALL + 3.5, 0, false);
 
-  const sign = mesh(
-    g,
-    new THREE.PlaneGeometry(16, 1.5),
-    lam('#ffffff', signTexture(['KARACHI GRAMMAR SCHOOL · کراچی گرامر اسکول', 'INDUSTRIA ET PROBITE · FOUNDED 1847'], '#1a237e', '#ffd54f', 768, 128)),
-    hw + 0.08,
-    4.6,
-    0,
-    false,
-  );
-  sign.rotation.y = Math.PI / 2;
+  // Central entrance block: slightly projecting, arched doorways below
+  mesh(g, new THREE.BoxGeometry(0.8, WALL, cenW), stone, x1 + 0.4, WALL / 2, 0);
+  face(cenW, x1 + 0.8, 0, Math.PI / 2);
+  const arch = (w: number, h: number) =>
+    new THREE.ShapeGeometry(new THREE.Shape().absarc(0, h - w / 2, w / 2, 0, Math.PI, false).lineTo(-w / 2, 0).lineTo(w / 2, 0).lineTo(w / 2, h - w / 2), 10);
+  for (const z of [-2.6, 0, 2.6]) {
+    const w = z === 0 ? 2.2 : 1.7, hh = z === 0 ? 3.9 : 3.3;
+    mesh(g, arch(w + 0.5, hh + 0.25), light, x1 + 0.84, 0.35, z, false).rotation.y = Math.PI / 2;
+    mesh(g, arch(w, hh), dark, x1 + 0.86, 0.35, z, false).rotation.y = Math.PI / 2;
+  }
+  // Arched window over the main door
+  mesh(g, arch(1.2, 2.2), light, x1 + 0.84, 5.6, 0, false).rotation.y = Math.PI / 2;
+  mesh(g, arch(0.9, 1.9), dark, x1 + 0.86, 5.75, 0, false).rotation.y = Math.PI / 2;
+
+  // ---- End pavilions: taller, projecting, oculus high on the front ----
+  for (const s of [-1, 1]) {
+    const pz = s * (L / 2 - pavW / 2);
+    mesh(g, new THREE.BoxGeometry(D + pavProj, pavH, pavW), stone, xc + pavProj / 2, pavH / 2, pz);
+    face(pavW, x1 + pavProj, pz, Math.PI / 2);
+    face(D + pavProj, xc + pavProj / 2, s * (L / 2), s > 0 ? 0 : Math.PI);
+    face(pavW, x0, pz, -Math.PI / 2);
+    mesh(g, new THREE.BoxGeometry(D + pavProj + 0.5, 0.35, pavW + 0.5), light, xc + pavProj / 2, pavH + 0.05, pz, false);
+    mesh(g, new THREE.BoxGeometry(D + pavProj + 0.2, 0.8, pavW + 0.2), stone, xc + pavProj / 2, pavH + 0.6, pz, false);
+    const ring = new THREE.Shape();
+    ring.absarc(0, 0, 0.75, 0, Math.PI * 2, false);
+    const hole = new THREE.Path();
+    hole.absarc(0, 0, 0.52, 0, Math.PI * 2, true);
+    ring.holes.push(hole);
+    mesh(g, new THREE.ExtrudeGeometry(ring, { depth: 0.12, bevelEnabled: false, curveSegments: 12 }), light, x1 + pavProj + 0.02, WALL + 0.9, pz, false).rotation.y = Math.PI / 2;
+    mesh(g, new THREE.CircleGeometry(0.52, 12), dark, x1 + pavProj + 0.03, WALL + 0.9, pz, false).rotation.y = Math.PI / 2;
+  }
+  // Plinth along the front
+  mesh(g, new THREE.BoxGeometry(0.5, 0.6, L), shade, x1 + 0.25, 0.3, 0, false);
+
+  // ---- Bougainvillea climbing the front, planters and benches ----
+  const leaf = lam('#4f7d34');
+  const blooms = [lam('#d6246e'), lam('#e0457f'), lam('#c2185b')];
+  const rng = new Rng(18751);
+  for (let i = 0; i < 9; i++) {
+    const z = -midL / 2 + 2 + i * ((midL - 4) / 8);
+    if (Math.abs(z) < 1.4) continue;
+    const r = 1.4 + rng.next() * 0.8;
+    mesh(g, new THREE.IcosahedronGeometry(r, 0).scale(0.6, 1.4, 1), leaf, x1 + 1.1, r * 1.4, z, false);
+    mesh(g, new THREE.IcosahedronGeometry(r * 0.85, 0).scale(0.55, 1.2, 1), blooms[i % 3], x1 + 1.5, r * 1.9, z + 0.3, false);
+  }
+  for (let i = 0; i < 6; i++) {
+    const z = -midL / 2 + 3 + i * ((midL - 6) / 5);
+    mesh(g, new THREE.BoxGeometry(0.5, 0.45, 1.6), pot, x1 + 3.6, 0.23, z, false);
+    mesh(g, new THREE.SphereGeometry(0.45, 6, 4), leaf, x1 + 3.6, 0.6, z, false);
+  }
+  mergeByMaterial(g, shadow);
 }
 
 // ---------------------------------------------------------------------------

@@ -490,7 +490,8 @@ export class CityMap {
       { kind: 'passport_office', name: 'Passport Office Saddar', obb: { x: -692.4, z: -308.2, hw: 9.5, hl: 13.0, heading: 1.196 } },
       { kind: 'preedy_police', name: 'Preedy Police Station', obb: { x: -871.5, z: 134.5, hw: 9.5, hl: 13.0, heading: 2.581 } },
       { kind: 'press_club', name: 'Karachi Press Club', obb: { x: -396.5, z: -608.4, hw: 9.0, hl: 12.0, heading: 2.848 } },
-      { kind: 'grammar_school', name: 'Karachi Grammar School', obb: { x: -223.8, z: 492.0, hw: 11.5, hl: 16.0, heading: -2.173 } },
+      // Compound with the playing field in front of the 60 m range; street edge unchanged.
+      { kind: 'grammar_school', name: 'Karachi Grammar School', obb: { x: -219.3, z: 485.4, hw: 19.5, hl: 30.0, heading: -2.173 } },
       { kind: 'ymca', name: 'Historic YMCA', obb: { x: -494.6, z: -784.9, hw: 10.5, hl: 14.0, heading: -1.706 } },
       { kind: 'madina_mall', name: 'Madina Mall', obb: { x: -160.5, z: -655.0, hw: 9.5, hl: 12.5, heading: 2.868 } },
       // Square compound, set back from M.A. Jinnah Rd into the open block.
