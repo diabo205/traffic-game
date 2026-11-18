@@ -1202,3 +1202,109 @@ export function cinemaPosterTexture(variant: 0 | 1): THREE.Texture {
   });
 }
 
+
+/**
+ * One bay of Empress Market's wings (≈4.2 m × 11 m): yellow Jodhpur
+ * sandstone with lighter polychrome banding, a tall pointed-arch shop
+ * opening packed with produce on the ground floor, a string course, and a
+ * pair of Tudor-style lancets above. `glow` = night emissive mask.
+ */
+export function empressBayTexture(glow = false): THREE.Texture {
+  return cached(`empressBay:${glow}`, () => {
+    const W = 160, H = 400;
+    const [c, ctx] = canvas(W, H);
+    const px = H / 11; // pixels per metre
+    const y = (m: number) => H - m * px; // metres above ground -> canvas y
+    ctx.fillStyle = glow ? '#000' : '#d3ab68';
+    ctx.fillRect(0, 0, W, H);
+    if (!glow) {
+      // Ashlar courses with lighter bands every few courses
+      for (let k = 0, yy = H; yy > 0; k++, yy -= 13) {
+        if (k % 4 === 0) {
+          ctx.fillStyle = '#e6cd96';
+          ctx.fillRect(0, yy - 13, W, 13);
+        }
+        ctx.fillStyle = 'rgba(110,75,35,0.25)';
+        ctx.fillRect(0, yy, W, 1.5);
+        const off = k % 2 ? 0 : 20;
+        for (let x = off; x < W; x += 40) ctx.fillRect(x, yy - 13, 1.5, 13);
+      }
+      // Plinth, string course, cornice
+      ctx.fillStyle = '#a9824a';
+      ctx.fillRect(0, y(0.55), W, 0.55 * px);
+      ctx.fillStyle = '#ecd7a6';
+      ctx.fillRect(0, y(6.6), W, 0.3 * px);
+      ctx.fillStyle = '#a9824a';
+      ctx.fillRect(0, y(6.3), W, 0.08 * px);
+      ctx.fillStyle = '#ecd7a6';
+      ctx.fillRect(0, 0, W, 0.35 * px);
+      ctx.fillStyle = '#a9824a';
+      ctx.fillRect(0, 0.35 * px, W, 0.1 * px);
+      // Pilaster strips between bays
+      ctx.fillStyle = '#c29a58';
+      ctx.fillRect(0, y(10.5), 7, 10 * px);
+      ctx.fillRect(W - 7, y(10.5), 7, 10 * px);
+    }
+    // Ground-floor shop arch with voussoir surround
+    const cx = W / 2, base = y(0.55), aHw = 1.45 * px, aH = 5.5 * px;
+    if (!glow) {
+      ctx.fillStyle = '#ecd7a6';
+      archPath(ctx, cx, base, aHw + 9, aH + 10);
+      ctx.fill();
+      ctx.fillStyle = '#a9824a';
+      archPath(ctx, cx, base, aHw + 3, aH + 3);
+      ctx.fill();
+    }
+    ctx.save();
+    archPath(ctx, cx, base, aHw, aH);
+    ctx.clip();
+    ctx.fillStyle = glow ? '#5a3a14' : '#3a2616';
+    ctx.fillRect(0, 0, W, H);
+    // Shelves of produce, spice sacks and hanging goods
+    const goods = ['#e53935', '#fb8c00', '#fdd835', '#7cb342', '#8d6e63', '#c62828', '#f4511e', '#ffee58'];
+    let gi = 0;
+    for (let sy = base - 0.4 * px; sy > base - aH + 20; sy -= 0.75 * px) {
+      ctx.fillStyle = glow ? '#3a2410' : '#6d4c33';
+      ctx.fillRect(cx - aHw, sy, aHw * 2, 3);
+      for (let gx = cx - aHw + 3; gx < cx + aHw - 6; gx += 9) {
+        ctx.fillStyle = glow ? '#c98a3a' : goods[gi++ % goods.length];
+        ctx.beginPath();
+        ctx.arc(gx + 4, sy - 5, 4.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+    // Stall counter and striped awning lip
+    ctx.fillStyle = glow ? '#4a2e10' : '#8d6e4a';
+    ctx.fillRect(cx - aHw, base - 1.0 * px, aHw * 2, 1.0 * px);
+    for (let sx = cx - aHw; sx < cx + aHw; sx += 12) {
+      ctx.fillStyle = glow ? '#000' : (sx / 12) % 2 < 1 ? '#1565c0' : '#f5f5f5';
+      ctx.fillRect(sx, base - aH + 0.55 * aH, 12, 10);
+    }
+    ctx.restore();
+    // Upper floor: twin Tudor lancets under a hood mould
+    for (const s of [-1, 1]) {
+      const lx = cx + s * 0.62 * px;
+      if (!glow) {
+        ctx.fillStyle = '#ecd7a6';
+        archPath(ctx, lx, y(7.05), 0.48 * px, 2.95 * px);
+        ctx.fill();
+      }
+      ctx.fillStyle = glow ? '#ffcf7a' : '#2a2a30';
+      archPath(ctx, lx, y(7.15), 0.36 * px, 2.7 * px);
+      ctx.fill();
+      if (!glow) {
+        ctx.fillStyle = 'rgba(160,190,210,0.35)';
+        ctx.fillRect(lx - 0.3 * px, y(9.0), 0.6 * px, 2);
+        ctx.fillRect(lx - 1, y(9.6), 2, 2.4 * px);
+      }
+    }
+    if (!glow) {
+      // Small quatrefoil roundel between the lancets
+      ctx.fillStyle = '#a9824a';
+      ctx.beginPath();
+      ctx.arc(cx, y(10.0), 0.22 * px, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    return finish(c, true);
+  });
+}

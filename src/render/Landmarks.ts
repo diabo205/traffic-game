@@ -2,7 +2,8 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { FINISH_Z, sampleRoad } from '../sim/road';
 import { corridorEdges, FOOTPATH_W } from './Saddar';
-import { clockFaceTexture, gothicWallTexture, kerbStripeTexture, mazarFaceTexture, signTexture } from './textures';
+import { clockFaceTexture, empressBayTexture, kerbStripeTexture, mazarFaceTexture, signTexture } from './textures';
+import { archFrameGeo, gableRoofGeo, mergeByMaterial, pointedArchShape } from './landmarkKit';
 
 /**
  * Low-poly Karachi landmarks placed along the route. Render-only.
@@ -67,7 +68,11 @@ function buildEmpressMarket(group: THREE.Group, shadow: boolean, litMats: THREE.
 }
 
 /**
- * Empress Market hall, street facade facing +x.
+ * Empress Market (James Strachan, 1884–89): four two-storey wings of yellow
+ * Jodhpur sandstone around an open quadrangle, Venetian/Domestic Gothic
+ * shop arcades below and twin Tudor lancets above, pyramid-roofed corner
+ * pavilions, and the ~140 ft clock tower over the main entrance with four
+ * dials. Stalls crowd the courtyard. Street facade faces +x.
  * @param face three-space x of the street facade
  * @param zc three-space z of the hall's centre
  * @param len length along z
@@ -81,68 +86,237 @@ export function buildEmpressMarketAt(
   litMats: THREE.MeshLambertMaterial[] = [],
 ): void {
   const g = new THREE.Group();
+  g.position.set(face, 0, zc); // local: street face at x = 0, building toward -x
   group.add(g);
-  const depth = 26, h = 12;
-  const cx = face - depth / 2;
-  const stone = lam('#d6b06a');
-  const darkStone = lam('#b8914f');
-  const wall = gothicWallTexture();
+  const D = 26;
+  const L = len;
+  const stone = lam('#d3ab68');
+  const dressed = lam('#ecd7a6');
+  const trim = lam('#a9824a');
+  const tile = lam('#8e4b32');
+  const slate = lam('#5b5248');
+  const dark = lam('#2a1d14');
+  const iron = lam('#2b2b2b');
+  const paving = lam('#cbbd9f');
 
-  // Hall body + gothic facades.
-  mesh(g, new THREE.BoxGeometry(depth, h, len), stone, cx, h / 2, zc, shadow);
-  const front = mesh(g, new THREE.PlaneGeometry(len, h), lam('#ffffff', tiled(wall, len / 12, 1)), face + 0.02, h / 2, zc, false);
-  front.rotation.y = Math.PI / 2;
+  const bayMats = new Map<number, THREE.MeshLambertMaterial>();
+  const bayMat = (n: number) => {
+    let m = bayMats.get(n);
+    if (!m) {
+      m = new THREE.MeshLambertMaterial({
+        color: '#ffffff',
+        map: tiled(empressBayTexture(), n, 1),
+        emissive: new THREE.Color('#ffd9a0'),
+        emissiveMap: tiled(empressBayTexture(true), n, 1),
+        emissiveIntensity: 0,
+      });
+      litMats.push(m);
+      bayMats.set(n, m);
+    }
+    return m;
+  };
+  const WALL = 11;
+  /** Arcaded wall face of length `w`, centred at (x, z), facing angle `a` (0 = +z, π/2 = +x). */
+  const bays = (w: number, x: number, z: number, a: number) => {
+    const n = Math.max(1, Math.round(w / 4.2));
+    const p = mesh(g, new THREE.PlaneGeometry(w, WALL), bayMat(n), x + Math.sin(a) * 0.03, WALL / 2, z + Math.cos(a) * 0.03, false);
+    p.rotation.y = a;
+  };
+  const E = Math.PI / 2; // facing +x (street)
+  const Wd = -Math.PI / 2;
+
+  // ---- Layout ----
+  const PAV = 8; // corner pavilion size
+  const frontD = 8, backD = 7, sideW = 7;
+  const B = -D; // back face x
+  const zN = L / 2;
+  const wingLenZ = L - 2 * PAV;
+  const sideLenX = D - 2 * PAV;
+
+  // Courtyard floor
+  const court = mesh(g, new THREE.PlaneGeometry(D - frontD - backD, L - 2 * sideW), paving, (B + backD - frontD) / 2, 0.04, 0, false);
+  court.rotation.x = -Math.PI / 2;
+
+  // ---- Wings: front & back (along z), sides (along x) ----
+  const wing = (cx: number, cz: number, sx: number, sz: number, ridgeAlongZ: boolean) => {
+    mesh(g, new THREE.BoxGeometry(sx, WALL, sz), stone, cx, WALL / 2, cz);
+    mesh(g, new THREE.BoxGeometry(sx + 0.3, 0.35, sz + 0.3), dressed, cx, WALL + 0.1, cz, false);
+    const roof = gableRoofGeo((ridgeAlongZ ? sx : sz) + 0.8, 3.4, ridgeAlongZ ? sz : sx);
+    if (!ridgeAlongZ) roof.rotateY(Math.PI / 2);
+    mesh(g, roof, tile, cx, WALL + 0.25, cz);
+  };
+  wing(-frontD / 2, 0, frontD, wingLenZ, true);
+  wing(B + backD / 2, 0, backD, wingLenZ, true);
+  for (const s of [-1, 1]) wing(-D / 2, s * (zN - sideW / 2), sideLenX, sideW, false);
+
+  // Arcaded faces: street, back, both sides, and the four courtyard faces
+  const half = wingLenZ / 2;
+  bays(half - 4.5, 0, (half + 4.5) / 2, E); // street front, either side of the tower
+  bays(half - 4.5, 0, -(half + 4.5) / 2, E);
+  bays(wingLenZ, B, 0, Wd);
   for (const s of [-1, 1]) {
-    const end = mesh(g, new THREE.PlaneGeometry(depth, h), lam('#ffffff', tiled(wall, depth / 12, 1)), cx, h / 2, zc + s * (len / 2 + 0.02), false);
-    end.rotation.y = s > 0 ? 0 : Math.PI;
+    bays(sideLenX, -D / 2, s * zN, s > 0 ? 0 : Math.PI);
+    bays(sideLenX, -D / 2, s * (zN - sideW), s > 0 ? Math.PI : 0);
   }
-  // Pitched roof ridge.
-  const roof = new THREE.CylinderGeometry(depth * 0.36, depth * 0.36, len - 2, 3);
-  roof.rotateX(Math.PI / 2);
-  roof.rotateZ(Math.PI / 2);
-  roof.scale(1, 0.55, 1);
-  mesh(g, roof, lam('#9c7a52'), cx, h + 2.2, zc, shadow);
-  // Crenellated parapet along the street.
-  const merlons: THREE.BufferGeometry[] = [];
-  for (let z = -len / 2 + 0.8; z < len / 2; z += 1.8) merlons.push(new THREE.BoxGeometry(0.7, 1.0, 0.9).translate(face - 0.3, h + 0.5, zc + z));
-  const merged = mergeGeometries(merlons);
-  if (merged) mesh(g, merged, darkStone, 0, 0, 0, false);
-  // Corner turrets with pyramid caps.
-  for (const z of [-len / 2, len / 2]) {
-    for (const x of [face - 1.2, face - depth + 1.2]) {
-      mesh(g, new THREE.BoxGeometry(2.6, h + 4, 2.6), darkStone, x, (h + 4) / 2, zc + z, shadow);
-      const cap = new THREE.ConeGeometry(2.0, 3.2, 4);
-      cap.rotateY(Math.PI / 4);
-      mesh(g, cap, lam('#8a6a40'), x, h + 4 + 1.6, zc + z, shadow);
+  bays(wingLenZ, -frontD, 0, Wd);
+  bays(wingLenZ, B + backD, 0, E);
+
+  // Bay pinnacles along the street parapet
+  const nFront = Math.round((half - 4.5) / 4.2);
+  const stepF = (half - 4.5) / nFront;
+  for (const s of [-1, 1]) {
+    for (let i = 0; i <= nFront; i++) {
+      const z = s * (4.5 + i * stepF);
+      mesh(g, new THREE.BoxGeometry(0.5, 1.2, 0.5), stone, 0.0, WALL + 0.6, z, false);
+      mesh(g, new THREE.ConeGeometry(0.32, 1.1, 4).rotateY(Math.PI / 4), dressed, 0.0, WALL + 1.75, z, false);
+    }
+  }
+  // Side & back entrance gables with deep pointed doorways
+  const entrance = (x: number, z: number, a: number, w: number) => {
+    const gab = new THREE.Shape();
+    gab.moveTo(-w / 2, 0);
+    gab.lineTo(w / 2, 0);
+    gab.lineTo(0, w * 0.55);
+    gab.lineTo(-w / 2, 0);
+    const gm = mesh(g, new THREE.ExtrudeGeometry(gab, { depth: 0.6, bevelEnabled: false }), stone, x - Math.sin(a) * 0.3, WALL, z - Math.cos(a) * 0.3, false);
+    gm.rotation.y = a;
+    const door = mesh(g, new THREE.ShapeGeometry(pointedArchShape(1.6, 5.4) as THREE.Shape), dark, x + Math.sin(a) * 0.06, 0.4, z + Math.cos(a) * 0.06, false);
+    door.rotation.y = a;
+    const fr = mesh(g, archFrameGeo(1.6, 5.4, 0.45, 0.4), dressed, x + Math.sin(a) * 0.35, 0.4, z + Math.cos(a) * 0.35, false);
+    fr.rotation.y = a;
+    for (const d of [-1, 1]) {
+      const px = x + Math.cos(a) * d * (w / 2), pz = z - Math.sin(a) * d * (w / 2);
+      mesh(g, new THREE.BoxGeometry(0.8, WALL + 2.4, 0.8), stone, px, (WALL + 2.4) / 2, pz);
+      mesh(g, new THREE.ConeGeometry(0.5, 1.8, 4).rotateY(Math.PI / 4), dressed, px, WALL + 3.3, pz, false);
+    }
+  };
+  for (const s of [-1, 1]) entrance(-D / 2, s * zN, s > 0 ? 0 : Math.PI, 6);
+  entrance(B, 0, Wd, 6);
+
+  // ---- Corner pavilions ----
+  const PAVH = 15;
+  for (const sx of [0, 1]) {
+    for (const sz of [-1, 1]) {
+      const px = sx === 0 ? -PAV / 2 : B + PAV / 2;
+      const pz = sz * (zN - PAV / 2);
+      mesh(g, new THREE.BoxGeometry(PAV, PAVH, PAV), stone, px, PAVH / 2, pz);
+      // Outward faces carry two arcade bays
+      bays(PAV, px + (sx === 0 ? PAV / 2 : -PAV / 2), pz, sx === 0 ? E : Wd);
+      bays(PAV, px, pz + sz * PAV / 2, sz > 0 ? 0 : Math.PI);
+      for (const y of [WALL, PAVH]) mesh(g, new THREE.BoxGeometry(PAV + 0.4, 0.4, PAV + 0.4), dressed, px, y, pz, false);
+      // Corner quoins / buttresses with pinnacles
+      for (const cx of [-1, 1]) {
+        for (const cz of [-1, 1]) {
+          mesh(g, new THREE.BoxGeometry(0.9, PAVH + 1.0, 0.9), trim, px + cx * PAV / 2, (PAVH + 1.0) / 2, pz + cz * PAV / 2);
+          mesh(g, new THREE.ConeGeometry(0.55, 2.2, 4).rotateY(Math.PI / 4), dressed, px + cx * PAV / 2, PAVH + 2.1, pz + cz * PAV / 2, false);
+        }
+      }
+      mesh(g, new THREE.ConeGeometry(PAV * 0.62, 5.2, 4).rotateY(Math.PI / 4), slate, px, PAVH + 2.6, pz);
+      mesh(g, new THREE.BoxGeometry(0.12, 1.6, 0.12), iron, px, PAVH + 5.9, pz, false);
     }
   }
 
-  // Clock tower over the main entrance.
-  const tx = face - 4.5, tH = 30;
-  const shaft = mesh(g, new THREE.BoxGeometry(8, tH, 8), lam('#ffffff', tiled(wall, 0.66, 2.5)), tx, tH / 2, zc, shadow);
-  void shaft;
-  mesh(g, new THREE.BoxGeometry(9, 1.2, 9), darkStone, tx, tH + 0.6, zc, shadow);
-  const clockTex = clockFaceTexture();
-  const clock = new THREE.MeshLambertMaterial({
-    color: '#ffffff',
-    map: clockTex,
-    emissiveMap: clockTex,
-    emissive: new THREE.Color('#fff2c4'),
-    emissiveIntensity: 0,
-  });
-  litMats.push(clock);
-  for (let i = 0; i < 4; i++) {
-    const a = (i / 4) * Math.PI * 2;
-    const c = mesh(g, new THREE.PlaneGeometry(3.4, 3.4), clock, tx + Math.sin(a) * 4.05, tH - 3.5, zc + Math.cos(a) * 4.05, false);
-    c.rotation.y = a;
+  // ---- Clock tower over the main (street) entrance ----
+  const T = 9;
+  const tx = -T / 2;
+  const shaftH = 24, clockH = 5.2, belfryH = 4.2;
+  mesh(g, new THREE.BoxGeometry(T, shaftH + clockH, T), stone, tx, (shaftH + clockH) / 2, 0);
+  // Banded shaft: lighter courses + tall paired lancets up the street face
+  for (let y = 3; y < shaftH; y += 3.2) mesh(g, new THREE.BoxGeometry(T + 0.1, 0.45, T + 0.1), dressed, tx, y, 0, false);
+  for (const y of [WALL, shaftH]) mesh(g, new THREE.BoxGeometry(T + 0.6, 0.5, T + 0.6), trim, tx, y, 0, false);
+  for (let f = 0; f < 4; f++) {
+    const a = (f / 4) * Math.PI * 2;
+    const ox = Math.sin(a), oz = Math.cos(a);
+    const r = T / 2 + 0.05;
+    for (const d of [-1, 1]) {
+      const w = mesh(g, new THREE.ShapeGeometry(pointedArchShape(0.5, 4.6) as THREE.Shape), dark, tx + ox * r + Math.cos(a) * d * 1.3, 15.2, oz * r - Math.sin(a) * d * 1.3, false);
+      w.rotation.y = a;
+    }
   }
-  // Open belfry: four corner piers + cornice.
-  for (const dx of [-3.4, 3.4]) for (const dz of [-3.4, 3.4]) mesh(g, new THREE.BoxGeometry(1.2, 6, 1.2), stone, tx + dx, tH + 4.2, zc + dz, shadow);
-  mesh(g, new THREE.BoxGeometry(8.6, 1, 8.6), darkStone, tx, tH + 7.6, zc, shadow);
-  const spire = new THREE.ConeGeometry(5.8, 11, 4);
-  spire.rotateY(Math.PI / 4);
-  mesh(g, spire, lam('#9c7a52'), tx, tH + 8.1 + 5.5, zc, shadow);
-  for (const dx of [-3.8, 3.8]) for (const dz of [-3.8, 3.8]) mesh(g, new THREE.ConeGeometry(0.5, 3, 4), darkStone, tx + dx, tH + 9.6, zc + dz, false);
+  // Clasping corner buttresses
+  for (const cx of [-1, 1]) {
+    for (const cz of [-1, 1]) {
+      mesh(g, new THREE.BoxGeometry(1.2, shaftH, 1.2), trim, tx + cx * (T / 2), shaftH / 2, cz * (T / 2));
+    }
+  }
+  // Grand entrance arch + name plaque on the street face
+  mesh(g, new THREE.ShapeGeometry(pointedArchShape(2.4, 8.2) as THREE.Shape), dark, 0.06, 0.2, 0, false).rotation.y = E;
+  mesh(g, archFrameGeo(2.4, 8.2, 0.7, 0.6), dressed, 0.6, 0.2, 0, false).rotation.y = E;
+  const plaqueTex = signTexture(['EMPRESS MARKET', 'ایمپریس مارکیٹ · 1889'], '#4a2c14', '#f4e2b6', 512, 128);
+  const plaque = new THREE.MeshLambertMaterial({ color: '#ffffff', map: plaqueTex, emissive: new THREE.Color('#f4e2b6'), emissiveMap: plaqueTex, emissiveIntensity: 0 });
+  litMats.push(plaque);
+  mesh(g, new THREE.PlaneGeometry(6.4, 1.6), plaque, 0.12, 10.0, 0, false).rotation.y = E;
+
+  // Clock stage: four 6 ft-class dials under gabled hoods
+  const clockTex = clockFaceTexture();
+  const clock = new THREE.MeshLambertMaterial({ color: '#ffffff', map: clockTex, emissiveMap: clockTex, emissive: new THREE.Color('#fff2c4'), emissiveIntensity: 0 });
+  litMats.push(clock);
+  const cy = shaftH + clockH / 2;
+  for (let f = 0; f < 4; f++) {
+    const a = (f / 4) * Math.PI * 2;
+    const ox = Math.sin(a), oz = Math.cos(a);
+    const r = T / 2 + 0.08;
+    mesh(g, new THREE.CircleGeometry(1.95, 24), clock, tx + ox * r, cy, oz * r, false).rotation.y = a;
+    const ring = new THREE.RingGeometry(1.95, 2.3, 24);
+    mesh(g, ring, trim, tx + ox * (r + 0.01), cy, oz * (r + 0.01), false).rotation.y = a;
+    const hood = new THREE.Shape();
+    hood.moveTo(-T / 2 + 0.6, 0);
+    hood.lineTo(T / 2 - 0.6, 0);
+    hood.lineTo(0, 2.6);
+    hood.lineTo(-T / 2 + 0.6, 0);
+    const hm = mesh(g, new THREE.ExtrudeGeometry(hood, { depth: 0.5, bevelEnabled: false }), stone, tx + ox * (T / 2 - 0.2), shaftH + clockH, oz * (T / 2 - 0.2), false);
+    hm.rotation.y = a;
+  }
+  // Open belfry: corner piers, pointed openings, inner core
+  const by = shaftH + clockH;
+  mesh(g, new THREE.BoxGeometry(T - 3.0, belfryH, T - 3.0), dark, tx, by + belfryH / 2, 0);
+  for (const cx of [-1, 1]) {
+    for (const cz of [-1, 1]) {
+      mesh(g, new THREE.BoxGeometry(1.5, belfryH, 1.5), stone, tx + cx * (T / 2 - 0.75), by + belfryH / 2, cz * (T / 2 - 0.75));
+    }
+  }
+  for (let f = 0; f < 4; f++) {
+    const a = (f / 4) * Math.PI * 2;
+    const fr = mesh(g, archFrameGeo(2.2, belfryH - 0.4, 0.35, 0.4), stone, tx + Math.sin(a) * (T / 2), by, Math.cos(a) * (T / 2), false);
+    fr.rotation.y = a;
+  }
+  // Parapet, corner pinnacles, steep pyramid spire and iron finial (~43 m overall)
+  const py = by + belfryH;
+  mesh(g, new THREE.BoxGeometry(T + 0.8, 0.5, T + 0.8), dressed, tx, py + 0.25, 0, false);
+  mesh(g, new THREE.BoxGeometry(T + 0.4, 1.1, T + 0.4), stone, tx, py + 1.05, 0, false);
+  for (const cx of [-1, 1]) {
+    for (const cz of [-1, 1]) {
+      mesh(g, new THREE.BoxGeometry(0.9, 2.4, 0.9), stone, tx + cx * (T / 2), py + 1.2, cz * (T / 2));
+      mesh(g, new THREE.ConeGeometry(0.55, 2.8, 4).rotateY(Math.PI / 4), dressed, tx + cx * (T / 2), py + 3.8, cz * (T / 2), false);
+    }
+  }
+  mesh(g, new THREE.ConeGeometry(T * 0.6, 7.5, 4).rotateY(Math.PI / 4), slate, tx, py + 1.6 + 3.75, 0);
+  for (let f = 0; f < 4; f++) {
+    // Lucarne gablets on the spire
+    const a = (f / 4) * Math.PI * 2;
+    mesh(g, new THREE.ConeGeometry(0.7, 1.6, 4).rotateY(Math.PI / 4), dressed, tx + Math.sin(a) * 2.2, py + 3.4, Math.cos(a) * 2.2, false);
+  }
+  mesh(g, new THREE.CylinderGeometry(0.08, 0.12, 2.6, 6), iron, tx, py + 10.3, 0, false);
+  mesh(g, new THREE.SphereGeometry(0.28, 8, 6), lam('#c9a24a'), tx, py + 9.4, 0, false);
+
+  // ---- Courtyard stalls: pole-and-tarp shades, crates of produce ----
+  const tarps = [lam('#1e63b5'), lam('#e8772e'), lam('#2e8b57'), lam('#c62828')];
+  const crate = lam('#9a6b3c');
+  const produce = [lam('#f4511e'), lam('#fdd835'), lam('#7cb342')];
+  const cx0 = -frontD - 1.8, cx1 = B + backD + 1.8;
+  let k = 0;
+  for (const sx of [cx0, cx1]) {
+    for (let z = -L / 2 + sideW + 2.5; z <= L / 2 - sideW - 2.5; z += 4.2) {
+      const t = mesh(g, new THREE.BoxGeometry(3.0, 0.06, 3.4), tarps[k % tarps.length], sx, 2.6, z, false);
+      t.rotation.z = (sx === cx0 ? 1 : -1) * 0.18;
+      for (const dz of [-1.5, 1.5]) mesh(g, new THREE.CylinderGeometry(0.05, 0.05, 2.6, 4), iron, sx, 1.3, z + dz, false);
+      mesh(g, new THREE.BoxGeometry(1.6, 0.8, 2.6), crate, sx, 0.4, z, false);
+      mesh(g, new THREE.BoxGeometry(1.3, 0.25, 2.3), produce[k % produce.length], sx, 0.92, z, false);
+      k++;
+    }
+  }
+
+  mergeByMaterial(g, shadow);
 }
 
 // ---- Mazar-e-Quaid (white marble mausoleum in its park, right side) ---------------
