@@ -50,12 +50,31 @@ function keyDef(name) {
 function findChromium() {
   const candidates = [
     process.env.CHROMIUM_PATH,
+    'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+    'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+    process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, 'Google', 'Chrome', 'Application', 'chrome.exe') : '',
+    'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
+    'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
     '/usr/bin/chromium',
     '/usr/bin/chromium-browser',
     '/usr/bin/google-chrome',
   ].filter(Boolean);
   for (const c of candidates) {
     if (existsSync(c)) return c;
+  }
+  if (process.platform === 'win32') {
+    for (const name of ['chrome', 'msedge']) {
+      try {
+        const p = execFileSync('where', [name], { stdio: ['ignore', 'pipe', 'ignore'] })
+          .toString()
+          .split(/\r?\n/)[0]
+          ?.trim();
+        if (p && existsSync(p)) return p;
+      } catch {
+        /* ignore missing */
+      }
+    }
+    return null;
   }
   for (const name of ['chromium', 'chromium-browser', 'google-chrome']) {
     try {

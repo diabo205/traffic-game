@@ -18,22 +18,30 @@ export async function loadSimModules() {
     optimizeDeps: { noDiscovery: true },
   });
   try {
-    const [types, playerCar, worldMod, cityWorldMod, road, cityMapMod, inputMod] = await Promise.all([
+    const [types, upgrades, playerCar, worldMod, cityWorldMod, road, cityMapMod, cityTrafficMod, faresMod, mathMod, inputMod] = await Promise.all([
       server.ssrLoadModule('/src/sim/types.ts'),
+      server.ssrLoadModule('/src/sim/upgrades.ts'),
       server.ssrLoadModule('/src/sim/PlayerCar.ts'),
       server.ssrLoadModule('/src/sim/World.ts'),
       server.ssrLoadModule('/src/sim/city/CityWorld.ts'),
       server.ssrLoadModule('/src/sim/road.ts'),
       server.ssrLoadModule('/src/sim/city/cityMap.ts'),
+      server.ssrLoadModule('/src/sim/city/CityTraffic.ts'),
+      server.ssrLoadModule('/src/sim/city/Fares.ts'),
+      server.ssrLoadModule('/src/sim/math.ts'),
       server.ssrLoadModule('/src/input/InputManager.ts'),
     ]);
     return {
       types,
+      upgrades,
       playerCar,
       worldMod,
       cityWorldMod,
       road,
       cityMapMod,
+      cityTrafficMod,
+      faresMod,
+      mathMod,
       inputMod,
       server,
       async close() {

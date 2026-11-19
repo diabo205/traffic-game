@@ -745,6 +745,7 @@ export class Hud {
       const parts: string[] = [];
       if (f.kind === 'vip') parts.push('VIP · 2× PAY');
       else if (f.kind === 'party') parts.push(`PARTY · STOP ${f.stop ?? 1}/${f.stops ?? 2}`);
+      else if (f.kind === 'chai') parts.push('HOT CHAI · NO SPILLS');
       if ((f.chain ?? 0) >= 2) {
         const mul = (1 + Math.min(4, (f.chain ?? 0) - 1) * 0.25).toFixed(2).replace(/\.?0+$/, '');
         parts.push(`FEVER ×${mul}`);

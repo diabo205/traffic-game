@@ -1,5 +1,12 @@
 import { approach, clamp } from './math';
 import type { InputFrame, Obb, PlayerVehicle, VehicleShowcaseMeta } from './types';
+import {
+  applyUpgrades,
+  defaultVehicleBuild,
+  maxIntegrityForBuild,
+  sanitizeVehicleBuild,
+  type VehicleBuild,
+} from './upgrades';
 
 export interface VehicleSpec {
   readonly label: string;
@@ -333,6 +340,7 @@ export type BoostKind = 'launch' | 'dash' | 'drift';
 
 export class PlayerCar {
   vehicle: PlayerVehicle = 'alto';
+  build: VehicleBuild = defaultVehicleBuild('alto');
   spec: VehicleSpec = ALTO;
 
   x = 0;
@@ -359,7 +367,10 @@ export class PlayerCar {
   /** suspension displacement for jolts (m, negative = compressed) */
   bump = 0;
   bumpVel = 0;
+  maxIntegrity = 100;
   integrity = 100;
+  /** 0..100 arcade nitrous reserve earned from stunts/drifts */
+  boostMeter = 25;
   /** open-world driving: no heading limit or pull back toward the route axis */
   freeRoam = false;
 
@@ -414,9 +425,31 @@ export class PlayerCar {
   prevPitch = 0;
   prevBump = 0;
 
-  setVehicle(kind: PlayerVehicle): void {
+  constructor(vehicle: PlayerVehicle = 'alto', build?: VehicleBuild) {
+    this.setVehicle(vehicle, build);
+    this.integrity = this.maxIntegrity;
+  }
+
+  setVehicle(kind: PlayerVehicle, build?: VehicleBuild): void {
     this.vehicle = kind;
-    this.spec = VEHICLE_SPECS[kind];
+    this.applyBuild(build ?? defaultVehicleBuild(kind));
+  }
+
+  applyBuild(build: VehicleBuild): void {
+    const prevMax = this.maxIntegrity;
+    this.build = sanitizeVehicleBuild(this.vehicle, build);
+    this.spec = applyUpgrades(this.vehicle, VEHICLE_SPECS[this.vehicle], this.build);
+    this.maxIntegrity = maxIntegrityForBuild(this.build);
+    if (this.integrity === prevMax) this.integrity = this.maxIntegrity;
+    else this.integrity = Math.min(this.integrity, this.maxIntegrity);
+  }
+
+  chargeBoost(rawDelta: number): number {
+    if (!Number.isFinite(rawDelta) || rawDelta <= 0) return 0;
+    const prev = this.boostMeter;
+    const scaled = rawDelta * (1 + this.build.nitrous * 0.12);
+    this.boostMeter = clamp(prev + scaled, 0, 100);
+    return this.boostMeter - prev;
   }
 
   /** 0..1 remaining fraction of the active boost. */
@@ -462,7 +495,8 @@ export class PlayerCar {
     this.roll = this.pitch = this.bump = this.bumpVel = 0;
     this.rollVel = this.pitchVel = 0;
     this.prevRoll = this.prevPitch = this.prevBump = 0;
-    this.integrity = 100;
+    this.integrity = this.maxIntegrity;
+    this.boostMeter = 25;
     this.horn = this.dipper = this.braking = this.reversing = false;
     this.traction = 1;
     this.extraDrag = 0;
@@ -544,7 +578,12 @@ export class PlayerCar {
       const target = Math.atan2(tx, tz);
       let d = target - this.heading;
       d = Math.atan2(Math.sin(d), Math.cos(d));
-      this.heading += d * weight;
+      if (this.wallContact > 0 && Math.abs(d) < 0.07) {
+        this.heading += d * Math.min(0.45, weight);
+        this.yawRate *= 0.65;
+      } else {
+        this.heading += d * weight;
+      }
       const keep = Math.abs(this.speed) * WALL.scrapeKeep;
       if (rev) {
         this.speed = -keep;
@@ -652,7 +691,11 @@ export class PlayerCar {
     } else if (wasHandbrake) {
       // Powering out of a drift gives a boost (mini-boost for >=0.45s micro-drifts, full >=0.7s).
       if (this.driftTime >= 0.445 && this.driftYawAccum >= 0.22 && throttle > 0.5) {
-        const dur = this.driftTime >= 0.7 ? Math.min(0.75, 0.34 + this.driftTime * 0.15) : 0.24 + Math.max(0, this.driftTime - 0.45) * 0.32;
+        let dur = this.driftTime >= 0.7 ? Math.min(0.75, 0.34 + this.driftTime * 0.15) : 0.24 + Math.max(0, this.driftTime - 0.45) * 0.32;
+        if (this.boostMeter >= 40) {
+          this.boostMeter -= 40;
+          dur *= 1.35;
+        }
         this.boost('drift', dur);
       }
       this.driftEnded = this.driftTime;

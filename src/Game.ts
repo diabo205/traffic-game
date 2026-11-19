@@ -923,15 +923,35 @@ export class Game {
         }
         break;
       case 'pickup': {
-        const prefix = e.kind === 'vip' ? '★ VIP · ' : e.kind === 'party' ? `★ PARTY (${e.stops ?? 2} STOPS) · ` : '➜ ';
+        const prefix =
+          e.kind === 'vip'
+            ? '★ VIP · '
+            : e.kind === 'party'
+              ? `★ PARTY (${e.stops ?? 2} STOPS) · `
+              : e.kind === 'chai'
+                ? '☕ HOT CHAI · '
+                : '➜ ';
         this.hud.showBanner(`${prefix}${e.name.toUpperCase()}`);
-        const tag = e.kind === 'vip' ? '2× PAY · ' : e.kind === 'party' ? `${e.stops ?? 2} STOPS · ` : '';
+        const tag =
+          e.kind === 'vip'
+            ? '2× PAY · '
+            : e.kind === 'party'
+              ? `${e.stops ?? 2} STOPS · `
+              : e.kind === 'chai'
+                ? 'NO SPILLS · '
+                : '';
         this.toastNow(`${tag}${e.time}s to get there`);
-        if (e.kind === 'vip' || e.kind === 'party') this.audio.fanfare(1);
+        if (e.kind === 'vip' || e.kind === 'party' || e.kind === 'chai') this.audio.fanfare(1);
         else this.audio.chime();
         this.vibrate(25);
         break;
       }
+      case 'fareSpill':
+        this.toastNow('CHAI SPILLED!', false);
+        this.hud.damageFlash(0.18);
+        break;
+      case 'boostCharge':
+        break;
       case 'dropoff': {
         if (e.nextStop) {
           this.hud.showBanner(`STOP 1 DONE! ➜ ${e.nextStop.toUpperCase()}`);

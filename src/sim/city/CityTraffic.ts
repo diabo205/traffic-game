@@ -1,10 +1,19 @@
-import { approach, obbOverlap } from '../math';
-import { ALTO } from '../PlayerCar';
+import { approach, clamp, obbOverlap } from '../math';
 import type { PlayerCar } from '../PlayerCar';
 import { Rng } from '../rng';
 import { NPC_SPECS } from '../TrafficManager';
 import type { NpcKind, Obb } from '../types';
 import type { CityLink, CityMap, JunctionPath } from './cityMap';
+
+/** Per-class IDM longitudinal driver tuning (headway s, min bumper gap m, comfort decel m/s^2). */
+const IDM: Readonly<Record<NpcKind, { T: number; s0: number; b: number }>> = {
+  bike: { T: 0.7, s0: 1.5, b: 3.8 },
+  rickshaw: { T: 0.9, s0: 1.8, b: 3.4 },
+  car: { T: 1.15, s0: 2.2, b: 3.2 },
+  minibus: { T: 1.4, s0: 2.6, b: 2.6 },
+  truck: { T: 1.55, s0: 2.8, b: 2.3 },
+  cart: { T: 1.6, s0: 2.0, b: 2.2 },
+};
 
 /** Saddar cruise speeds (m/s) per kind; side streets / arterials scale these. */
 const CRUISE: Readonly<Record<NpcKind, readonly [number, number]>> = {
@@ -133,7 +142,7 @@ export class CityTraffic {
     // Hand carts keep to the kerb lane of multi-lane streets.
     if (kind === 'cart' && link.lanes < 2) return;
     let lane = kind === 'cart' ? link.lanes - 1 : rng.int(0, link.lanes - 1);
-    if (lane === link.rampLane) lane = 0;
+    if (lane === link.rampLane && link.lanes > 1) lane = lane === 0 ? 1 : 0;
     const s = rng.range(4, link.len - 4);
     const off = this.map.laneOffset(link, lane);
     const p = this.map.linkPoint(link, s, off);
@@ -226,7 +235,7 @@ export class CityTraffic {
     n.nextLink = pick;
     n.nextLane = n.kind === 'cart' ? out.lanes - 1 : Math.min(n.lane, out.lanes - 1);
     // Keep out of a lane with a ramp in it.
-    if (n.nextLane === out.rampLane) n.nextLane = 0;
+    if (n.nextLane === out.rampLane && out.lanes > 1) n.nextLane = n.nextLane === 0 ? 1 : 0;
   }
 
   private cruise(n: CityNpc, link: CityLink): number {
@@ -257,7 +266,11 @@ export class CityTraffic {
       n.yieldTime = 2.8;
       n.honkCooldown = 5;
       this.honked++;
-      if (!n.path && n.kind !== 'cart') {
+      if (n.kind === 'cart') {
+        // Hand carts hug the outer kerb rather than swinging across lanes.
+        continue;
+      }
+      if (!n.path) {
         const link = m.links[n.link];
         const kerb = link.lanes - 1;
         if (n.lane !== kerb && kerb !== link.rampLane) {
@@ -265,7 +278,9 @@ export class CityTraffic {
           if (!this.npcs.some((o) => o !== n && Math.hypot(o.x - p.x, o.z - p.z) < 7)) {
             n.lane = kerb;
             n.nextLane = Math.min(n.lane, m.links[n.nextLink].lanes - 1);
-            if (n.nextLane === m.links[n.nextLink].rampLane) n.nextLane = 0;
+            if (n.nextLane === m.links[n.nextLink].rampLane && m.links[n.nextLink].lanes > 1) {
+              n.nextLane = n.nextLane === 0 ? 1 : 0;
+            }
           }
         }
       }
@@ -309,6 +324,7 @@ export class CityTraffic {
       // ---- Desired speed ----------------------------------------------------
       let target = this.cruise(n, n.path ? m.links[n.nextLink] : link);
       let stopGap = Infinity;
+      let blockerSpeed = 0;
 
       if (!n.path) {
         const remaining = link.len - n.s;
@@ -323,10 +339,17 @@ export class CityTraffic {
           if (remaining < 14 && !circulating && n.creepTime <= 0) {
             const occ = occupants.get(node.id);
             const busy = occ?.some((from) => from !== link.id && !(turn === 'straight' && link.reverse >= 0 && from === link.reverse)) ?? false;
-            if (busy && n.waitTime < MAX_WAIT) {
-              stopGap = Math.min(stopGap, remaining - 2.5);
+            // Block-the-Box prevention: hold at stop line if exit lane is already backed up.
+            const exitBlocked = this.npcs.some(
+              (o) => o !== n && !o.path && o.link === n.nextLink && o.lane === n.nextLane && o.s < 10 && o.speed < 1.5,
+            );
+            if ((busy || exitBlocked) && n.waitTime < MAX_WAIT) {
+              if (remaining - 2.5 < stopGap) {
+                stopGap = remaining - 2.5;
+                blockerSpeed = 0;
+              }
               if (n.speed < 0.5) n.waitTime += dt;
-            } else if (!busy) n.waitTime = 0;
+            } else if (!busy && !exitBlocked) n.waitTime = 0;
           }
         }
       } else {
@@ -347,7 +370,7 @@ export class CityTraffic {
         creep = true;
         n.creepTime = Math.max(n.creepTime, latch);
       };
-      const consider = (id: number, ox: number, oz: number, ohw: number, ohl: number) => {
+      const consider = (id: number, ox: number, oz: number, ohw: number, ohl: number, leadSpeed: number) => {
         const dx = ox - n.x, dz = oz - n.z;
         const along = dx * fx + dz * fz;
         if (along <= 0 || along > look + ohl) return;
@@ -357,6 +380,7 @@ export class CityTraffic {
         if (gap < stopGap) {
           stopGap = gap;
           blocker = id;
+          blockerSpeed = leadSpeed;
         }
       };
       for (const o of this.npcs) {
@@ -387,9 +411,10 @@ export class CityTraffic {
         const dz = o.z - n.z;
         const distSq = dx * dx + dz * dz;
         const crossing = Math.cos(o.heading - n.heading) < 0.6;
+        const sameLane = !n.path && !o.path && o.link === n.link && o.lane === n.lane;
         const minClear = (spec.hl + os.hl) * (crossing ? 0.85 : 0.96);
-        if (distSq > minClear * minClear) {
-          // Crossing / turning / long-blocked junction traffic creeps clear once outside bumper overlap.
+        if (distSq > minClear * minClear && !sameLane) {
+          // Crossing / turning / junction traffic creeps clear once outside bumper overlap.
           if ((creep || n.blockedTime > 2.5) && crossing) {
             triggerCreep();
             continue;
@@ -398,17 +423,21 @@ export class CityTraffic {
             triggerCreep();
             continue;
           }
-          if ((creep || n.blockedTime > 4.5) && n.id < o.id) {
+          if ((creep || n.blockedTime > 4.5) && (n.path || o.path) && n.id < o.id) {
             triggerCreep();
             continue;
           }
         }
-        consider(o.id, o.x, o.z, os.hw, os.hl);
+        const leadSpeed = Math.max(0, o.speed * Math.cos(o.heading - n.heading));
+        consider(o.id, o.x, o.z, os.hw, os.hl, leadSpeed);
       }
-      if (player.y < 1.6) consider(0, px, pz, ALTO.halfWidth, ALTO.halfLength);
+      if (player.y < 1.6) {
+        const pLead = Math.max(0, player.speed * Math.cos(player.heading - n.heading));
+        consider(0, px, pz, player.spec.halfWidth, player.spec.halfLength, pLead);
+      }
       // Ramps left in the road are obstacles too.
       for (const r of m.ramps) {
-        if (Math.abs(r.x - n.x) < 40 && Math.abs(r.z - n.z) < 40) consider(-2, r.x, r.z, r.hw, r.hl);
+        if (Math.abs(r.x - n.x) < 40 && Math.abs(r.z - n.z) < 40) consider(-2, r.x, r.z, r.hw, r.hl, 0);
       }
       n.blocker = blocker;
       if (creep) target = Math.min(target, 5.5);
@@ -418,16 +447,13 @@ export class CityTraffic {
         target = Math.min(target, this.cruise(n, link) * 0.4);
       }
       n.honkCooldown = Math.max(0, n.honkCooldown - dt);
-      if (stopGap < Infinity) {
-        const margin = 2.2;
-        const allowed = stopGap <= margin ? 0 : Math.sqrt(2 * spec.decel * 0.75 * (stopGap - margin));
-        if (allowed < target) target = allowed;
-      }
-      const blocked = target < Math.min(2.2, this.cruise(n, link) * 0.25);
+      const blocked =
+        target < Math.min(2.2, this.cruise(n, link) * 0.25) ||
+        (stopGap < 7 && n.speed < Math.min(2.4, this.cruise(n, link) * 0.35));
       n.blockedTime = blocked ? n.blockedTime + dt : 0;
 
       // ---- Lane change around a slow vehicle -----------------------------------
-      if (!n.path && n.blockedTime > 1.2 && link.lanes > 1 && n.kind !== 'cart' && link.len - n.s > 20) {
+      if (!n.path && n.blockedTime > 1.2 && link.lanes > 1 && n.kind !== 'cart' && link.len - n.s > 6) {
         let want = n.lane === 0 ? 1 : n.lane - 1;
         if (want === link.rampLane && n.s < link.rampS1 + 3) want = n.lane;
         const off = m.laneOffset(link, want);
@@ -435,22 +461,46 @@ export class CityTraffic {
         let clear = true;
         for (const o of this.npcs) {
           if (o === n) continue;
-          if (Math.hypot(o.x - p.x, o.z - p.z) < 9) {
+          const os = NPC_SPECS[o.kind];
+          const alongO = (o.x - p.x) * link.dx + (o.z - p.z) * link.dz;
+          const latO = Math.abs(-(o.x - p.x) * link.dz + (o.z - p.z) * link.dx);
+          if (Math.abs(alongO) < spec.hl + os.hl + 2.2 && latO < spec.hw + os.hw + 0.4) {
             clear = false;
             break;
           }
         }
-        if (Math.hypot(px - p.x, pz - p.z) < 8) clear = false;
+        if (clear) {
+          const alongP = (px - p.x) * link.dx + (pz - p.z) * link.dz;
+          const latP = Math.abs(-(px - p.x) * link.dz + (pz - p.z) * link.dx);
+          if (Math.abs(alongP) < spec.hl + player.spec.halfLength + 2.5 && latP < spec.hw + player.spec.halfWidth + 0.45) {
+            clear = false;
+          }
+        }
         if (clear && want !== n.lane) {
           n.lane = want;
           n.blockedTime = 0;
-          n.nextLane = Math.min(n.lane, m.links[n.nextLink].lanes - 1);
+          const nextOut = m.links[n.nextLink];
+          n.nextLane = Math.min(n.lane, nextOut.lanes - 1);
+          if (n.nextLane === nextOut.rampLane && nextOut.lanes > 1) n.nextLane = n.nextLane === 0 ? 1 : 0;
         }
       }
 
-      // ---- Integrate speed / progress ----------------------------------------------
+      // ---- Integrate speed / progress (IDM longitudinal control) ------------------
       const prevSpeed = n.speed;
-      n.speed = n.speed < target ? approach(n.speed, target, spec.accel * dt) : approach(n.speed, target, spec.decel * 1.4 * dt);
+      const idm = IDM[n.kind];
+      const v0 = Math.max(0.2, target);
+      const vRatio = Math.max(0, n.speed) / v0;
+      const freeTerm = vRatio * vRatio * vRatio * vRatio;
+      let interactTerm = 0;
+      if (stopGap < Infinity) {
+        const s = Math.max(0.25, stopGap);
+        const dv = n.speed - blockerSpeed;
+        const sStar = Math.max(0, idm.s0 + n.speed * idm.T + (n.speed * dv) / (2 * Math.sqrt(spec.accel * idm.b)));
+        interactTerm = (sStar / s) * (sStar / s);
+      }
+      const idmAccel = clamp(spec.accel * (1 - freeTerm - interactTerm), -spec.decel * 1.5, spec.accel);
+      n.speed = clamp(n.speed + idmAccel * dt, 0, target);
+      if (stopGap <= 0.4) n.speed = 0;
       n.brakeLights = n.speed < prevSpeed - spec.accel * dt * 0.2 || n.speed < 0.3;
       n.hazardLights = n.waitTime >= MAX_WAIT;
       const ds = n.speed * dt;
@@ -489,10 +539,10 @@ export class CityTraffic {
         let offT = m.laneOffset(l, n.lane);
         if (n.yieldTime > 0 && n.lane === l.lanes - 1 && l.rampLane !== n.lane) {
           // Squeeze up against the kerb.
-          const room = l.hw - offT - spec.hw - 0.2;
+          const room = l.hw - offT - spec.hw - (n.kind === 'cart' ? 0.08 : 0.2);
           offT += Math.max(0, Math.min(1.3, room));
         }
-        const latRateCap = n.yieldTime > 0 ? Math.max(spec.latSpeed, 1.8) : spec.latSpeed;
+        const latRateCap = n.yieldTime > 0 ? Math.max(spec.latSpeed, n.kind === 'cart' ? 1.1 : 1.8) : spec.latSpeed;
         const before = n.lat;
         n.lat = approach(n.lat, offT, latRateCap * dt);
         const latRate = (n.lat - before) / dt;
@@ -534,49 +584,54 @@ export class CityTraffic {
       n.heading = n.prevHeading + dh;
     }
 
-    // ---- Pairwise NPC separation (prevents junction deadlock phasing & tailback overlap) ------
-    for (let i = 0; i < this.npcs.length; i++) {
-      const a = this.npcs[i];
-      for (let j = i + 1; j < this.npcs.length; j++) {
-        const b = this.npcs[j];
-        if (Math.abs(a.x - b.x) > 7 || Math.abs(a.z - b.z) > 7) continue;
-        const mtv = obbOverlap(CityTraffic.obb(a), CityTraffic.obb(b));
-        if (!mtv || mtv.depth <= 0.02) continue;
-        const push = Math.min(mtv.depth + 0.03, 1.2) * 0.5;
-        const aProj = mtv.nx * Math.sin(a.heading) + mtv.nz * Math.cos(a.heading);
-        a.x += mtv.nx * push;
-        a.z += mtv.nz * push;
-        if (aProj < -0.5 && a.creepTime <= 0) {
-          const back = -aProj * push;
-          if (a.path) a.ps = Math.max(0, a.ps - back);
-          else a.s = Math.max(0, a.s - back);
-          a.speed = Math.min(a.speed, b.speed * 0.5);
-        } else {
-          a.kx += mtv.nx * push;
-          a.kz += mtv.nz * push;
-        }
-        const bProj = -(mtv.nx * Math.sin(b.heading) + mtv.nz * Math.cos(b.heading));
-        b.x -= mtv.nx * push;
-        b.z -= mtv.nz * push;
-        if (bProj < -0.5 && b.creepTime <= 0) {
-          const back = -bProj * push;
-          if (b.path) b.ps = Math.max(0, b.ps - back);
-          else b.s = Math.max(0, b.s - back);
-          b.speed = Math.min(b.speed, a.speed * 0.5);
-        } else {
-          b.kx -= mtv.nx * push;
-          b.kz -= mtv.nz * push;
-        }
-        for (const v of [a, b]) {
-          const kl = Math.hypot(v.kx, v.kz);
-          if (kl > 1.8) {
-            const sc = 1.8 / kl;
-            v.kx *= sc;
-            v.kz *= sc;
+    // ---- Pairwise NPC separation (2 lightweight passes prevent junction phasing & tailback overlap) ------
+    for (let pass = 0; pass < 2; pass++) {
+      for (let i = 0; i < this.npcs.length; i++) {
+        const a = this.npcs[i];
+        for (let j = i + 1; j < this.npcs.length; j++) {
+          const b = this.npcs[j];
+          if (Math.abs(a.x - b.x) > 7 || Math.abs(a.z - b.z) > 7) continue;
+          const mtv = obbOverlap(CityTraffic.obb(a), CityTraffic.obb(b));
+          if (!mtv || mtv.depth <= 0.02) continue;
+          const push = Math.min(mtv.depth + 0.04, 1.2) * 0.52;
+          const sameLanePair = !a.path && !b.path && a.link === b.link && a.lane === b.lane;
+          const aProj = mtv.nx * Math.sin(a.heading) + mtv.nz * Math.cos(a.heading);
+          a.x += mtv.nx * push;
+          a.z += mtv.nz * push;
+          if (aProj < -0.5 && (a.creepTime <= 0 || sameLanePair)) {
+            const back = -aProj * push;
+            if (a.path) a.ps = Math.max(0, a.ps - back);
+            else a.s = Math.max(0, a.s - back);
+            a.speed = Math.min(a.speed, b.speed * 0.5);
+          } else {
+            a.kx += mtv.nx * push;
+            a.kz += mtv.nz * push;
+          }
+          const bProj = -(mtv.nx * Math.sin(b.heading) + mtv.nz * Math.cos(b.heading));
+          b.x -= mtv.nx * push;
+          b.z -= mtv.nz * push;
+          if (bProj < -0.5 && (b.creepTime <= 0 || sameLanePair)) {
+            const back = -bProj * push;
+            if (b.path) b.ps = Math.max(0, b.ps - back);
+            else b.s = Math.max(0, b.s - back);
+            b.speed = Math.min(b.speed, a.speed * 0.5);
+          } else {
+            b.kx -= mtv.nx * push;
+            b.kz -= mtv.nz * push;
+          }
+          for (const v of [a, b]) {
+            const kl = Math.hypot(v.kx, v.kz);
+            if (kl > 1.8) {
+              const sc = 1.8 / kl;
+              v.kx *= sc;
+              v.kz *= sc;
+            }
+          }
+          if (pass === 0) {
+            if (a.id > b.id) a.speed *= 0.88;
+            else b.speed *= 0.88;
           }
         }
-        if (a.id > b.id) a.speed *= 0.88;
-        else b.speed *= 0.88;
       }
     }
   }

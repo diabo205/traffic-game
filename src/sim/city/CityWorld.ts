@@ -6,6 +6,7 @@ import { Rng } from '../rng';
 import { NPC_SPECS } from '../TrafficManager';
 import { trafficDamage } from '../types';
 import type { GameOverReason, GamePhase, InputFrame, NpcView, Obb, PlayerVehicle, SimEvent } from '../types';
+import type { VehicleBuild } from '../upgrades';
 import { cityMap } from './cityMap';
 import type { CityLink, CityMap } from './cityMap';
 import { CityTraffic } from './CityTraffic';
@@ -76,9 +77,9 @@ export class CityWorld {
   private streetCandidate = '';
   private streetTicks = 0;
 
-  constructor(seed: number, vehicle: PlayerVehicle = 'alto') {
+  constructor(seed: number, vehicle: PlayerVehicle = 'alto', build?: VehicleBuild) {
     this.seed = seed >>> 0;
-    this.player.setVehicle(vehicle);
+    this.player.setVehicle(vehicle, build);
     this.map = cityMap();
     this.traffic = new CityTraffic(this.seed, this.map);
     this.fares = new Fares(this.seed, this.map);
@@ -295,6 +296,25 @@ export class CityWorld {
     const end = this.events.length;
     for (let i = firstEvent; i < end; i++) this.stunts.handle(this.events[i], this.events);
     this.stunts.update(1 / 60, this.tick, p, this.traffic.npcs, !!f.fare, this.events, pay, f.fare?.partyCount ?? 1);
+    const afterStunts = this.events.length;
+    for (let i = firstEvent; i < afterStunts; i++) {
+      const ev = this.events[i];
+      if (ev.type === 'crash') {
+        this.fares.onCrash(ev.impact, this.events);
+      } else if (ev.type === 'drift') {
+        const delta = p.chargeBoost(Math.min(25, ev.seconds * 14));
+        if (delta >= 1) this.events.push({ type: 'boostCharge', meter: p.boostMeter, delta, source: 'drift' });
+      } else if (ev.type === 'stunt' && ev.kind === 'near') {
+        const delta = p.chargeBoost(10);
+        if (delta >= 1) this.events.push({ type: 'boostCharge', meter: p.boostMeter, delta, source: 'nearMiss' });
+      } else if (ev.type === 'land' && ev.air > 0.25) {
+        const delta = p.chargeBoost(Math.min(22, ev.air * 18));
+        if (delta >= 1) this.events.push({ type: 'boostCharge', meter: p.boostMeter, delta, source: 'air' });
+      } else if (ev.type === 'honk' && ev.cleared > 0) {
+        const delta = p.chargeBoost(Math.min(12, ev.cleared * 5));
+        if (delta >= 1) this.events.push({ type: 'boostCharge', meter: p.boostMeter, delta, source: 'honk' });
+      }
+    }
   }
 
   /** Wrecked: no game over, just a tow onto the nearest clear kerb, a repair bill and lost time. */

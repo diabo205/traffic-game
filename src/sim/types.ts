@@ -117,11 +117,13 @@ export type SimEvent =
   | { type: 'street'; name: string }
   | { type: 'shiftStart'; time: number }
   | { type: 'shiftOver'; earned: number; fares: number }
-  | { type: 'pickup'; name: string; time: number; distance: number; kind?: 'standard' | 'vip' | 'party'; stops?: number }
-  | { type: 'dropoff'; name: string; pay: number; tip: number; bonus: number; rating: number; chain?: number; kind?: 'standard' | 'vip' | 'party'; nextStop?: string }
+  | { type: 'pickup'; name: string; time: number; distance: number; kind?: 'standard' | 'vip' | 'party' | 'chai'; stops?: number }
+  | { type: 'dropoff'; name: string; pay: number; tip: number; bonus: number; rating: number; chain?: number; kind?: 'standard' | 'vip' | 'party' | 'chai'; nextStop?: string }
+  | { type: 'fareSpill'; name: string; spills: number }
   | { type: 'fareFailed'; name: string; reason: 'time' | 'shift' | 'towed' }
   | { type: 'towed'; cost: number }
   | { type: 'boost'; kind: 'launch' | 'dash' | 'drift' }
+  | { type: 'boostCharge'; meter: number; delta: number; source: 'drift' | 'nearMiss' | 'air' | 'honk' }
   | { type: 'drift'; seconds: number }
   | { type: 'jump' }
   | { type: 'land'; impact: number; air: number }

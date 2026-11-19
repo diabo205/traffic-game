@@ -74,7 +74,7 @@ export class Stunts {
   handle(e: SimEvent, events: SimEvent[]): void {
     switch (e.type) {
       case 'pickup':
-        this.fareTipLeft = e.kind === 'vip' ? 520 : e.kind === 'party' ? 540 : 320;
+        this.fareTipLeft = e.kind === 'vip' ? 520 : e.kind === 'party' ? 540 : e.kind === 'chai' ? 440 : 320;
         break;
       case 'smash':
         if (e.impact > 7 && this.smashCooldown <= 0) {
