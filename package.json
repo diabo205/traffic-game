@@ -6,21 +6,28 @@
   "scripts": {
     "dev": "vite --host",
     "build": "tsc --noEmit && vite build",
-    "pack": "SINGLE_FILE=1 vite build && node tools/pack_html.mjs",
+    "pack": "node tools/pack_html.mjs --build",
+    "models:optimize": "node tools/optimize_models.mjs",
     "preview": "vite preview --host",
     "playtest:sim": "node tools/playtest/sim.mjs",
     "playtest:balance": "node tools/playtest/balance.mjs",
     "playtest:metrics": "node tools/playtest/metrics.mjs",
     "playtest:browser": "node tools/playtest/browser.mjs",
     "test": "node --test tools/test/*.test.mjs",
-    "test:e2e": "node tools/playtest/e2e-car-select.mjs"
+    "test:e2e": "node tools/playtest/e2e-car-select.mjs",
+    "test:e2e:m2": "node tools/playtest/e2e-m2-renderer.mjs"
   },
   "dependencies": {
     "@fontsource/barlow-condensed": "^5.2.6",
+    "postprocessing": "^6.39.6",
     "three": "^0.187.0"
   },
   "devDependencies": {
+    "@gltf-transform/core": "^4.5.1",
+    "@gltf-transform/extensions": "^4.5.1",
+    "@gltf-transform/functions": "^4.5.1",
     "@types/three": "^0.187.0",
+    "meshoptimizer": "^1.3.0",
     "typescript": "^7.0.2",
     "vite": "^8.3.8"
   }

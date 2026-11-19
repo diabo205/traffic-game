@@ -1,9 +1,14 @@
 import * as THREE from 'three';
-import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
-import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
-import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
-import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
-import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
+import {
+  BlendFunction,
+  BloomEffect,
+  Effect,
+  EffectComposer,
+  EffectPass,
+  RenderPass,
+  ToneMappingEffect,
+  ToneMappingMode,
+} from 'postprocessing';
 
 /** Per-time-of-day look: bloom and a display-space colour grade. */
 export interface GradeParams {
@@ -23,94 +28,165 @@ export interface GradeParams {
   glow: number;
 }
 
-const GradeShader = {
-  uniforms: {
-    tDiffuse: { value: null as THREE.Texture | null },
-    saturation: { value: 1 },
-    contrast: { value: 1 },
-    shadowTint: { value: new THREE.Color(1, 1, 1) },
-    highlightTint: { value: new THREE.Color(1, 1, 1) },
-    vignette: { value: 0 },
-    glowTint: { value: new THREE.Color(1, 1, 1) },
-    glow: { value: 0 },
-    aspect: { value: 1 },
-  },
-  vertexShader: /* glsl */ `
-    varying vec2 vUv;
-    void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
-  fragmentShader: /* glsl */ `
-    uniform sampler2D tDiffuse;
-    uniform float saturation, contrast, vignette, glow, aspect;
-    uniform vec3 shadowTint, highlightTint, glowTint;
-    varying vec2 vUv;
-    void main() {
-      vec3 c = texture2D(tDiffuse, vUv).rgb;
-      float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
-      c = mix(vec3(l), c, saturation);
-      c = (c - 0.5) * contrast + 0.5;
-      // Split toning: cool/warm shadows, warm highlights
-      float t = smoothstep(0.0, 1.0, l);
-      c *= mix(shadowTint, highlightTint, t);
-      // Atmospheric glow from the top of the frame (screen blend)
-      float gy = smoothstep(0.35, 1.0, vUv.y);
-      c = 1.0 - (1.0 - c) * (1.0 - glowTint * glow * gy);
-      // Vignette
-      vec2 d = (vUv - 0.5) * vec2(aspect, 1.0);
-      c *= 1.0 - vignette * smoothstep(0.35, 0.95, length(d));
-      gl_FragColor = vec4(clamp(c, 0.0, 1.0), 1.0);
-    }`,
-};
+const GRADE_FRAG = /* glsl */ `
+uniform float saturation;
+uniform float contrast;
+uniform float vignette;
+uniform float glow;
+uniform float gradeAspect;
+uniform vec3 shadowTint;
+uniform vec3 highlightTint;
+uniform vec3 glowTint;
+
+vec3 kgLinearToSRGB(vec3 c) {
+  c = clamp(c, 0.0, 1.0);
+  return mix(pow(c, vec3(1.0 / 2.4)) * 1.055 - 0.055, c * 12.92, vec3(lessThanEqual(c, vec3(0.0031308))));
+}
+
+vec3 kgSRGBToLinear(vec3 c) {
+  c = clamp(c, 0.0, 1.0);
+  return mix(pow((c + 0.055) / 1.055, vec3(2.4)), c / 12.92, vec3(lessThanEqual(c, vec3(0.04045))));
+}
+
+void mainImage(const in vec4 inputColor, const in vec2 uv, out vec4 outputColor) {
+  vec3 c = kgLinearToSRGB(clamp(inputColor.rgb, 0.0, 1.0));
+  float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
+  c = mix(vec3(l), c, saturation);
+  c = (c - 0.5) * contrast + 0.5;
+  // Split toning: cool/warm shadows, warm highlights
+  float t = smoothstep(0.0, 1.0, l);
+  c *= mix(shadowTint, highlightTint, t);
+  // Atmospheric glow from the top of the frame (screen blend)
+  float gy = smoothstep(0.35, 1.0, uv.y);
+  c = 1.0 - (1.0 - c) * (1.0 - glowTint * glow * gy);
+  // Vignette
+  vec2 d = (uv - 0.5) * vec2(gradeAspect, 1.0);
+  c *= 1.0 - vignette * smoothstep(0.35, 0.95, length(d));
+  outputColor = vec4(kgSRGBToLinear(clamp(c, 0.0, 1.0)), inputColor.a);
+}
+`;
+
+class KarachiGradeEffect extends Effect {
+  constructor() {
+    super('KarachiGradeEffect', GRADE_FRAG, {
+      blendFunction: BlendFunction.SRC,
+      uniforms: new Map<string, THREE.Uniform>([
+        ['saturation', new THREE.Uniform(1)],
+        ['contrast', new THREE.Uniform(1)],
+        ['shadowTint', new THREE.Uniform(new THREE.Color(1, 1, 1))],
+        ['highlightTint', new THREE.Uniform(new THREE.Color(1, 1, 1))],
+        ['vignette', new THREE.Uniform(0)],
+        ['glowTint', new THREE.Uniform(new THREE.Color(1, 1, 1))],
+        ['glow', new THREE.Uniform(0)],
+        ['gradeAspect', new THREE.Uniform(1)],
+      ]),
+    });
+  }
+}
 
 /**
- * Post-processing chain: scene → (MSAA, half-float HDR) → bloom → tone map
- * + sRGB (OutputPass) → colour grade & vignette. Render-only.
+ * Tier-gated post-processing chain (render-only):
+ * - Low tier: direct `gl.render(scene, camera)` with zero FBO/post passes.
+ * - High tier: half-float HDR MSAA `EffectComposer` -> `RenderPass` -> single merged
+ *   `EffectPass` (`BloomEffect` mipmapBlur 3 levels + ACES Filmic `ToneMappingEffect` + `KarachiGradeEffect`).
  */
 export class PostFx {
-  private composer: EffectComposer;
-  private bloom: UnrealBloomPass;
-  private grade: ShaderPass;
+  readonly tier: 'low' | 'high';
+  private activeCamera: THREE.Camera;
+  private composer: EffectComposer | null = null;
+  private renderPass: RenderPass | null = null;
+  private effectPass: EffectPass | null = null;
+  private bloom: BloomEffect | null = null;
+  private grade: KarachiGradeEffect | null = null;
 
-  constructor(private readonly gl: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.Camera) {
-    const size = gl.getDrawingBufferSize(new THREE.Vector2());
-    const rt = new THREE.WebGLRenderTarget(size.x, size.y, { type: THREE.HalfFloatType, samples: 4 });
-    this.composer = new EffectComposer(gl, rt);
-    this.composer.addPass(new RenderPass(scene, camera));
-    this.bloom = new UnrealBloomPass(new THREE.Vector2(size.x, size.y), 0.5, 0.5, 0.9);
-    this.composer.addPass(this.bloom);
-    this.composer.addPass(new OutputPass());
-    this.grade = new ShaderPass(GradeShader);
-    this.composer.addPass(this.grade);
+  constructor(
+    private readonly gl: THREE.WebGLRenderer,
+    private readonly scene: THREE.Scene,
+    camera: THREE.Camera,
+    lowSpec: boolean,
+  ) {
+    this.tier = lowSpec ? 'low' : 'high';
+    this.activeCamera = camera;
+
+    if (!lowSpec) {
+      const composer = new EffectComposer(gl, {
+        frameBufferType: THREE.HalfFloatType,
+        multisampling: 4,
+      });
+      // EffectComposer disables gl.autoClear inside setRenderer; restore immediately
+      // so direct renders (e.g. GarageScene) clear cleanly.
+      this.gl.autoClear = true;
+
+      const renderPass = new RenderPass(scene, camera);
+      const bloom = new BloomEffect({
+        mipmapBlur: true,
+        levels: 3,
+        intensity: 0.25,
+        luminanceThreshold: 0.95,
+        luminanceSmoothing: 0.18,
+        radius: 0.4,
+      });
+      const toneMapping = new ToneMappingEffect({
+        mode: ToneMappingMode.ACES_FILMIC,
+      });
+      const grade = new KarachiGradeEffect();
+      const effectPass = new EffectPass(camera, bloom, toneMapping, grade);
+
+      composer.addPass(renderPass);
+      composer.addPass(effectPass);
+
+      this.composer = composer;
+      this.renderPass = renderPass;
+      this.effectPass = effectPass;
+      this.bloom = bloom;
+      this.grade = grade;
+    }
   }
 
   set camera(cam: THREE.Camera) {
-    (this.composer.passes[0] as RenderPass).camera = cam;
+    this.activeCamera = cam;
+    if (this.renderPass) this.renderPass.mainCamera = cam;
+    if (this.effectPass) this.effectPass.mainCamera = cam;
   }
 
   setParams(p: GradeParams): void {
-    this.bloom.strength = p.bloom;
-    this.bloom.radius = p.bloomRadius;
-    this.bloom.threshold = p.bloomThreshold;
+    if (!this.bloom || !this.grade) return;
+    this.bloom.intensity = p.bloom;
+    this.bloom.luminanceMaterial.threshold = p.bloomThreshold;
+    this.bloom.mipmapBlurPass.radius = p.bloomRadius;
     const u = this.grade.uniforms;
-    u.saturation.value = p.saturation;
-    u.contrast.value = p.contrast;
-    (u.shadowTint.value as THREE.Color).set(p.shadowTint);
-    (u.highlightTint.value as THREE.Color).set(p.highlightTint);
-    u.vignette.value = p.vignette;
-    (u.glowTint.value as THREE.Color).set(p.glowTint);
-    u.glow.value = p.glow;
+    u.get('saturation')!.value = p.saturation;
+    u.get('contrast')!.value = p.contrast;
+    (u.get('shadowTint')!.value as THREE.Color).set(p.shadowTint);
+    (u.get('highlightTint')!.value as THREE.Color).set(p.highlightTint);
+    u.get('vignette')!.value = p.vignette;
+    (u.get('glowTint')!.value as THREE.Color).set(p.glowTint);
+    u.get('glow')!.value = p.glow;
   }
 
   setSize(w: number, h: number): void {
-    this.composer.setPixelRatio(this.gl.getPixelRatio());
-    this.composer.setSize(w, h);
-    this.grade.uniforms.aspect.value = w / Math.max(1, h);
+    if (this.composer) {
+      this.composer.setSize(w, h, false);
+    }
+    if (this.grade) {
+      this.grade.uniforms.get('gradeAspect')!.value = w / Math.max(1, h);
+    }
   }
 
   render(): void {
+    if (!this.composer) {
+      this.gl.autoClear = true;
+      this.gl.setRenderTarget(null);
+      this.gl.render(this.scene, this.activeCamera);
+      return;
+    }
+    const prevAutoClear = this.gl.autoClear;
+    this.gl.autoClear = false;
     this.composer.render();
+    this.gl.autoClear = prevAutoClear;
   }
 
   dispose(): void {
-    this.composer.dispose();
+    this.composer?.dispose();
   }
 }

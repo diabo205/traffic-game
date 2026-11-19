@@ -2,6 +2,11 @@ import * as THREE from 'three';
 
 /** Tiny CPU particle pool: crash sparks, pothole dust, puddle splashes. */
 const MAX = 400;
+const COL_SPARK_A = new THREE.Color('#ffd27a');
+const COL_SPARK_B = new THREE.Color('#9a9a9a');
+const COL_DUST = new THREE.Color('#bba27c');
+const COL_SPLASH = new THREE.Color('#c9d6dc');
+const COL_SPRAY = new THREE.Color('#c8d9e6');
 
 export class Effects {
   readonly points: THREE.Points;
@@ -40,20 +45,20 @@ export class Effects {
   }
 
   sparks(x: number, y: number, z: number, intensity: number): void {
-    this.emit(x, y + 0.5, z, Math.round(10 + intensity * 30), new THREE.Color('#ffd27a'), 9, 5, 0.5);
-    this.emit(x, y + 0.6, z, Math.round(4 + intensity * 8), new THREE.Color('#9a9a9a'), 4, 3, 0.9);
+    this.emit(x, y + 0.5, z, Math.round(10 + intensity * 30), COL_SPARK_A, 9, 5, 0.5);
+    this.emit(x, y + 0.6, z, Math.round(4 + intensity * 8), COL_SPARK_B, 4, 3, 0.9);
   }
 
   dust(x: number, y: number, z: number, intensity: number): void {
-    this.emit(x, y + 0.1, z, Math.round(8 + intensity * 14), new THREE.Color('#bba27c'), 3, 2.5, 0.8);
+    this.emit(x, y + 0.1, z, Math.round(8 + intensity * 14), COL_DUST, 3, 2.5, 0.8);
   }
 
   splash(x: number, y: number, z: number): void {
-    this.emit(x, y + 0.2, z, 40, new THREE.Color('#c9d6dc'), 7, 5, 0.7);
+    this.emit(x, y + 0.2, z, 40, COL_SPLASH, 7, 5, 0.7);
   }
 
   spray(x: number, y: number, z: number, intensity: number): void {
-    this.emit(x, y + 0.12, z, Math.max(1, Math.round(2 + intensity * 3)), new THREE.Color('#c8d9e6'), 2.6, 2.2, 0.36);
+    this.emit(x, y + 0.12, z, Math.max(1, Math.round(2 + intensity * 3)), COL_SPRAY, 2.6, 2.2, 0.36);
   }
 
   update(dt: number): void {

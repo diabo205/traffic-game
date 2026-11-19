@@ -1,10 +1,11 @@
 import * as THREE from 'three';
 import type { CityWorld } from '../sim/city/CityWorld';
-import { pointObbDistance } from '../sim/math';
 import type { PlayerVehicle, SimEvent } from '../sim/types';
 import type { World } from '../sim/World';
 import { Birds } from './Birds';
+import { CameraOcclusion } from './CameraOcclusion';
 import { ChaseCamera } from './ChaseCamera';
+import type { ChaseInput } from './ChaseCamera';
 import type { CityScenery } from './CityScenery';
 import { Effects } from './Effects';
 import { PostFx } from './PostFx';
@@ -13,11 +14,12 @@ import type { Environment } from './Environment';
 import type { FareVisuals } from './FareVisuals';
 import { GarageScene } from './GarageScene';
 import type { GarageProjection } from './GarageScene';
+import { NpcTrafficBatch } from './NpcTrafficBatch';
 import type { PropVisuals } from './PropVisuals';
 import { RainFx } from './RainFx';
 import { TyreFx } from './TyreFx';
 import { VehicleFactory } from './VehicleFactory';
-import type { VehicleVisual, VisualKind } from './VehicleFactory';
+import type { VehicleVisual } from './VehicleFactory';
 
 export type { GarageProjection };
 export type AnyWorld = World | CityWorld;
@@ -33,6 +35,12 @@ interface Scenery {
 
 /** Dusty, bleached Karachi horizon. */
 const HORIZON = new THREE.Color('#d3d5cc');
+const FLAME_CYAN = new THREE.Color('#7fd3ff');
+const FLAME_AMBER = new THREE.Color('#ffb347');
+
+function mix(a: number, b: number, t: number): number {
+  return a + (b - a) * t;
+}
 
 const FLAME_POS: Record<PlayerVehicle, readonly [number, number, number]> = {
   alto: [-0.42, 0.3, 1.72],
@@ -196,8 +204,40 @@ export class Renderer {
   onThunder: ((pan: number, intensity: number) => void) | null = null;
   private player: VehicleVisual | null = null;
   private playerVehicle: PlayerVehicle = 'alto';
-  private npcVisuals = new Map<number, VehicleVisual>();
-  private pool = new Map<string, VehicleVisual[]>();
+  private readonly npcBatch: NpcTrafficBatch;
+  private readonly occlusion = new CameraOcclusion();
+  private readonly dprSteps: readonly number[];
+  private dprStepIdx = 0;
+  private activeWorld: AnyWorld | null = null;
+  private readonly boundGroundY = (x: number, z: number): number =>
+    this.activeWorld ? this.activeWorld.groundY(x, z) : 0;
+  private readonly boundSlope = (x: number, z: number, heading: number): number =>
+    this.activeWorld ? this.slope(this.activeWorld, x, z, heading) : 0;
+  private readonly boundClipCamera = (camPos: THREE.Vector3, target: THREE.Vector3, dt: number): void => {
+    const w = this.activeWorld;
+    if (!w || w.mode !== 'city') return;
+    const res = this.occlusion.resolve(
+      w.map,
+      this.boundGroundY,
+      target.x,
+      target.y,
+      target.z,
+      camPos.x,
+      camPos.y,
+      camPos.z,
+      this.chase.minClipDist,
+      dt,
+    );
+    camPos.set(res.x, res.y, res.z);
+  };
+  private readonly chaseInput: ChaseInput = {
+    travel: 0,
+    fovKick: 0,
+    bump: 0,
+    slide: 0,
+    topSpeed: 30,
+    clip: undefined,
+  };
   private time = 0;
   private avgDt = 1 / 60;
   private slowFrames = 0;
@@ -214,7 +254,11 @@ export class Renderer {
     private readonly lowSpec: boolean,
   ) {
     this.gl = new THREE.WebGLRenderer({ antialias: !lowSpec, powerPreference: 'high-performance' });
-    this.gl.setPixelRatio(Math.min(window.devicePixelRatio, lowSpec ? 1.5 : 2));
+    this.gl.info.autoReset = false;
+    const maxDpr = Math.min(window.devicePixelRatio || 1, lowSpec ? 1.5 : 2);
+    const steps = [maxDpr, 1.5, 1.25, 1.0].filter((d) => d <= maxDpr + 1e-3);
+    this.dprSteps = steps.filter((d, i) => i === 0 || Math.abs(d - steps[i - 1]) > 0.04);
+    this.gl.setPixelRatio(this.dprSteps[0]);
     this.gl.outputColorSpace = THREE.SRGBColorSpace;
     this.gl.toneMapping = THREE.ACESFilmicToneMapping;
     this.gl.toneMappingExposure = 1.0;
@@ -248,22 +292,25 @@ export class Renderer {
     this.sun = new THREE.DirectionalLight('#fff1d6', 2.6);
     this.sun.position.set(-40, 60, 40);
     this.sun.castShadow = !lowSpec;
-    this.sun.shadow.mapSize.set(2048, 2048);
+    this.sun.shadow.mapSize.set(512, 512);
     const sc = this.sun.shadow.camera;
-    sc.left = -45;
-    sc.right = 45;
-    sc.top = 45;
-    sc.bottom = -45;
+    sc.left = -12;
+    sc.right = 12;
+    sc.top = 12;
+    sc.bottom = -12;
     sc.near = 1;
-    sc.far = 200;
-    this.sun.shadow.bias = -0.0008;
+    sc.far = 140;
+    this.sun.shadow.bias = -0.0005;
     this.scene.add(this.sun, this.sun.target);
     this.scene.add(this.effects.points);
     this.scene.add(this.tyres.group);
     this.scene.add(this.birds.mesh);
     this.scene.add(this.rain.group);
 
-    this.post = new PostFx(this.gl, this.scene, this.chase.camera);
+    this.npcBatch = new NpcTrafficBatch(this.factory);
+    this.scene.add(this.npcBatch.group);
+
+    this.post = new PostFx(this.gl, this.scene, this.chase.camera, this.lowSpec);
     this.post.setParams(LIGHTING.noon.post);
     const initW = container.clientWidth || window.innerWidth || 1280;
     const initH = container.clientHeight || window.innerHeight || 720;
@@ -337,6 +384,9 @@ export class Renderer {
         const { Environment } = await import('./Environment');
         if (seq !== this.attachSeq) return;
         loadedEnv = new Environment(world.hazards, this.factory, this.lowSpec);
+        loadedEnv.group.traverse((o) => {
+          if (o instanceof THREE.Mesh) o.castShadow = false;
+        });
       }
     } else {
       const needScenery = this.envKey !== key;
@@ -393,6 +443,12 @@ export class Renderer {
       }
       this.playerVehicle = veh;
       this.player = this.factory.create(veh, 0, true);
+      this.player.root.traverse((o) => {
+        if (o instanceof THREE.Mesh) {
+          const mat = o.material as THREE.Material;
+          o.castShadow = !this.lowSpec && (mat?.name === 'paint' || o.name === 'part_vc');
+        }
+      });
       this.scene.add(this.player.root);
       // Exhaust flame for boosts (tailpipe under the rear bumper, driver's side).
       this.flame.position.set(...FLAME_POS[veh]);
@@ -404,14 +460,15 @@ export class Renderer {
     this.chase.lookHeight = preset.lookHeight;
     this.chase.aheadScale = preset.aheadScale;
     this.chase.minClipDist = preset.minClipDist;
-    for (const [id, v] of this.npcVisuals) this.release(v, id);
-    this.npcVisuals.clear();
+    this.npcBatch.clear();
     this.chase.reset();
+    this.occlusion.reset();
     this.tyres.clear();
     this.setTimeOfDay(this.timeOfDay);
     // Compile every shader now, so nothing pops in (or hitches) the first
     // time it is drawn: a new road material, the first skid, the first puff.
     this.gl.compile(this.scene, this.chase.camera);
+    this.gl.info.reset();
     this.perfTimer = 0.25;
     this.perfFrames = 0;
     this.perfMsAcc = 0;
@@ -433,6 +490,7 @@ export class Renderer {
       case 'towed':
         this.tyres.clear();
         this.chase.reset();
+        this.occlusion.reset();
         break;
       case 'smash':
         this.effects.dust(e.x, world.groundY(e.x, e.z), -e.z, Math.min(1, e.impact / 15));
@@ -472,68 +530,22 @@ export class Renderer {
     }
   }
 
-  private visualKey(kind: VisualKind, variant: number): string {
-    return `${kind}:${variant}`;
-  }
-
-  private acquire(kind: VisualKind, variant: number): VehicleVisual {
-    const list = this.pool.get(this.visualKey(kind, variant));
-    const v = list?.pop() ?? this.factory.create(kind, variant, false);
-    v.root.visible = true;
-    this.scene.add(v.root);
-    return v;
-  }
-
-  private release(v: VehicleVisual, variantId: number): void {
-    void variantId;
-    this.scene.remove(v.root);
-    const variant = (v.root.userData.variant as number | undefined) ?? 0;
-    const key = this.visualKey(v.kind, variant);
-    let list = this.pool.get(key);
-    if (!list) this.pool.set(key, (list = []));
-    list.push(v);
-  }
-
   /** Nose-up pitch of the ground under a vehicle (three-space radians). */
   private slope(world: AnyWorld, x: number, z: number, heading: number): number {
     const fx = Math.sin(heading) * 1.2, fz = Math.cos(heading) * 1.2;
     return Math.atan2(world.groundY(x + fx, z + fz) - world.groundY(x - fx, z - fz), 2.4);
   }
 
-  /** Pull chase camera inside building OBBs in Saddar so awnings/walls never occlude the car. */
-  private clipCamera(world: CityWorld, camPos: THREE.Vector3, target: THREE.Vector3): void {
-    const horizDist = Math.hypot(camPos.x - target.x, camPos.z - target.z);
-    // Keep camera outside the player's own vehicle body (minibus is ~4.15m half-length).
-    const minT = Math.min(0.86, Math.max(0.35, this.chase.minClipDist / Math.max(1, horizDist)));
-    let bestT = 1;
-    for (const t of [minT, 0.55, 0.72, 0.86, 1.0]) {
-      const x = target.x + (camPos.x - target.x) * t;
-      const y = target.y + (camPos.y - target.y) * t;
-      const z = target.z + (camPos.z - target.z) * t;
-      let hit = false;
-      world.map.forEachSolidNear(x, -z, 2.5, (b) => {
-        if (y < 10 && pointObbDistance(x, -z, b) < 1.85) hit = true;
-      });
-      if (hit) {
-        bestT = Math.min(bestT, Math.max(minT, t - 0.14));
-        break;
-      }
-    }
-    if (bestT < 1) {
-      camPos.x = target.x + (camPos.x - target.x) * bestT;
-      camPos.z = target.z + (camPos.z - target.z) * bestT;
-      camPos.y = Math.min(target.y + 2.25, Math.max(camPos.y, target.y + 1.65) + (1 - bestT) * 0.25);
-    }
-  }
-
   render(world: AnyWorld, alpha: number, dt: number): void {
+    this.gl.info.reset();
     this.time += dt;
     if (dt > 0 && dt < 0.1) {
       this.avgDt = this.avgDt * 0.96 + dt * 0.04;
       if (this.avgDt > 1 / 34) {
         this.slowFrames++;
-        if (this.slowFrames > 90 && this.gl.getPixelRatio() > 1) {
-          this.gl.setPixelRatio(1);
+        if (this.slowFrames > 90 && this.dprStepIdx + 1 < this.dprSteps.length) {
+          this.dprStepIdx++;
+          this.gl.setPixelRatio(this.dprSteps[this.dprStepIdx]);
           this.resize();
           this.slowFrames = 0;
         }
@@ -543,6 +555,9 @@ export class Renderer {
     }
     if (this.garageMode) {
       this.garage.update(dt);
+      this.gl.autoClear = true;
+      this.gl.setRenderTarget(null);
+      this.gl.toneMapping = THREE.ACESFilmicToneMapping;
       this.gl.toneMappingExposure = this.garage.exposure;
       const t0 = performance.now();
       this.garage.render(this.gl);
@@ -550,23 +565,24 @@ export class Renderer {
       this.recordPerf(dt, renderMs, 'garage');
       return;
     }
+    this.activeWorld = world;
     const p = world.player;
-    const lerp = (a: number, b: number) => a + (b - a) * alpha;
     const lowLight = this.timeOfDay !== 'noon';
 
     // ---- Player -----------------------------------------------------------
-    const px = lerp(p.prevX, p.x);
-    const pz = lerp(p.prevZ, p.z);
-    const heading = lerp(p.prevHeading, p.heading);
-    const elev = lerp(p.prevY, p.y);
+    const px = mix(p.prevX, p.x, alpha);
+    const pz = mix(p.prevZ, p.z, alpha);
+    const heading = mix(p.prevHeading, p.heading, alpha);
+    const elev = mix(p.prevY, p.y, alpha);
+    const bump = mix(p.prevBump, p.bump, alpha);
     const slope = p.airborne ? 0 : this.slope(world, px, pz, heading);
     if (this.player) {
       const v = this.player;
       v.root.position.set(px, elev, -pz);
       v.root.rotation.order = 'YXZ';
       v.root.rotation.set(slope, -heading, 0);
-      v.body.rotation.set(lerp(p.prevPitch, p.pitch), 0, -lerp(p.prevRoll, p.roll));
-      v.body.position.y = lerp(p.prevBump, p.bump) * 0.6;
+      v.body.rotation.set(mix(p.prevPitch, p.pitch, alpha), 0, -mix(p.prevRoll, p.roll, alpha));
+      v.body.position.y = bump * 0.6;
       v.setBrake(p.braking || p.reversing);
       v.setHeadlights(p.dipper ? 2 : 1, lowLight);
       v.setHazard(world.phase === 'gameover' && Math.floor(this.time * 3) % 2 === 0);
@@ -577,49 +593,19 @@ export class Renderer {
       }
     }
 
-    // ---- NPCs --------------------------------------------------------------
-    const seen = new Set<number>();
-    const blink = Math.floor(this.time * 2.5) % 2 === 0;
-    for (const n of world.npcs) {
-      seen.add(n.id);
-      let v = this.npcVisuals.get(n.id);
-      if (!v) {
-        v = this.acquire(n.kind, n.variant);
-        v.root.userData.variant = n.variant;
-        this.npcVisuals.set(n.id, v);
-      }
-      const nx = lerp(n.prevX, n.x);
-      const nz = lerp(n.prevZ, n.z);
-      const nh = lerp(n.prevHeading, n.heading);
-      const ne = world.groundY(nx, nz);
-      v.root.position.set(nx, ne, -nz);
-      v.root.rotation.order = 'YXZ';
-      v.root.rotation.set(this.slope(world, nx, nz, nh), -nh, 0);
-      const lean = n.kind === 'bike' ? -n.latVel * 0.12 * n.dir : -n.latVel * 0.02 * n.dir;
-      v.body.rotation.z = Math.max(-0.35, Math.min(0.35, lean));
-      v.setBrake(n.brakeLights);
-      v.setHazard(n.hazardLights && blink);
-      v.setHeadlights(lowLight ? 1 : 0, lowLight);
-    }
-    for (const [id, v] of this.npcVisuals) {
-      if (!seen.has(id)) {
-        this.release(v, id);
-        this.npcVisuals.delete(id);
-      }
-    }
+    // ---- NPCs (batched into 4 noon / 5 night WebGL2 draw calls) -----------
+    this.npcBatch.update(world.npcs, alpha, this.time, lowLight, this.boundGroundY, this.boundSlope);
 
     // ---- Camera / world -----------------------------------------------------
-    const ground = (x: number, z: number) => world.groundY(x, z);
-    const slide = this.tyres.update(dt, p, px, pz, heading, ground, this.chase.pixelScale(this.gl.domElement.height));
+    const slide = this.tyres.update(dt, p, px, pz, heading, this.boundGroundY, this.chase.pixelScale(this.gl.domElement.height));
     this.tmp.set(px, elev, -pz);
-    this.chase.update(dt, this.tmp, heading, p.speed, {
-      travel: p.travel,
-      fovKick: world.speedRush(),
-      bump: lerp(p.prevBump, p.bump),
-      slide: Math.max(slide.front, slide.rear),
-      topSpeed: world.topSpeed(),
-      clip: world.mode === 'city' ? (camPos, target) => this.clipCamera(world, camPos, target) : undefined,
-    });
+    this.chaseInput.travel = p.travel;
+    this.chaseInput.fovKick = world.speedRush();
+    this.chaseInput.bump = bump;
+    this.chaseInput.slide = Math.max(slide.front, slide.rear);
+    this.chaseInput.topSpeed = world.topSpeed();
+    this.chaseInput.clip = world.mode === 'city' ? this.boundClipCamera : undefined;
+    this.chase.update(dt, this.tmp, heading, p.speed, this.chaseInput);
 
     const pLight = LIGHTING[this.timeOfDay];
     if (this.timeOfDay === 'monsoon' && dt > 0) {
@@ -652,7 +638,8 @@ export class Renderer {
     }
     this.sun.position.set(px + pLight.sunDir[0] * 75, elev + pLight.sunDir[1] * 85, -pz + pLight.sunDir[2] * 75);
     this.birds.update(dt, pz, elev, this.time);
-    this.sun.target.position.set(px, elev, -pz - 15);
+    this.sun.target.position.set(px, elev, -pz);
+    this.sun.target.updateMatrixWorld();
     this.env?.update(this.time, px, pz);
     if (world.mode === 'city') {
       this.fares?.update(world.fares, px, pz, this.time, world.pedestrians.peds);
@@ -663,7 +650,7 @@ export class Renderer {
     if (this.flame.visible) {
       const f = 0.75 + Math.random() * 0.5;
       this.flame.scale.set(f, f, (0.8 + Math.random() * 0.7) * Math.min(1, p.boostTime * 3 + 0.3));
-      (this.flame.material as THREE.MeshBasicMaterial).color.set(Math.random() < 0.5 ? '#7fd3ff' : '#ffb347');
+      (this.flame.material as THREE.MeshBasicMaterial).color.copy(Math.random() < 0.5 ? FLAME_CYAN : FLAME_AMBER);
     }
     this.effects.update(dt);
 
@@ -694,6 +681,7 @@ export class Renderer {
           visibleChunks: chunks,
           mode,
           timeOfDay: this.timeOfDay,
+          postTier: this.post.tier,
         };
         (window as unknown as { __KT3D_PERF__?: typeof snap }).__KT3D_PERF__ = snap;
         if (this.perfEl) {
@@ -720,6 +708,7 @@ export class Renderer {
         visibleChunks: chunks,
         mode,
         timeOfDay: this.timeOfDay,
+        postTier: this.post.tier,
       };
       (window as unknown as { __KT3D_PERF__?: typeof snap }).__KT3D_PERF__ = snap;
       if (this.perfEl) {

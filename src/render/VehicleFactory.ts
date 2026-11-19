@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import type { NpcKind, PlayerVehicle } from '../sim/types';
 import { headlightPoolTexture, routeBoardTexture, truckArtTexture, windscreenArtTexture, contactShadowTexture } from './textures';
@@ -206,13 +207,33 @@ function attachHeadlightPool(body: THREE.Group, lights: Lights, frontZ: number, 
   lights.pool = pool;
 }
 
-/** Merge a list of meshes into one mesh in `body` space. */
-function mergeMeshes(body: THREE.Object3D, meshes: THREE.Mesh[], material: THREE.Material, name: string): THREE.Mesh | null {
+const vcMatCache = new Map<string, THREE.MeshLambertMaterial>();
+function vcLambert(): THREE.MeshLambertMaterial {
+  let m = vcMatCache.get('vc');
+  if (!m) {
+    m = new THREE.MeshLambertMaterial({ color: '#ffffff', vertexColors: true, flatShading: true });
+    vcMatCache.set('vc', m);
+  }
+  return m;
+}
+
+const _invMat = new THREE.Matrix4();
+const _relMat = new THREE.Matrix4();
+
+/** Merge a list of meshes into one mesh in `space` coordinates. */
+function mergeMeshes(
+  space: THREE.Object3D,
+  meshes: THREE.Mesh[],
+  material: THREE.Material,
+  name: string,
+  castShadow = true,
+): THREE.Mesh | null {
   if (meshes.length === 0) return null;
-  const inv = body.matrixWorld.clone().invert();
+  _invMat.copy(space.matrixWorld).invert();
   let geos = meshes.map((m) => {
     const g = m.geometry.clone();
-    g.applyMatrix4(new THREE.Matrix4().multiplyMatrices(inv, m.matrixWorld));
+    _relMat.multiplyMatrices(_invMat, m.matrixWorld);
+    g.applyMatrix4(_relMat);
     return g;
   });
   // Extruded / shape parts are non-indexed; boxes are indexed. Unify.
@@ -226,15 +247,59 @@ function mergeMeshes(body: THREE.Object3D, meshes: THREE.Mesh[], material: THREE
   if (!merged) return null;
   const mesh = new THREE.Mesh(merged, material);
   mesh.name = name;
-  mesh.castShadow = true;
-  body.add(mesh);
+  mesh.castShadow = castShadow;
+  space.add(mesh);
+  return mesh;
+}
+
+/** Merge untextured Lambert meshes into one vertex-colored mesh in `space` coordinates. */
+function mergeMeshesVC(
+  space: THREE.Object3D,
+  meshes: THREE.Mesh[],
+  name: string,
+  castShadow: boolean,
+): THREE.Mesh | null {
+  if (meshes.length === 0) return null;
+  _invMat.copy(space.matrixWorld).invert();
+  const geos: THREE.BufferGeometry[] = [];
+  for (const m of meshes) {
+    const raw = m.geometry;
+    const g = raw.index ? raw.toNonIndexed() : raw.clone();
+    _relMat.multiplyMatrices(_invMat, m.matrixWorld);
+    g.applyMatrix4(_relMat);
+    if (!g.getAttribute('normal')) g.computeVertexNormals();
+    for (const k of Object.keys(g.attributes)) {
+      if (k !== 'position' && k !== 'normal') g.deleteAttribute(k);
+    }
+    const mat = m.material as THREE.MeshLambertMaterial;
+    const c = mat.color;
+    const count = g.getAttribute('position').count;
+    const cols = new Float32Array(count * 3);
+    for (let i = 0; i < count; i++) {
+      cols[i * 3] = c.r;
+      cols[i * 3 + 1] = c.g;
+      cols[i * 3 + 2] = c.b;
+    }
+    g.setAttribute('color', new THREE.BufferAttribute(cols, 3));
+    geos.push(g);
+  }
+  const merged = mergeGeometries(geos, false);
+  geos.forEach((g) => g.dispose());
+  if (!merged) return null;
+  const mesh = new THREE.Mesh(merged, vcLambert());
+  mesh.name = name;
+  mesh.castShadow = castShadow;
+  space.add(mesh);
   return mesh;
 }
 
 /**
- * Collapse a hand-built vehicle into a few draw calls: one mesh per material,
- * plus one mesh per light group (so lights can swap material). Wheels stay
- * separate only when they need to spin.
+ * Collapse a hand-built vehicle into minimal draw calls:
+ *   - 1 `'paint'` mesh (ready for live paint swaps)
+ *   - 1 vertex-colored `'part_vc'` mesh for all untextured non-emissive opaque parts
+ *   - 1 mesh per textured/emissive special material (art panels, lightbars)
+ *   - 1 vertex-colored mesh inside each wheel pivot (when `keepWheels` is true)
+ *   - 1 mesh per light group (`brake`, `hazard`, `head`)
  */
 function finalize(p: Proto, keepWheels: boolean): void {
   const { body, lights } = p;
@@ -245,29 +310,72 @@ function finalize(p: Proto, keepWheels: boolean): void {
   const wheelSet = new Set<THREE.Object3D>();
   if (keepWheels) for (const w of p.wheels) w.traverse((o) => wheelSet.add(o));
 
+  if (keepWheels) {
+    for (const w of p.wheels) {
+      if (w instanceof THREE.Mesh) {
+        w.castShadow = false;
+        continue;
+      }
+      const wMeshes: THREE.Mesh[] = [];
+      w.traverse((o) => {
+        if (o instanceof THREE.Mesh) wMeshes.push(o);
+      });
+      if (wMeshes.length > 0) {
+        const mergedWheel = mergeMeshesVC(w, wMeshes, 'wheel_vc', false);
+        for (const ch of [...w.children]) {
+          if (ch !== mergedWheel) w.remove(ch);
+        }
+      }
+    }
+  }
+
+  const paintMeshes: THREE.Mesh[] = [];
+  const vcMeshes: THREE.Mesh[] = [];
   const byMat = new Map<THREE.Material, THREE.Mesh[]>();
+
   body.traverse((o) => {
     if (!(o instanceof THREE.Mesh) || lightSet.has(o) || wheelSet.has(o)) return;
     const mat = o.material as THREE.Material;
+    if (mat.name === 'paint') {
+      paintMeshes.push(o);
+      return;
+    }
+    if (
+      mat instanceof THREE.MeshLambertMaterial &&
+      !mat.map &&
+      !mat.transparent &&
+      mat.emissive.getHex() === 0
+    ) {
+      vcMeshes.push(o);
+      return;
+    }
     let list = byMat.get(mat);
     if (!list) byMat.set(mat, (list = []));
     list.push(o);
   });
-  const mergedLights: Record<string, THREE.Mesh | null> = {};
+
   for (const name of LIGHT_NAMES) {
     const list = lights[name];
-    mergedLights[name] = list.length ? mergeMeshes(body, list, list[0].material as THREE.Material, name) : null;
+    if (list.length) mergeMeshes(body, list, list[0].material as THREE.Material, name, false);
   }
-  for (const [mat, list] of byMat) mergeMeshes(body, list, mat, 'part');
+  if (paintMeshes.length) mergeMeshes(body, paintMeshes, paintMeshes[0].material as THREE.Material, 'paint', true);
+  if (vcMeshes.length) mergeMeshesVC(body, vcMeshes, 'part_vc', true);
+  for (const [mat, list] of byMat) mergeMeshes(body, list, mat, 'part', true);
 
   // Remove originals.
   const remove: THREE.Object3D[] = [];
-  body.traverse((o) => {
-    if (o === body || o.parent !== body) return;
-    if (o.name === 'part' || LIGHT_NAMES.includes(o.name as (typeof LIGHT_NAMES)[number])) return;
-    if (o === lights.beam || o === lights.pool || (keepWheels && wheelSet.has(o))) return;
+  for (const o of body.children) {
+    if (
+      o.name === 'paint' ||
+      o.name === 'part_vc' ||
+      o.name === 'part' ||
+      LIGHT_NAMES.includes(o.name as (typeof LIGHT_NAMES)[number])
+    ) {
+      continue;
+    }
+    if (o === lights.beam || o === lights.pool || (keepWheels && wheelSet.has(o))) continue;
     remove.push(o);
-  });
+  }
   for (const o of remove) body.remove(o);
   if (lights.beam) lights.beam.name = 'beam';
   if (lights.pool) lights.pool.name = 'pool';
@@ -312,6 +420,49 @@ function bind(kind: VisualKind, root: THREE.Group, wheelRadius: number): Vehicle
   };
 }
 
+export interface RawProto {
+  body: THREE.Group;
+  lights: Lights;
+  wheelRadius: number;
+}
+
+/** Expand quantized / normalized / interleaved glTF attributes into plain Float32 BufferAttributes for merging & BatchedMesh. */
+function dequantizeScene(root: THREE.Object3D): void {
+  const seen = new Set<THREE.BufferGeometry>();
+  root.traverse((obj) => {
+    if (!(obj instanceof THREE.Mesh)) return;
+    const g = obj.geometry;
+    if (seen.has(g)) return;
+    seen.add(g);
+    for (const key of Object.keys(g.attributes)) {
+      const attr = g.attributes[key];
+      const isPlainF32 =
+        !('isInterleavedBufferAttribute' in attr && attr.isInterleavedBufferAttribute) &&
+        !attr.normalized &&
+        attr.array instanceof Float32Array;
+      if (isPlainF32) continue;
+      const count = attr.count;
+      const itemSize = attr.itemSize;
+      const out = new Float32Array(count * itemSize);
+      for (let i = 0; i < count; i++) {
+        out[i * itemSize] = attr.getX(i);
+        if (itemSize > 1) out[i * itemSize + 1] = attr.getY(i);
+        if (itemSize > 2) out[i * itemSize + 2] = attr.getZ(i);
+        if (itemSize > 3) out[i * itemSize + 3] = attr.getW(i);
+      }
+      g.setAttribute(key, new THREE.BufferAttribute(out, itemSize, false));
+    }
+  });
+}
+
+export const NPC_BIKE_PAINTS = ['#c0161c', '#c0161c', '#1c1d20', '#164ea6', '#216e39', '#3c4043'] as const;
+export const NPC_CART_RAILS = ['#d32f2f', '#1976d2', '#2e7d32', '#f9a825', '#7b1fa2'] as const;
+export const NPC_CAR_PAINTS = CAR_COLORS;
+export const NPC_TRUCK_CABS = ['#1565c0', '#c62828', '#2e7d32', '#ef6c00', '#00695c', '#5e35b1'] as const;
+export const NPC_MINIBUS_PAINTS = ['#1f4fa8', '#e9e2cf', '#1f7a4d', '#b3261e', '#1565c0', '#6a1b9a', '#00796b', '#d84315'] as const;
+export const NPC_RICKSHAW_PAINTS = ['#e8731c', '#f2b51c', '#2e7d32', '#e8731c', '#c9461c', '#00796b', '#ef6c00', '#1b5e20'] as const;
+export const NPC_ROUTE_BOARDS = ROUTE_BOARDS;
+
 export class VehicleFactory {
   private beamMaterial: THREE.MeshBasicMaterial | null = null;
   /** Blender/GLTF .glb models; procedural fallback if missing. */
@@ -327,11 +478,14 @@ export class VehicleFactory {
       blending: THREE.AdditiveBlending,
       side: THREE.DoubleSide,
     });
+    await MeshoptDecoder.ready;
     const loader = new GLTFLoader();
+    loader.setMeshoptDecoder(MeshoptDecoder);
     await Promise.all(
       ['alto', 'coupe', 'rickshaw', 'suv', 'minibus', 'bike', 'cart', 'car', 'truck'].map(async (name) => {
         try {
           const gltf = await loader.loadAsync(`${import.meta.env.BASE_URL}models/${name}.${(import.meta.env.VITE_MODEL_EXT as string | undefined) ?? 'glb'}`);
+          dequantizeScene(gltf.scene);
           this.models.set(name, gltf.scene);
         } catch (err) {
           console.warn(`model ${name}.glb unavailable, using procedural mesh`, err);
@@ -342,6 +496,12 @@ export class VehicleFactory {
     for (let i = 0; i < 10; i++) truckArtTexture(i);
     for (const r of ROUTE_BOARDS) routeBoardTexture(r);
     headlightPoolTexture();
+  }
+
+  /** Unmerged prototype for batched NPC geometry extraction (never cached here). */
+  buildRawNpcProto(kind: NpcKind, variant: number): RawProto {
+    const p = this.build(kind, variant);
+    return { body: p.body, lights: p.lights, wheelRadius: p.wheelRadius };
   }
 
   private protos = new Map<string, Proto>();
@@ -456,6 +616,7 @@ export class VehicleFactory {
         beamGeo.translate(0, -7, 0);
         beamGeo.rotateX(Math.PI / 2);
         const beam = new THREE.Mesh(beamGeo, this.beamMaterial);
+        beam.name = 'beam';
         beam.position.set(0, headCenter.y, headCenter.z);
         beam.visible = false;
         beam.castShadow = false;
@@ -567,7 +728,9 @@ export class VehicleFactory {
       [6.2, 14.5],
     );
     const route = ROUTE_BOARDS[variant % ROUTE_BOARDS.length];
-    box(p.body, 1.12, 0.24, 0.04, lambert('#ffffff', { map: routeBoardTexture(route), emissive: '#ffd400' }), 0, 2.74, -3.58);
+    const routeMat = lambert('#ffffff', { map: routeBoardTexture(route), emissive: '#ffd400' });
+    routeMat.name = 'route_board';
+    box(p.body, 1.12, 0.24, 0.04, routeMat, 0, 2.74, -3.58);
     const shirt = (k: number) => SHIRT_COLORS[(variant + k) % SHIRT_COLORS.length];
     // Hanging off the kerb-side doors (model doors at y 1.62 / -2.62 -> three z).
     rider(p.body, shirt(1), -1.22, 0.95, -1.62, false);
@@ -607,6 +770,7 @@ export class VehicleFactory {
     const { root, body } = this.shell();
     const wheels: THREE.Object3D[] = [];
     const paint = lambert(paintOverride ?? '#dfe2e3');
+    paint.name = 'paint';
     const lights: Lights = { brake: [], hazard: [], head: [] };
     const BEVEL = 0.11;
     const HALF_W = 0.74;
@@ -702,6 +866,7 @@ export class VehicleFactory {
       beamGeo.translate(0, -7, 0);
       beamGeo.rotateX(-Math.PI / 2);
       const beam = new THREE.Mesh(beamGeo, this.beamMaterial);
+      beam.name = 'beam';
       beam.position.set(0, 0.74, front);
       beam.visible = false;
       beam.castShadow = false;
@@ -719,6 +884,7 @@ export class VehicleFactory {
     const lights: Lights = { brake: [], hazard: [], head: [] };
     const taxi = variant === 7;
     const paint = lambert(paintOverride ?? (taxi ? '#f2c200' : CAR_COLORS[variant % CAR_COLORS.length]));
+    paint.name = 'paint';
     box(body, 1.72, 0.6, 4.4, paint, 0, 0.62, 0);
     box(body, 1.6, 0.52, 2.3, M.glass(), 0, 1.16, 0.2);
     box(body, 1.62, 0.08, 1.9, paint, 0, 1.45, 0.25);
@@ -741,6 +907,7 @@ export class VehicleFactory {
     const wheels: THREE.Object3D[] = [];
     const lights: Lights = { brake: [], hazard: [], head: [] };
     const paint = lambert('#f4f4f4');
+    paint.name = 'paint';
     box(body, 1.8, 0.7, 5, paint, 0, 0.75, 0);
     box(body, 1.7, 0.6, 1.6, M.glass(), 0, 1.4, -0.6);
     box(body, 1.82, 0.16, 5.02, lambert('#1a3c8c'), 0, 0.9, 0);
@@ -756,6 +923,7 @@ export class VehicleFactory {
     const wheels: THREE.Object3D[] = [];
     const lights: Lights = { brake: [], hazard: [], head: [] };
     const tank = lambert(variant % 3 === 0 ? '#1d1d1f' : '#c0161c');
+    tank.name = 'paint';
     wheel(body, 0.3, 0.1, 0, -0.68, wheels);
     wheel(body, 0.3, 0.1, 0, 0.68, wheels);
     box(body, 0.1, 0.1, 1.2, M.darkGrey(), 0, 0.48, 0);
@@ -778,7 +946,9 @@ export class VehicleFactory {
     const wheels: THREE.Object3D[] = [];
     const lights: Lights = { brake: [], hazard: [], head: [] };
     const art = lambert('#ffffff', { map: truckArtTexture(variant) });
+    art.name = 'art_side';
     const base = lambert(paintOverride ?? ['#1f7a4d', '#c2185b', '#1565c0', '#f9a825'][variant % 4]);
+    base.name = 'paint';
     const L = 8.6, W = 2.36;
     // Main body with art on the sides.
     box(body, W, 1.3, L, art, 0, 1.15, 0);
@@ -790,7 +960,9 @@ export class VehicleFactory {
     box(body, W + 0.04, 0.06, L + 0.04, M.chrome(), 0, 1.82, 0);
     box(body, W - 0.1, 0.9, 0.06, M.glass(), 0, 2.1, -L / 2 - 0.01);
     box(body, W, 0.6, 0.1, M.chrome(), 0, 0.9, -L / 2 - 0.03);
-    const board = new THREE.Mesh(boxGeo(1.4, 0.3, 0.04), lambert('#ffffff', { map: routeBoardTexture('W-11') }));
+    const routeMat = lambert('#ffffff', { map: routeBoardTexture('W-11') });
+    routeMat.name = 'route_board';
+    const board = new THREE.Mesh(boxGeo(1.4, 0.3, 0.04), routeMat);
     board.position.set(0, 2.7, -L / 2 - 0.08);
     body.add(board);
     // Roof rack with luggage.
@@ -817,6 +989,7 @@ export class VehicleFactory {
     const lights: Lights = { brake: [], hazard: [], head: [] };
     const green = variant % 4 === 3;
     const paint = lambert(paintOverride ?? (green ? '#2e7d32' : '#f6c50f'));
+    paint.name = 'paint';
     const canopy = lambert(green ? '#f6c50f' : '#141414');
     box(body, 1.36, 0.5, 2.6, paint, 0, 0.62, 0.1);
     // Tapered nose.
@@ -890,7 +1063,9 @@ export class VehicleFactory {
     const wheels: THREE.Object3D[] = [];
     const lights: Lights = { brake: [], hazard: [], head: [] };
     const art = lambert('#ffffff', { map: truckArtTexture(variant + 4) });
+    art.name = 'art_side';
     const cab = lambert(['#1565c0', '#c62828', '#2e7d32', '#ef6c00'][variant % 4]);
+    cab.name = 'paint';
     const wood = lambert('#a0522d');
     // Cab (rounded Bedford nose).
     box(body, 2.2, 1.1, 1.6, cab, 0, 1.25, -3.1);

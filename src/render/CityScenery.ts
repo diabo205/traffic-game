@@ -1,29 +1,29 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { cityMap, KERB_H, SIDEWALK } from '../sim/city/cityMap';
-import { PATCHED_ROUNDABOUTS, ringOuterR } from '../sim/city/saddarPatches';
 import type { CityLink, CityMap } from '../sim/city/cityMap';
+import { PATCHED_ROUNDABOUTS, ringOuterR } from '../sim/city/saddarPatches';
 import { pointObbDistance } from '../sim/math';
 import { Rng } from '../sim/rng';
 import { GROUND_FLOOR_H, makeFacadeMaterial, setFacadeNight, STOREY_H } from './facadeMaterial';
-import type { TimeOfDay } from './Renderer';
 import { buildParkedBikeGeometry, PARKED_BIKE_COLORS } from './parkedBikes';
+import type { TimeOfDay } from './Renderer';
 import { buildSaddarLandmark } from './SaddarLandmarks';
 import { paint } from './strip';
 import {
   asphaltTexture,
   BANNER_COUNT,
+  contactShadowTexture,
   dirtTexture,
   flagPavingTexture,
-  contactShadowTexture,
+  kerbStripeTexture,
+  lawnTexture,
   NEON_H_COUNT,
   NEON_V_COUNT,
   neonHAtlas,
   neonHAtlasUv,
   neonVAtlas,
   neonVAtlasUv,
-  lawnTexture,
-  kerbStripeTexture,
   saddarFacadeAtlas,
   SHOP_SIGN_COUNT,
   shopSignAtlas,
@@ -36,10 +36,9 @@ import {
 
 type V3 = readonly [number, number, number];
 
-/** Collects textured triangles & quads (auto-oriented to a facing hint) into one geometry. */
-/** Distance from (px, pz) to segment a–b. */
 function segDistToPoint(ax: number, az: number, bx: number, bz: number, px: number, pz: number): number {
-  const ex = bx - ax, ez = bz - az;
+  const ex = bx - ax;
+  const ez = bz - az;
   const t = Math.max(0, Math.min(1, ((px - ax) * ex + (pz - az) * ez) / (ex * ex + ez * ez || 1)));
   return Math.hypot(ax + ex * t - px, az + ez * t - pz);
 }
@@ -96,10 +95,21 @@ class Tris {
 const WHITE = new THREE.Color('#ffffff');
 const PARK_TINT = new THREE.Color('#8ecf6e');
 const UP: V3 = [0, 1, 0];
+const CHUNK_SIZE = 200;
+const CHUNK_CULL_DIST = 420;
 
-const BUILDING_COLORS = ['#d9c9a3', '#cdb48a', '#e3dccb', '#bfae8e', '#d6c2a0', '#c9bba3', '#e0cfae', '#b8a888', '#cfd0c8', '#e6d3b0', '#c7b593', '#ddd2bd'];
+const BUILDING_COLORS = [
+  '#d9c9a3', '#cdb48a', '#e3dccb', '#bfae8e', '#d6c2a0', '#c9bba3',
+  '#e0cfae', '#b8a888', '#cfd0c8', '#e6d3b0', '#c7b593', '#ddd2bd',
+];
 
+const ZERO_MAT = new THREE.Matrix4().compose(
+  new THREE.Vector3(0, -500, 0),
+  new THREE.Quaternion(),
+  new THREE.Vector3(0, 0, 0),
+);
 const dummy = new THREE.Object3D();
+
 function place(x: number, y: number, z: number, ry = 0, sx = 1, sy = 1, sz = 1): THREE.Matrix4 {
   dummy.position.set(x, y, z);
   dummy.rotation.set(0, ry, 0);
@@ -108,35 +118,94 @@ function place(x: number, y: number, z: number, ry = 0, sx = 1, sy = 1, sz = 1):
   return dummy.matrix.clone();
 }
 
-function instanced(group: THREE.Group, geo: THREE.BufferGeometry, mat: THREE.Material, mats: THREE.Matrix4[], colors?: THREE.Color[], shadow = false, receive = true): THREE.InstancedMesh | null {
-  if (mats.length === 0) return null;
-  const m = new THREE.InstancedMesh(geo, mat, mats.length);
-  mats.forEach((mm, i) => m.setMatrixAt(i, mm));
-  if (colors) colors.forEach((c, i) => m.setColorAt(i, c));
-  m.castShadow = shadow;
-  m.receiveShadow = receive;
-  group.add(m);
-  return m;
-}
-
-/** Uniform non-indexed geometry layout for THREE.BatchedMesh. */
-function prepBatchGeo(geo: THREE.BufferGeometry, withUv: boolean, paintColor?: string): THREE.BufferGeometry {
+/** Normalize geometry to non-indexed [position, normal, color (, uv)] for BatchedMesh / merging. */
+function prepBatchGeo(
+  geo: THREE.BufferGeometry,
+  withUv: boolean,
+  color?: THREE.Color | string,
+  matrix?: THREE.Matrix4,
+): THREE.BufferGeometry {
   const g = geo.index ? geo.toNonIndexed() : geo.clone();
+  if (matrix) g.applyMatrix4(matrix);
   if (!g.getAttribute('normal')) g.computeVertexNormals();
+
   if (withUv) {
-    if (!g.getAttribute('uv')) g.setAttribute('uv', new THREE.Float32BufferAttribute(new Float32Array(g.getAttribute('position').count * 2), 2));
-  } else {
-    if (g.getAttribute('uv')) g.deleteAttribute('uv');
+    if (!g.getAttribute('uv')) {
+      g.setAttribute('uv', new THREE.Float32BufferAttribute(new Float32Array(g.getAttribute('position').count * 2), 2));
+    }
+  } else if (g.getAttribute('uv')) {
+    g.deleteAttribute('uv');
   }
-  if (paintColor !== undefined || !g.getAttribute('color')) {
-    paint(g, paintColor ?? '#ffffff');
+
+  if (color !== undefined || !g.getAttribute('color')) {
+    const c = color instanceof THREE.Color ? color : new THREE.Color(color ?? '#ffffff');
+    const n = g.getAttribute('position').count;
+    const arr = new Float32Array(n * 3);
+    for (let i = 0; i < n; i++) {
+      arr[i * 3] = c.r;
+      arr[i * 3 + 1] = c.g;
+      arr[i * 3 + 2] = c.b;
+    }
+    g.setAttribute('color', new THREE.BufferAttribute(arr, 3));
   }
+
   for (const attr of Object.keys(g.attributes)) {
     if (attr !== 'position' && attr !== 'normal' && attr !== 'color' && (!withUv || attr !== 'uv')) {
       g.deleteAttribute(attr);
     }
   }
   return g;
+}
+
+/** Duplicate non-indexed triangles with reversed winding so DoubleSide renders properly on FrontSide BatchedMesh. */
+function makeDoubleSidedGeo(g: THREE.BufferGeometry): THREE.BufferGeometry {
+  const pos = g.getAttribute('position').array as Float32Array;
+  const nrm = g.getAttribute('normal').array as Float32Array;
+  const col = g.getAttribute('color').array as Float32Array;
+  const uvAttr = g.getAttribute('uv');
+  const uv = uvAttr ? (uvAttr.array as Float32Array) : null;
+  const count = pos.length / 3;
+
+  const outPos = new Float32Array(pos.length * 2);
+  const outNrm = new Float32Array(nrm.length * 2);
+  const outCol = new Float32Array(col.length * 2);
+  const outUv = uv ? new Float32Array(uv.length * 2) : null;
+
+  outPos.set(pos, 0);
+  outNrm.set(nrm, 0);
+  outCol.set(col, 0);
+  if (uv && outUv) outUv.set(uv, 0);
+
+  const pOff = pos.length;
+  const uvOff = uv ? uv.length : 0;
+  for (let i = 0; i < count; i += 3) {
+    const mapIdx = [i, i + 2, i + 1];
+    for (let k = 0; k < 3; k++) {
+      const dst = i + k;
+      const src = mapIdx[k];
+      outPos[pOff + dst * 3] = pos[src * 3];
+      outPos[pOff + dst * 3 + 1] = pos[src * 3 + 1];
+      outPos[pOff + dst * 3 + 2] = pos[src * 3 + 2];
+      outNrm[pOff + dst * 3] = -nrm[src * 3];
+      outNrm[pOff + dst * 3 + 1] = -nrm[src * 3 + 1];
+      outNrm[pOff + dst * 3 + 2] = -nrm[src * 3 + 2];
+      outCol[pOff + dst * 3] = col[src * 3];
+      outCol[pOff + dst * 3 + 1] = col[src * 3 + 1];
+      outCol[pOff + dst * 3 + 2] = col[src * 3 + 2];
+      if (uv && outUv) {
+        outUv[uvOff + dst * 2] = uv[src * 2];
+        outUv[uvOff + dst * 2 + 1] = uv[src * 2 + 1];
+      }
+    }
+  }
+
+  const out = new THREE.BufferGeometry();
+  out.setAttribute('position', new THREE.BufferAttribute(outPos, 3));
+  out.setAttribute('normal', new THREE.BufferAttribute(outNrm, 3));
+  out.setAttribute('color', new THREE.BufferAttribute(outCol, 3));
+  if (outUv) out.setAttribute('uv', new THREE.BufferAttribute(outUv, 2));
+  g.dispose();
+  return out;
 }
 
 function atlasQuadGeo(uv: readonly [number, number, number, number]): THREE.BufferGeometry {
@@ -152,82 +221,171 @@ function atlasQuadGeo(uv: readonly [number, number, number, number]): THREE.Buff
 function doubleSidedAtlasQuadGeo(uv: readonly [number, number, number, number]): THREE.BufferGeometry {
   const front = atlasQuadGeo(uv).translate(0, 0, 0.015);
   const back = atlasQuadGeo(uv).rotateY(Math.PI).translate(0, 0, -0.015);
-  const merged = mergeGeometries([front, back]);
+  const merged = mergeGeometries([front, back], false);
   front.dispose();
   back.dispose();
   return merged ?? atlasQuadGeo(uv);
 }
 
-interface BatchEntry {
-  geo: THREE.BufferGeometry;
-  mats: THREE.Matrix4[];
-  cols?: THREE.Color[];
+interface AtlasSlotRect {
+  u0: number;
+  v0: number;
+  u1: number;
+  v1: number;
 }
 
-function addBatch(group: THREE.Group, mat: THREE.Material, entries: BatchEntry[], shadow = false, receive = true): THREE.BatchedMesh | null {
-  const nonEmpty = entries.filter((e) => e.mats.length > 0);
-  if (nonEmpty.length === 0) return null;
-  let totalInstances = 0;
-  let totalVertices = 0;
-  for (const e of nonEmpty) {
-    totalInstances += e.mats.length;
-    totalVertices += e.geo.getAttribute('position').count;
+/** Shelf-packs ClampToEdge decals into a single albedo + emissive atlas pair (flipY = true). */
+class DecalAtlasBuilder {
+  readonly width = 2048;
+  readonly height = 1024;
+  private readonly albedoCanvas = document.createElement('canvas');
+  private readonly emissiveCanvas = document.createElement('canvas');
+  private readonly albedoCtx: CanvasRenderingContext2D;
+  private readonly emissiveCtx: CanvasRenderingContext2D;
+  private readonly slots = new Map<string, AtlasSlotRect>();
+  private curX = 4;
+  private curY = 4;
+  private shelfH = 0;
+
+  constructor() {
+    this.albedoCanvas.width = this.width;
+    this.albedoCanvas.height = this.height;
+    this.emissiveCanvas.width = this.width;
+    this.emissiveCanvas.height = this.height;
+    this.albedoCtx = this.albedoCanvas.getContext('2d')!;
+    this.emissiveCtx = this.emissiveCanvas.getContext('2d')!;
+    this.albedoCtx.fillStyle = '#ffffff';
+    this.albedoCtx.fillRect(0, 0, this.width, this.height);
+    this.emissiveCtx.fillStyle = '#000000';
+    this.emissiveCtx.fillRect(0, 0, this.width, this.height);
   }
-  const bm = new THREE.BatchedMesh(totalInstances, totalVertices, 0, mat);
-  for (const e of nonEmpty) {
-    const gid = bm.addGeometry(e.geo);
-    for (let i = 0; i < e.mats.length; i++) {
-      const iid = bm.addInstance(gid);
-      bm.setMatrixAt(iid, e.mats[i]);
-      bm.setColorAt(iid, e.cols?.[i] ?? WHITE);
+
+  pack(map: THREE.Texture, emissiveMap: THREE.Texture | null, emissiveColor: THREE.Color, lit: boolean): AtlasSlotRect {
+    const img = map.image as HTMLCanvasElement | HTMLImageElement | undefined;
+    const emImg = (emissiveMap?.image as HTMLCanvasElement | HTMLImageElement | undefined) ?? null;
+    const key = `${map.uuid}|${emissiveMap?.uuid ?? ''}|${emissiveColor.getHexString()}|${lit ? 1 : 0}`;
+    const hit = this.slots.get(key);
+    if (hit) return hit;
+
+    const srcW = Math.max(8, img?.width ?? 64);
+    const srcH = Math.max(8, img?.height ?? 64);
+    const scale = Math.min(1, 256 / Math.max(srcW, srcH));
+    const w = Math.max(16, Math.round(srcW * scale));
+    const h = Math.max(16, Math.round(srcH * scale));
+    const pad = 4;
+
+    if (this.curX + w + pad > this.width - 4) {
+      this.curX = 4;
+      this.curY += this.shelfH + pad;
+      this.shelfH = 0;
     }
+    if (this.curY + h + pad > this.height - 4) {
+      // Compact fallback: scale down if atlas shelf fills up (won't happen in Saddar, stays < 50% full).
+      return { u0: 0, v0: 0, u1: 1, v1: 1 };
+    }
+
+    const x = this.curX;
+    const y = this.curY;
+    this.curX += w + pad;
+    if (h > this.shelfH) this.shelfH = h;
+
+    if (img) {
+      this.albedoCtx.drawImage(img, x, y, w, h);
+      // 2 px edge extrusion to prevent mip bleed
+      this.albedoCtx.drawImage(img, 0, 0, 1, srcH, x - 2, y, 2, h);
+      this.albedoCtx.drawImage(img, srcW - 1, 0, 1, srcH, x + w, y, 2, h);
+      this.albedoCtx.drawImage(img, 0, 0, srcW, 1, x, y - 2, w, 2);
+      this.albedoCtx.drawImage(img, 0, srcH - 1, srcW, 1, x, y + h, w, 2);
+    }
+
+    if (lit && (emImg || img)) {
+      const eSrc = emImg ?? img!;
+      this.emissiveCtx.save();
+      this.emissiveCtx.drawImage(eSrc, x, y, w, h);
+      // Tint emissive channel by material emissive color when not white
+      if (emissiveColor.r < 0.99 || emissiveColor.g < 0.99 || emissiveColor.b < 0.99) {
+        this.emissiveCtx.globalCompositeOperation = 'multiply';
+        this.emissiveCtx.fillStyle = `#${emissiveColor.getHexString()}`;
+        this.emissiveCtx.fillRect(x, y, w, h);
+      }
+      this.emissiveCtx.restore();
+    }
+
+    // flipY = true -> V=1 is top of canvas (y), V=0 is bottom of canvas (y + h)
+    const u0 = (x + 1.5) / this.width;
+    const u1 = (x + w - 1.5) / this.width;
+    const v1 = 1 - (y + 1.5) / this.height;
+    const v0 = 1 - (y + h - 1.5) / this.height;
+    const rect = { u0, v0, u1, v1 };
+    this.slots.set(key, rect);
+    return rect;
   }
-  bm.computeBoundingBox();
-  bm.computeBoundingSphere();
-  bm.castShadow = shadow;
-  bm.receiveShadow = receive;
-  group.add(bm);
-  return bm;
+
+  buildTextures(): { albedo: THREE.CanvasTexture; emissive: THREE.CanvasTexture } {
+    const albedo = new THREE.CanvasTexture(this.albedoCanvas);
+    albedo.colorSpace = THREE.SRGBColorSpace;
+    albedo.anisotropy = 4;
+
+    const emissive = new THREE.CanvasTexture(this.emissiveCanvas);
+    emissive.colorSpace = THREE.SRGBColorSpace;
+    emissive.anisotropy = 4;
+    return { albedo, emissive };
+  }
 }
 
-const CHUNK_SIZE = 260;
+interface BatchProtoEntry {
+  chunkKey: string;
+  geoIdx: number;
+  matrix: THREE.Matrix4;
+  color: THREE.Color;
+}
 
-interface Chunk {
+interface ChunkRef {
   cx: number;
   cz: number;
-  group: THREE.Group;
+  visible: boolean;
+  batches: Array<{ bm: THREE.BatchedMesh; ids: number[] }>;
+  insts: Array<{ mesh: THREE.InstancedMesh; indices: number[]; mats: THREE.Matrix4[] }>;
+  extras: THREE.Object3D[];
 }
 
-interface ClutterBucket {
-  group: THREE.Group;
-  entries: Map<THREE.BufferGeometry, BatchEntry>;
+interface ChunkAccum {
+  cx: number;
+  cz: number;
+  clutterGeos: THREE.BufferGeometry[];
+  floodlitGeos: THREE.BufferGeometry[];
+  decalGeos: THREE.BufferGeometry[];
+  repeating: Map<string, { mat: THREE.MeshLambertMaterial; geos: THREE.BufferGeometry[] }>;
+  wires: number[];
   signs: THREE.Matrix4[][];
   banners: THREE.Matrix4[][];
-  bulbs: THREE.Matrix4[];
-  glows: THREE.Matrix4[];
   neonH: THREE.Matrix4[][];
   neonV: THREE.Matrix4[][];
-  shadows: THREE.Matrix4[];
 }
 
+const IDENTITY_MAT = new THREE.Matrix4();
+
 /**
- * Draws the Real Saddar OSM open-city map: asphalt strips + junction caps,
- * raised pavements & Jehangir Park with road-facing kerbs, lane markings,
- * roundabouts, Empress Market, oriented buildings with shop signs, balconies,
- * overhead banners, parked motorbikes/carts, poles/wires, neem trees,
- * construction yards and ramps. Spatial 260m chunks use BatchedMesh to keep
- * draw calls low and switch smoothly to lit dusk/night signage & windows.
+ * Ground-up WebGL2 BatchedMesh + InstancedMesh Saddar renderer:
+ * consolidates city surfaces, buildings, clutter, signage, and all 31 Saddar landmarks
+ * into ~21-24 real draw calls with chunk-level visibility toggling.
  */
 export class CityScenery {
   readonly group = new THREE.Group();
   visibleChunks = 0;
-  private chunks: Chunk[] = [];
-  private chunkMap = new Map<string, Chunk>();
-  private clutterBuckets = new Map<THREE.Group, ClutterBucket>();
-  private occupied: Array<[number, number, number]> = [];
-  private ownedGeos: THREE.BufferGeometry[] = [];
-  private ownedMats: THREE.Material[] = [];
-  private ownedTex: THREE.Texture[] = [];
+
+  private readonly chunks: ChunkRef[] = [];
+  private readonly chunkMap = new Map<string, ChunkRef>();
+  private readonly chunkAccum = new Map<string, ChunkAccum>();
+  private readonly occupied: Array<[number, number, number]> = [];
+
+  private readonly ownedGeos: THREE.BufferGeometry[] = [];
+  private readonly ownedMats: THREE.Material[] = [];
+  private readonly ownedTex: THREE.Texture[] = [];
+  private readonly ownedBatches: THREE.BatchedMesh[] = [];
+  private readonly ownedInsts: THREE.InstancedMesh[] = [];
+  private readonly dirtyInsts = new Set<THREE.InstancedMesh>();
+
   private facadeMat!: THREE.MeshLambertMaterial;
   private roadMat!: THREE.MeshPhongMaterial;
   private puddleMat!: THREE.MeshPhongMaterial;
@@ -237,17 +395,30 @@ export class CityScenery {
   private lampBulbMat!: THREE.MeshLambertMaterial;
   private warmGlowMat!: THREE.MeshBasicMaterial;
   private litProps: THREE.MeshLambertMaterial[] = [];
-  /** extra tree spots inside landmark gardens (sim x, z) */
+
+  private glowInst: THREE.InstancedMesh | null = null;
+  private fountainJetsInst: THREE.InstancedMesh | null = null;
+  private fountainBaseMats: THREE.Matrix4[] = [];
+  private fountainChunk: ChunkRef | null = null;
+  private readonly tmpJetMat = new THREE.Matrix4();
+  private readonly tmpJetScale = new THREE.Matrix4();
+
   private gardenTrees: Array<[number, number]> = [];
-  private glowMeshes: THREE.InstancedMesh[] = [];
-  private fountainJets: THREE.Mesh[] = [];
+  private gardenGravelGeos: THREE.BufferGeometry[] = [];
+  private gardenLawnGeos: THREE.BufferGeometry[] = [];
+  private kerbParts: THREE.BufferGeometry[] = [];
+  private dirtParts: THREE.BufferGeometry[] = [];
+
   private steamPos: Float32Array | null = null;
   private steamGeo: THREE.BufferGeometry | null = null;
   private steamSeeds: number[] = [];
 
+  private readonly repeatTexCache = new Map<object, THREE.Texture>();
+  private readonly repeatMatCache = new Map<string, THREE.MeshLambertMaterial>();
+
   constructor(lowSpec: boolean) {
+    void lowSpec;
     const map = cityMap();
-    const shadow = !lowSpec;
     this.ground(map);
     this.roads(map);
     this.puddles(map);
@@ -257,66 +428,112 @@ export class CityScenery {
     this.landmarkGarden(map, 'mazar_quaid', 60, 6, 10);
     this.landmarkGarden(map, 'sindh_high_court', 45, 5, 11);
     this.markings(map);
-    this.islands(map, shadow);
-    this.pedestrianBridges(map, shadow);
-    this.buildings(map, shadow);
+    this.islands(map);
+    this.pedestrianBridges(map);
+    this.buildings(map);
     this.poles(map);
-    this.trees(map, shadow);
+    this.trees(map);
     this.chaiDhabas(map);
     this.parkedClutter(map);
     this.yards(map);
-    this.ramps(map, shadow);
-    this.flushBatches(shadow);
-    for (const l of map.landmarks) {
-      const targetGroup = l.kind === 'empress' ? this.group : this.chunkFor(l.obb.x, l.obb.z);
-      buildSaddarLandmark(targetGroup, l, shadow, this.litProps);
-    }
+    this.ramps(map);
+    this.flushSurfaces();
+    this.landmarks(map);
+    this.flushAllChunks();
   }
 
-  private chunkFor(x: number, z: number): THREE.Group {
+  private chunkKeyFor(x: number, z: number): string {
     const gx = Math.floor(x / CHUNK_SIZE);
     const gz = Math.floor(z / CHUNK_SIZE);
-    const key = `${gx},${gz}`;
+    return `${gx},${gz}`;
+  }
+
+  private ensureChunkRef(key: string): ChunkRef {
     let c = this.chunkMap.get(key);
     if (!c) {
-      const group = new THREE.Group();
-      c = { cx: (gx + 0.5) * CHUNK_SIZE, cz: (gz + 0.5) * CHUNK_SIZE, group };
+      const [gxStr, gzStr] = key.split(',');
+      const gx = Number(gxStr);
+      const gz = Number(gzStr);
+      c = {
+        cx: (gx + 0.5) * CHUNK_SIZE,
+        cz: (gz + 0.5) * CHUNK_SIZE,
+        visible: true,
+        batches: [],
+        insts: [],
+        extras: [],
+      };
       this.chunkMap.set(key, c);
       this.chunks.push(c);
-      this.group.add(group);
     }
-    return c.group;
+    return c;
   }
 
-  private bucketFor(x: number, z: number): ClutterBucket {
-    const group = this.chunkFor(x, z);
-    let b = this.clutterBuckets.get(group);
-    if (!b) {
-      b = {
-        group,
-        entries: new Map(),
+  private accumFor(x: number, z: number): ChunkAccum {
+    const key = this.chunkKeyFor(x, z);
+    let a = this.chunkAccum.get(key);
+    if (!a) {
+      this.ensureChunkRef(key);
+      const [gxStr, gzStr] = key.split(',');
+      a = {
+        cx: (Number(gxStr) + 0.5) * CHUNK_SIZE,
+        cz: (Number(gzStr) + 0.5) * CHUNK_SIZE,
+        clutterGeos: [],
+        floodlitGeos: [],
+        decalGeos: [],
+        repeating: new Map(),
+        wires: [],
         signs: Array.from({ length: SHOP_SIGN_COUNT }, () => []),
         banners: Array.from({ length: BANNER_COUNT }, () => []),
-        bulbs: [],
-        glows: [],
         neonH: Array.from({ length: NEON_H_COUNT }, () => []),
         neonV: Array.from({ length: NEON_V_COUNT }, () => []),
-        shadows: [],
       };
-      this.clutterBuckets.set(group, b);
+      this.chunkAccum.set(key, a);
     }
-    return b;
+    return a;
   }
 
-  private pushClutter(x: number, z: number, geo: THREE.BufferGeometry, mat: THREE.Matrix4, col?: THREE.Color): void {
-    const bk = this.bucketFor(x, z);
-    let entry = bk.entries.get(geo);
-    if (!entry) {
-      entry = { geo, mats: [], cols: [] };
-      bk.entries.set(geo, entry);
+  private repeatTexture(src: THREE.Texture): THREE.Texture {
+    const img = src.image as object | undefined;
+    const key = img ?? src;
+    let tex = this.repeatTexCache.get(key);
+    if (!tex) {
+      tex = src.clone();
+      tex.wrapS = THREE.RepeatWrapping;
+      tex.wrapT = THREE.RepeatWrapping;
+      tex.repeat.set(1, 1);
+      tex.offset.set(0, 0);
+      tex.needsUpdate = true;
+      this.repeatTexCache.set(key, tex);
+      this.ownedTex.push(tex);
     }
-    entry.mats.push(mat);
-    entry.cols!.push(col ?? WHITE);
+    return tex;
+  }
+
+  private repeatingMaterial(
+    map: THREE.Texture,
+    emissiveMap: THREE.Texture | null,
+    emissiveHex: string,
+  ): THREE.MeshLambertMaterial {
+    const mapTex = this.repeatTexture(map);
+    const emTex = emissiveMap ? this.repeatTexture(emissiveMap) : null;
+    const key = `${mapTex.uuid}|${emTex?.uuid ?? ''}|${emissiveHex}`;
+    let mat = this.repeatMatCache.get(key);
+    if (!mat) {
+      mat = new THREE.MeshLambertMaterial({
+        color: '#ffffff',
+        vertexColors: true,
+        map: mapTex,
+        emissiveMap: emTex,
+        emissive: new THREE.Color(emissiveHex),
+        emissiveIntensity: 0,
+      });
+      this.repeatMatCache.set(key, mat);
+      this.ownedMats.push(mat);
+      if (emTex || emissiveHex !== '000000') {
+        this.litProps.push(mat);
+      }
+    }
+    return mat;
   }
 
   setTimeOfDay(tod: TimeOfDay): void {
@@ -337,25 +554,56 @@ export class CityScenery {
     for (const m of this.neonMats) m.emissiveIntensity = tod === 'night' ? 2.6 : tod === 'monsoon' ? 2.2 : tod === 'sunset' ? 1.7 : 0.45;
     if (this.bannerMat) this.bannerMat.emissiveIntensity = tod === 'night' ? 0.55 : tod === 'monsoon' ? 0.42 : tod === 'sunset' ? 0.2 : 0;
     if (this.lampBulbMat) this.lampBulbMat.emissiveIntensity = tod === 'night' ? 3.0 : tod === 'monsoon' ? 2.4 : tod === 'sunset' ? 1.4 : 0;
-    for (const m of this.litProps) m.emissiveIntensity = tod === 'night' ? 0.65 : tod === 'monsoon' ? 0.5 : tod === 'sunset' ? 0.25 : 0;
+    const propGlow = tod === 'night' ? 0.65 : tod === 'monsoon' ? 0.5 : tod === 'sunset' ? 0.25 : 0;
+    for (const m of this.litProps) m.emissiveIntensity = propGlow;
     const showGlow = tod !== 'noon';
     if (this.warmGlowMat) this.warmGlowMat.opacity = tod === 'night' ? 0.44 : tod === 'monsoon' ? 0.38 : 0.22;
-    for (const gm of this.glowMeshes) gm.visible = showGlow;
+    if (this.glowInst) this.glowInst.visible = showGlow;
   }
 
   update(time: number, x: number, z: number): void {
     let vis = 0;
-    for (const c of this.chunks) {
-      const on = Math.abs(c.cx - x) < 460 && Math.abs(c.cz - z) < 460;
-      c.group.visible = on;
+    this.dirtyInsts.clear();
+    for (let i = 0; i < this.chunks.length; i++) {
+      const c = this.chunks[i];
+      const on = Math.abs(c.cx - x) < CHUNK_CULL_DIST && Math.abs(c.cz - z) < CHUNK_CULL_DIST;
       if (on) vis++;
+      if (on !== c.visible) {
+        c.visible = on;
+        for (let b = 0; b < c.batches.length; b++) {
+          const ref = c.batches[b];
+          const ids = ref.ids;
+          for (let k = 0; k < ids.length; k++) {
+            ref.bm.setVisibleAt(ids[k], on);
+          }
+        }
+        for (let ii = 0; ii < c.insts.length; ii++) {
+          const ref = c.insts[ii];
+          const idxs = ref.indices;
+          const mats = ref.mats;
+          for (let k = 0; k < idxs.length; k++) {
+            ref.mesh.setMatrixAt(idxs[k], on ? mats[k] : ZERO_MAT);
+          }
+          this.dirtyInsts.add(ref.mesh);
+        }
+        for (let e = 0; e < c.extras.length; e++) {
+          c.extras[e].visible = on;
+        }
+      }
     }
     this.visibleChunks = vis;
+    if (this.dirtyInsts.size > 0) {
+      for (const m of this.dirtyInsts) m.instanceMatrix.needsUpdate = true;
+    }
 
-    for (let i = 0; i < this.fountainJets.length; i++) {
-      const jet = this.fountainJets[i];
-      const pulse = 0.82 + 0.28 * Math.sin(time * 4.2 + i * 1.1);
-      jet.scale.y = pulse;
+    if (this.fountainJetsInst && (!this.fountainChunk || this.fountainChunk.visible)) {
+      for (let i = 0; i < this.fountainBaseMats.length; i++) {
+        const pulse = 0.82 + 0.28 * Math.sin(time * 4.2 + i * 1.1);
+        this.tmpJetScale.makeScale(1, pulse, 1);
+        this.tmpJetMat.multiplyMatrices(this.fountainBaseMats[i], this.tmpJetScale);
+        this.fountainJetsInst.setMatrixAt(i, this.tmpJetMat);
+      }
+      this.fountainJetsInst.instanceMatrix.needsUpdate = true;
     }
 
     if (this.steamPos && this.steamGeo) {
@@ -375,31 +623,40 @@ export class CityScenery {
   }
 
   dispose(): void {
+    for (const b of this.ownedBatches) b.dispose();
+    for (const im of this.ownedInsts) im.dispose();
     for (const g of this.ownedGeos) g.dispose();
     for (const m of this.ownedMats) m.dispose();
     for (const t of this.ownedTex) t.dispose();
     this.group.traverse((o) => {
-      if (o instanceof THREE.BatchedMesh) {
-        o.dispose();
-      } else if (o instanceof THREE.Mesh || o instanceof THREE.LineSegments || o instanceof THREE.Points) {
+      if (o instanceof THREE.Mesh || o instanceof THREE.LineSegments || o instanceof THREE.Points) {
+        if (o instanceof THREE.BatchedMesh || o instanceof THREE.InstancedMesh) return;
         o.geometry.dispose();
         const mat = o.material;
         if (Array.isArray(mat)) mat.forEach((m) => m.dispose());
         else mat.dispose();
       }
     });
-    this.ownedGeos = [];
-    this.ownedMats = [];
-    this.ownedTex = [];
-    this.chunks = [];
+    this.ownedBatches.length = 0;
+    this.ownedInsts.length = 0;
+    this.ownedGeos.length = 0;
+    this.ownedMats.length = 0;
+    this.ownedTex.length = 0;
+    this.chunks.length = 0;
     this.chunkMap.clear();
-    this.clutterBuckets.clear();
-    this.glowMeshes = [];
-    this.fountainJets = [];
+    this.chunkAccum.clear();
+    this.repeatTexCache.clear();
+    this.repeatMatCache.clear();
+    this.glowInst = null;
+    this.fountainJetsInst = null;
+    this.fountainBaseMats = [];
+    this.fountainChunk = null;
     this.steamPos = null;
     this.steamGeo = null;
     this.steamSeeds = [];
   }
+
+  // ---- Surfaces -------------------------------------------------------------
 
   private ground(map: CityMap): void {
     const b = map.bounds;
@@ -422,6 +679,7 @@ export class CityScenery {
     g.rotation.x = -Math.PI / 2;
     g.position.set((b.x0 + b.x1) / 2, -0.08, -(b.z0 + b.z1) / 2);
     g.receiveShadow = true;
+    g.castShadow = false;
     this.group.add(g);
   }
 
@@ -433,7 +691,6 @@ export class CityScenery {
       const len = Math.hypot(dx, dz);
       if (len < 1e-4) continue;
       const ux = dx / len, uz = dz / len;
-      // Right = (uz, -ux), left = (-uz, ux)
       const p0x = s.ax + uz * s.hw, p0z = s.az - ux * s.hw;
       const p1x = s.bx + uz * s.hw, p1z = s.bz - ux * s.hw;
       const p2x = s.bx - uz * s.hw, p2z = s.bz + ux * s.hw;
@@ -464,7 +721,6 @@ export class CityScenery {
         q.tri(center, [x0, 0, -z0], [x1, 0, -z1], [cu, cv, x0 * uvS, z0 * uvS, x1 * uvS, z1 * uvS], UP);
       }
     }
-    // Seal roundabout plaza interiors smoothly up to the central islands.
     for (const loop of map.roundaboutLoops) {
       const cx = loop.island.x, cz = loop.island.z;
       const center: V3 = [cx, 0, -cz];
@@ -486,6 +742,7 @@ export class CityScenery {
     this.ownedMats.push(this.roadMat);
     const m = new THREE.Mesh(q.build(), this.roadMat);
     m.receiveShadow = true;
+    m.castShadow = false;
     this.group.add(m);
   }
 
@@ -500,7 +757,7 @@ export class CityScenery {
       g.translate(p.x, 0.025, -p.z);
       parts.push(g);
     }
-    const merged = mergeGeometries(parts);
+    const merged = mergeGeometries(parts, false);
     parts.forEach((g) => g.dispose());
     if (!merged) return;
     this.puddleMat = new THREE.MeshPhongMaterial({
@@ -515,15 +772,10 @@ export class CityScenery {
     this.ownedMats.push(this.puddleMat);
     const mesh = new THREE.Mesh(merged, this.puddleMat);
     mesh.receiveShadow = true;
+    mesh.castShadow = false;
     this.group.add(mesh);
   }
 
-  /**
-   * Flood-fills 1 m cells outward from a landmark, on a grid aligned with
-   * its heading (so edges run parallel to the streets), stopping at road
-   * pavements, at `R` metres and at `maxLr` in front. Returns the filled cells; `world` maps the
-   * landmark-local (lr across the front, + = street; lf along it) to sim x/z.
-   */
   private landmarkCells(map: CityMap, kind: string, R: number, maxLr = Infinity) {
     const lm = map.landmarks.find((l) => l.kind === kind);
     if (!lm) return null;
@@ -531,7 +783,7 @@ export class CityScenery {
     const hs = Math.sin(lm.obb.heading), hc = Math.cos(lm.obb.heading);
     const world = (lr: number, lf: number): [number, number] => [lm.obb.x + lf * hs + lr * hc, lm.obb.z + lf * hc - lr * hs];
     const idx = (i: number, j: number) => j * N + i;
-    const state = new Uint8Array(N * N); // 0 unknown, 1 filled, 2 blocked
+    const state = new Uint8Array(N * N);
     const open = (i: number, j: number) => {
       if (-R + i + 0.5 > maxLr) return false;
       const [x, z] = world(-R + i + 0.5, -R + j + 0.5);
@@ -550,20 +802,18 @@ export class CityScenery {
         } else state[idx(a, b)] = 2;
       }
     }
-    /** cell (i, j) centre in landmark-local metres */
     const local = (i: number, j: number): [number, number] => [-R + i + 0.5, -R + j + 0.5];
     const filled = (i: number, j: number) => i >= 0 && j >= 0 && i < N && j < N && state[idx(i, j)] === 1;
     return { lm, N, R, world, local, filled };
   }
 
-  /** One flat mesh at height `y` covering the cells where `keep(i, j)`, rows merged into strips. */
-  private cellSurface(
+  private cellSurfaceGeo(
     cells: NonNullable<ReturnType<CityScenery['landmarkCells']>>,
     keep: (i: number, j: number) => boolean,
     y: number,
-    mat: THREE.Material,
     uvS: number,
-  ): void {
+    colorHex: string,
+  ): THREE.BufferGeometry | null {
     const { N, R, world } = cells;
     const pos: number[] = [];
     const uv: number[] = [];
@@ -577,46 +827,50 @@ export class CityScenery {
         }
         let e = i;
         while (e + 1 < N && keep(e + 1, j)) e++;
-        const a = -R + i, b = -R + e + 1; // lr span
-        const f0 = -R + j, f1 = f0 + 1; // lf span
+        const a = -R + i, b = -R + e + 1;
+        const f0 = -R + j, f1 = f0 + 1;
         const v = pos.length / 3;
         for (const [lr, lf] of [[a, f0], [b, f0], [b, f1], [a, f1]]) {
           const [x, z] = world(lr, lf);
           pos.push(x, y, -z);
           uv.push(lr * uvS, lf * uvS);
         }
-        ind.push(v, v + 1, v + 2, v, v + 2, v + 3); // counter-clockwise seen from above
+        ind.push(v, v + 1, v + 2, v, v + 2, v + 3);
         i = e + 1;
       }
     }
-    if (!ind.length) return;
+    if (!ind.length) return null;
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
     geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
-    geo.setAttribute('normal', new THREE.Float32BufferAttribute(new Array(pos.length).fill(0).map((_, k) => (k % 3 === 1 ? 1 : 0)), 3));
+    const nrm = new Float32Array(pos.length);
+    for (let k = 1; k < nrm.length; k += 3) nrm[k] = 1;
+    geo.setAttribute('normal', new THREE.BufferAttribute(nrm, 3));
     geo.setIndex(ind);
-    this.ownedGeos.push(geo);
-    this.ownedMats.push(mat);
-    const m = new THREE.Mesh(geo, mat);
-    m.receiveShadow = true;
-    this.group.add(m);
+    const prepped = prepBatchGeo(geo, true, colorHex);
+    geo.dispose();
+    return prepped;
   }
 
-  /** Flag-paved square filling the open city block round Empress Market (otherwise a bare dirt slab). */
   private marketSquare(map: CityMap): void {
     const cells = this.landmarkCells(map, 'empress', 95);
     if (!cells) return;
-    const mat = new THREE.MeshLambertMaterial({ color: '#efe2c8', map: flagPavingTexture(), polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
-    this.cellSurface(cells, cells.filled, KERB_H + 0.02, mat, 1 / 6);
+    const geo = this.cellSurfaceGeo(cells, cells.filled, KERB_H + 0.02, 1 / 6, '#efe2c8');
+    if (!geo) return;
+    const mat = new THREE.MeshLambertMaterial({
+      color: '#ffffff',
+      vertexColors: true,
+      map: flagPavingTexture(),
+      polygonOffset: true,
+      polygonOffsetFactor: -2,
+      polygonOffsetUnits: -2,
+    });
+    const m = new THREE.Mesh(geo, mat);
+    m.receiveShadow = true;
+    m.castShadow = false;
+    this.group.add(m);
   }
 
-  /**
-   * Landscaped grounds round a landmark: mown lawns bounded by the streets
-   * (out to `R` m, never past the landmark's own front street), gravel walks
-   * on its axes and in a ring `ring` m outside it, and shade trees scattered
-   * between the walks. Used for Bagh-e-Jinnah (Frere Hall) and the
-   * Mazar-e-Quaid gardens.
-   */
   private landmarkGarden(map: CityMap, kind: string, R: number, ring: number, treeStep: number): void {
     const lm0 = map.landmarks.find((l) => l.kind === kind);
     if (!lm0) return;
@@ -629,17 +883,17 @@ export class CityScenery {
       const d = Math.max(Math.abs(lr) - hw - ring, Math.abs(lf) - hl - ring);
       return Math.abs(lf) < 2.2 || Math.abs(lr) < 1.6 || (d > -2.2 && d < 0);
     };
-    const lawn = new THREE.MeshLambertMaterial({ color: '#ffffff', map: lawnTexture(), polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
-    const gravel = new THREE.MeshLambertMaterial({ color: '#e2d4b6', map: dirtTexture(), polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3 });
-    this.cellSurface(cells, (i, j) => filled(i, j) && !walk(i, j), KERB_H + 0.02, lawn, 1 / 8);
-    this.cellSurface(cells, (i, j) => filled(i, j) && walk(i, j), KERB_H + 0.025, gravel, 1 / 3);
+    const lawnGeo = this.cellSurfaceGeo(cells, (i, j) => filled(i, j) && !walk(i, j), KERB_H + 0.02, 1 / 8, '#ffffff');
+    if (lawnGeo) this.gardenLawnGeos.push(lawnGeo);
+    const gravelGeo = this.cellSurfaceGeo(cells, (i, j) => filled(i, j) && walk(i, j), KERB_H + 0.025, 1 / 3, '#e2d4b6');
+    if (gravelGeo) this.gardenGravelGeos.push(gravelGeo);
+
     if (treeStep <= 0) return;
     const rng = new Rng(kind.length * 977);
     for (let j = 4; j < cells.N - 4; j += treeStep) {
       for (let i = 4; i < cells.N - 4; i += treeStep) {
         const ii = i + Math.round(rng.range(-3, 3)), jj = j + Math.round(rng.range(-3, 3));
         if (!filled(ii, jj) || walk(ii, jj)) continue;
-        // keep a 3 m margin to every non-garden cell (roads, pavements)
         let ok = true;
         for (let d = -3; d <= 3 && ok; d += 3) for (let e = -3; e <= 3 && ok; e += 3) if (!filled(ii + d, jj + e)) ok = false;
         const [lr, lf] = local(ii, jj);
@@ -660,9 +914,6 @@ export class CityScenery {
       if (n < 3) continue;
       const col = slab.kind === 1 ? PARK_TINT : WHITE;
       const emit = (x0: number, z0: number, x1: number, z1: number, x2: number, z2: number, depth: number): void => {
-        // Clip against patched roundabouts: subdivide triangles near a ring
-        // and drop the pieces that reach into its asphalt (the pavement
-        // collar laid in roundaboutCollars() covers the stepped edge).
         const cut = cuts.find((c) => Math.min(x0, x1, x2) < c.x + c.r && Math.max(x0, x1, x2) > c.x - c.r && Math.min(z0, z1, z2) < c.z + c.r && Math.max(z0, z1, z2) > c.z - c.r);
         if (cut) {
           const inside = (x: number, z: number) => (x - cut.x) ** 2 + (z - cut.z) ** 2 < cut.r * cut.r;
@@ -691,7 +942,6 @@ export class CityScenery {
         const i0 = slab.tris[i] * 2, i1 = slab.tris[i + 1] * 2, i2 = slab.tris[i + 2] * 2;
         emit(pts[i0], pts[i0 + 1], pts[i1], pts[i1 + 1], pts[i2], pts[i2 + 1], 0);
       }
-      // Road-facing kerbs around the slab perimeter.
       let area = 0;
       for (let i = 0; i < n; i++) {
         const j = (i + 1) % n;
@@ -706,7 +956,6 @@ export class CityScenery {
         const ex = bx - ax, ez = bz - az;
         const len = Math.hypot(ex, ez);
         if (len < 0.2) continue;
-        // For CCW polygon in (x, z), outward normal is (+ez, -ex).
         const nx = (sign * ez) / len, nz = (-sign * ex) / len;
         const hits =
           (map.isRoad(ax + ex * 0.2 + nx * 0.45, az + ez * 0.2 + nz * 0.45) ? 1 : 0) +
@@ -720,7 +969,6 @@ export class CityScenery {
         u = u1;
       }
     }
-    // Pavement collar and kerb round each patched roundabout, broken where roads join.
     for (const c of cuts) {
       const K = 72, W = 2.8;
       for (let k = 0; k < K; k++) {
@@ -730,8 +978,11 @@ export class CityScenery {
         if (map.isRoad(mx, mz) || map.nearRoad(mx, mz, 0.6)) continue;
         const p00 = out(a0, c.r), p01 = out(a1, c.r), p11 = out(a1, c.r + W), p10 = out(a0, c.r + W);
         const y = KERB_H + 0.006;
-        top.quad([p00[0], y, -p00[1]], [p01[0], y, -p01[1]], [p11[0], y, -p11[1]], [p10[0], y, -p10[1]],
-          [p00[0] * uvS, p00[1] * uvS, p01[0] * uvS, p01[1] * uvS, p11[0] * uvS, p11[1] * uvS, p10[0] * uvS, p10[1] * uvS], UP);
+        top.quad(
+          [p00[0], y, -p00[1]], [p01[0], y, -p01[1]], [p11[0], y, -p11[1]], [p10[0], y, -p10[1]],
+          [p00[0] * uvS, p00[1] * uvS, p01[0] * uvS, p01[1] * uvS, p11[0] * uvS, p11[1] * uvS, p10[0] * uvS, p10[1] * uvS],
+          UP,
+        );
         const nx = Math.cos(am), nz = Math.sin(am);
         kerb.quad([p00[0], 0, -p00[1]], [p01[0], 0, -p01[1]], [p01[0], y, -p01[1]], [p00[0], y, -p00[1]], [0, 0, 1, 0, 1, 1, 0, 1], [-nx, 0, nz]);
       }
@@ -741,10 +992,12 @@ export class CityScenery {
     this.ownedTex.push(pave);
     const tm = new THREE.Mesh(top.build(), new THREE.MeshLambertMaterial({ map: pave, color: '#e4dfd5', vertexColors: true }));
     tm.receiveShadow = true;
+    tm.castShadow = false;
     this.group.add(tm);
     if (!kerb.empty) {
-      const km = new THREE.Mesh(kerb.build(), new THREE.MeshLambertMaterial({ map: kerbStripeTexture() }));
-      this.group.add(km);
+      const kg = kerb.build();
+      this.kerbParts.push(prepBatchGeo(kg, true, '#ffffff'));
+      kg.dispose();
     }
   }
 
@@ -753,7 +1006,6 @@ export class CityScenery {
     const white = new THREE.Color('#f2f0ea');
     const yellow = new THREE.Color('#e8b923');
     const y = 0.012;
-    /** Rectangle in link-local coordinates (s along, o = offset to the left). */
     const rect = (l: CityLink, s0: number, s1: number, o0: number, o1: number, c: THREE.Color) => {
       const p = (s: number, o: number): V3 => {
         const w = map.linkPoint(l, s, o);
@@ -768,7 +1020,6 @@ export class CityScenery {
       if (l.turnaround) continue;
       const fromNd = map.nodes[l.from], toNd = map.nodes[l.to];
       const raLink = fromNd.roundabout && toNd.roundabout;
-      // Each two-way street segment once: centre line from the lower-id direction.
       if (!l.oneway && l.id < l.reverse && l.median === 0) {
         if (l.cls === 'arterial' || l.cls === 'main') {
           const pad = fromNd.bend || toNd.bend ? 0.3 : 1;
@@ -783,7 +1034,6 @@ export class CityScenery {
       for (let k = 1; k < l.lanes; k++) {
         dashes(l, (map.laneOffset(l, k - 1) + map.laneOffset(l, k)) * 0.5, white);
       }
-      // Stop line, and zebra crossings at actual junctions on bigger streets.
       if (l.len > 16 && !raLink) {
         const zebra = l.cls !== 'side';
         if (!toNd.bend) {
@@ -804,114 +1054,106 @@ export class CityScenery {
     const mat = new THREE.MeshLambertMaterial({ vertexColors: true, polygonOffset: true, polygonOffsetFactor: -2 });
     const m = new THREE.Mesh(q.build(), mat);
     m.receiveShadow = true;
+    m.castShadow = false;
     this.group.add(m);
   }
 
-  private islands(map: CityMap, shadow: boolean): void {
+  private islands(map: CityMap): void {
+    const decalBuilder = this.ensureDecalBuilder();
     for (const s of map.islands) {
       const segs = s.monumental ? 40 : 28;
-      const tex = kerbStripeTexture().clone();
-      tex.repeat.set(Math.round(Math.PI * 2 * s.r), 1);
-      tex.needsUpdate = true;
-      this.ownedTex.push(tex);
-      const kerb = new THREE.Mesh(new THREE.CylinderGeometry(s.r, s.r, 0.35, segs, 1, true), new THREE.MeshLambertMaterial({ map: tex }));
-      kerb.position.set(s.x, 0.175, -s.z);
-      const grass = new THREE.Mesh(new THREE.CircleGeometry(s.r, segs), new THREE.MeshLambertMaterial({ color: '#86a05a' }));
-      grass.rotation.x = -Math.PI / 2;
-      grass.position.set(s.x, 0.34, -s.z);
-      grass.receiveShadow = true;
-      this.group.add(kerb, grass);
+      const ak = this.accumFor(s.x, s.z);
+
+      // Kerb cylinder merged into kerbParts with U scaled to circumference
+      const kerbGeo = new THREE.CylinderGeometry(s.r, s.r, 0.35, segs, 1, true);
+      const uv = kerbGeo.getAttribute('uv');
+      const repU = Math.round(Math.PI * 2 * s.r);
+      for (let i = 0; i < uv.count; i++) uv.setX(i, uv.getX(i) * repU);
+      kerbGeo.translate(s.x, 0.175, -s.z);
+      this.kerbParts.push(prepBatchGeo(kerbGeo, true, '#ffffff'));
+      kerbGeo.dispose();
+
+      // Grass top
+      const grassGeo = new THREE.CircleGeometry(s.r, segs).rotateX(-Math.PI / 2).translate(s.x, 0.34, -s.z);
+      ak.clutterGeos.push(prepBatchGeo(grassGeo, false, '#86a05a'));
+      grassGeo.dispose();
+
       if (s.monumental) {
-        // Monumental Fawara Chowk Musical Fountain, sandstone colonnade, water jets & national flag.
-        const stone = new THREE.MeshLambertMaterial({ color: '#efece4' });
-        const redStone = new THREE.MeshLambertMaterial({ color: '#b33c26' });
-        const waterMat = new THREE.MeshLambertMaterial({
-          color: '#28a8c4',
-          emissive: new THREE.Color('#1e88a8'),
-          emissiveIntensity: 0,
-        });
-        this.litProps.push(waterMat);
-        const jetMat = new THREE.MeshBasicMaterial({ color: '#dff8ff', transparent: true, opacity: 0.78 });
+        const pushBox = (geo: THREE.BufferGeometry, col: string, px: number, py: number, pz: number, floodlit = false) => {
+          geo.translate(px, py, pz);
+          const prepped = prepBatchGeo(geo, false, col);
+          geo.dispose();
+          if (floodlit) ak.floodlitGeos.push(prepped);
+          else ak.clutterGeos.push(prepped);
+        };
 
-        // Outer octagonal sandstone rim & glowing turquoise fountain basin
-        const basinRim = new THREE.Mesh(new THREE.CylinderGeometry(8.6, 9.2, 0.95, 16), redStone);
-        basinRim.position.set(s.x, 0.75, -s.z);
-        const basinWater = new THREE.Mesh(new THREE.CylinderGeometry(8.0, 8.0, 0.82, 16), waterMat);
-        basinWater.position.set(s.x, 0.85, -s.z);
+        pushBox(new THREE.CylinderGeometry(8.6, 9.2, 0.95, 16), '#b33c26', s.x, 0.75, -s.z);
+        pushBox(new THREE.CylinderGeometry(8.0, 8.0, 0.82, 16), '#28a8c4', s.x, 0.85, -s.z, true);
 
-        // 8 Mughal-colonial sandstone pavilion piers around the outer ring
         for (let k = 0; k < 8; k++) {
           const a = (k / 8) * Math.PI * 2;
           const px = s.x + Math.cos(a) * 11.2;
           const pz = -s.z + Math.sin(a) * 11.2;
-          const pier = new THREE.Mesh(new THREE.BoxGeometry(0.95, 3.8, 0.95), redStone);
-          pier.position.set(px, 2.1, pz);
-          const finial = new THREE.Mesh(new THREE.SphereGeometry(0.62, 8, 6), stone);
-          finial.position.set(px, 4.3, pz);
-          pier.castShadow = shadow;
-          this.group.add(pier, finial);
+          pushBox(new THREE.BoxGeometry(0.95, 3.8, 0.95), '#b33c26', px, 2.1, pz);
+          pushBox(new THREE.SphereGeometry(0.62, 8, 6), '#efece4', px, 4.3, pz);
         }
 
-        // Ring of 8 animated vertical fountain water plumes
+        pushBox(new THREE.CylinderGeometry(2.8, 3.3, 1.5, 12), '#b33c26', s.x, 1.1, -s.z);
+        pushBox(new THREE.CylinderGeometry(0.75, 1.05, 7.2, 10), '#efece4', s.x, 5.2, -s.z);
+        pushBox(new THREE.SphereGeometry(1.2, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2), '#efece4', s.x, 8.8, -s.z);
+        pushBox(new THREE.CylinderGeometry(0.06, 0.06, 6.2, 6), '#8d9196', s.x, 11.8, -s.z);
+
+        // Pakistani flag -> DecalAtlas (double-sided)
+        const fTex = flagTexture();
+        const rect = decalBuilder.pack(fTex, null, BLACK_COL, false);
+        const flagGeo = new THREE.PlaneGeometry(3.2, 2.1).translate(s.x + 1.6, 13.7, -s.z);
+        const fUv = flagGeo.getAttribute('uv');
+        for (let i = 0; i < fUv.count; i++) {
+          fUv.setXY(i, rect.u0 + fUv.getX(i) * (rect.u1 - rect.u0), rect.v0 + fUv.getY(i) * (rect.v1 - rect.v0));
+        }
+        ak.decalGeos.push(makeDoubleSidedGeo(prepBatchGeo(flagGeo, true, '#ffffff')));
+        flagGeo.dispose();
+
+        // 9 animated fountain jets -> 1 InstancedMesh chunk-linked to Fawara Chowk
+        const jetGeo = new THREE.CylinderGeometry(0.16, 0.42, 2.8, 8).translate(0, 1.4, 0);
+        const jetMat = new THREE.MeshBasicMaterial({ color: '#dff8ff', transparent: true, opacity: 0.78 });
+        this.ownedGeos.push(jetGeo);
+        this.ownedMats.push(jetMat);
+        this.fountainBaseMats = [];
         for (let k = 0; k < 8; k++) {
           const a = (k / 8) * Math.PI * 2;
-          const jx = s.x + Math.cos(a) * 5.2;
-          const jz = -s.z + Math.sin(a) * 5.2;
-          const jet = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.42, 2.8, 8).translate(0, 1.4, 0), jetMat);
-          jet.position.set(jx, 1.15, jz);
-          this.fountainJets.push(jet);
-          this.group.add(jet);
+          this.fountainBaseMats.push(place(s.x + Math.cos(a) * 5.2, 1.15, -s.z + Math.sin(a) * 5.2));
         }
-        const centerJet = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.75, 4.4, 10).translate(0, 2.2, 0), jetMat);
-        centerJet.position.set(s.x, 2.0, -s.z);
-        this.fountainJets.push(centerJet);
-
-        const plinth = new THREE.Mesh(new THREE.CylinderGeometry(2.8, 3.3, 1.5, 12), redStone);
-        plinth.position.set(s.x, 1.1, -s.z);
-        const col = new THREE.Mesh(new THREE.CylinderGeometry(0.75, 1.05, 7.2, 10), stone);
-        col.position.set(s.x, 5.2, -s.z);
-        const cap = new THREE.Mesh(new THREE.SphereGeometry(1.2, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2), stone);
-        cap.position.set(s.x, 8.8, -s.z);
-        const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 6.2, 6), new THREE.MeshLambertMaterial({ color: '#8d9196' }));
-        pole.position.set(s.x, 11.8, -s.z);
-        const flag = new THREE.Mesh(new THREE.PlaneGeometry(3.2, 2.1), new THREE.MeshLambertMaterial({ map: flagTexture(), side: THREE.DoubleSide }));
-        flag.position.set(s.x + 1.6, 13.7, -s.z);
-        for (const o of [basinRim, plinth, col, cap]) o.castShadow = shadow;
-        this.group.add(basinRim, basinWater, centerJet, plinth, col, cap, pole, flag);
+        this.fountainBaseMats.push(place(s.x, 2.0, -s.z, 0, 1.8, 4.4 / 2.8, 1.8));
+        this.fountainJetsInst = new THREE.InstancedMesh(jetGeo, jetMat, this.fountainBaseMats.length);
+        this.fountainJetsInst.frustumCulled = false;
+        this.fountainBaseMats.forEach((m, i) => this.fountainJetsInst!.setMatrixAt(i, m));
+        this.fountainJetsInst.instanceMatrix.needsUpdate = true;
+        this.ownedInsts.push(this.fountainJetsInst);
+        this.group.add(this.fountainJetsInst);
+        this.fountainChunk = this.ensureChunkRef(this.chunkKeyFor(s.x, s.z));
+        this.fountainChunk.extras.push(this.fountainJetsInst);
       } else {
-        // Compact roundabout planter & neem centrepiece (Art Council Roundabout).
-        const plinth = new THREE.Mesh(new THREE.CylinderGeometry(s.r * 0.42, s.r * 0.48, 0.7, 12), new THREE.MeshLambertMaterial({ color: '#b8914f' }));
-        plinth.position.set(s.x, 0.65, -s.z);
-        const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.28, 3.0, 6), new THREE.MeshLambertMaterial({ color: '#6b5440' }));
-        trunk.position.set(s.x, 2.3, -s.z);
-        const crown = new THREE.Mesh(new THREE.IcosahedronGeometry(2.3, 0), new THREE.MeshLambertMaterial({ color: '#6f8c47', flatShading: true }));
-        crown.position.set(s.x, 4.4, -s.z);
-        crown.castShadow = plinth.castShadow = shadow;
-        this.group.add(plinth, trunk, crown);
+        const pushSolid = (geo: THREE.BufferGeometry, col: string, py: number) => {
+          geo.translate(s.x, py, -s.z);
+          ak.clutterGeos.push(prepBatchGeo(geo, false, col));
+          geo.dispose();
+        };
+        pushSolid(new THREE.CylinderGeometry(s.r * 0.42, s.r * 0.48, 0.7, 12), '#b8914f', 0.65);
+        pushSolid(new THREE.CylinderGeometry(0.18, 0.28, 3.0, 6), '#6b5440', 2.3);
+        pushSolid(new THREE.IcosahedronGeometry(2.3, 0), '#6f8c47', 4.4);
       }
     }
   }
 
-  /** Karachi municipal green-and-yellow overhead steel pedestrian bridges spanning major arterials. */
-  private pedestrianBridges(map: CityMap, shadow: boolean): void {
-    const steelGreen = new THREE.MeshLambertMaterial({ color: '#1b6b3a' });
-    const railYellow = new THREE.MeshLambertMaterial({ color: '#f2b705' });
-    const concreteMat = new THREE.MeshLambertMaterial({ color: '#cfc9bc' });
-    const canopyMat = new THREE.MeshLambertMaterial({ color: '#2b547e', side: THREE.DoubleSide });
-    this.ownedMats.push(steelGreen, railYellow, concreteMat, canopyMat);
-
+  private pedestrianBridges(map: CityMap): void {
+    const decalBuilder = this.ensureDecalBuilder();
     const deckY = 5.85;
     const deckW = 2.4;
 
     for (const b of map.bridges) {
-      const target = this.chunkFor(b.x, b.z);
-      const bg = new THREE.Group();
-      bg.position.set(b.x, 0, -b.z);
-      bg.rotation.y = -b.heading;
-      target.add(bg);
-
+      const ak = this.accumFor(b.x, b.z);
       const half = b.span * 0.5;
-      // Reserve pavement footprints around both bridge landings so parked bikes/trees don't overlap stairs.
       const s = Math.sin(b.heading), c = Math.cos(b.heading);
       for (const side of [-1, 1]) {
         const lx = b.x + side * c * half;
@@ -920,80 +1162,65 @@ export class CityScenery {
         this.occupied.push([lx + s * 4.5, lz + c * 4.5, 3.5]);
       }
 
-      // Main overhead walkway deck, yellow safety side trusses & arched shade canopy
-      const deck = new THREE.Mesh(new THREE.BoxGeometry(b.span + 1.6, 0.38, deckW), concreteMat);
-      deck.position.set(0, deckY, 0);
-      deck.castShadow = shadow;
-      deck.receiveShadow = true;
-      bg.add(deck);
+      const bgMat = place(b.x, 0, -b.z, -b.heading);
+      const parts: THREE.BufferGeometry[] = [];
+      const addPart = (g: THREE.BufferGeometry, col: string, px = 0, py = 0, pz = 0, rx = 0, doubleSided = false) => {
+        if (rx !== 0) g.rotateX(rx);
+        g.translate(px, py, pz);
+        let prepped = prepBatchGeo(g, false, col, bgMat);
+        g.dispose();
+        if (doubleSided) prepped = makeDoubleSidedGeo(prepped);
+        parts.push(prepped);
+      };
+
+      addPart(new THREE.BoxGeometry(b.span + 1.6, 0.38, deckW), '#cfc9bc', 0, deckY, 0);
 
       for (const dz of [-deckW / 2 + 0.08, deckW / 2 - 0.08]) {
-        const topRail = new THREE.Mesh(new THREE.BoxGeometry(b.span + 1.4, 0.16, 0.12), railYellow);
-        topRail.position.set(0, deckY + 1.25, dz);
-        const midRail = new THREE.Mesh(new THREE.BoxGeometry(b.span + 1.4, 0.12, 0.1), steelGreen);
-        midRail.position.set(0, deckY + 0.68, dz);
-        bg.add(topRail, midRail);
-
+        addPart(new THREE.BoxGeometry(b.span + 1.4, 0.16, 0.12), '#f2b705', 0, deckY + 1.25, dz);
+        addPart(new THREE.BoxGeometry(b.span + 1.4, 0.12, 0.1), '#1b6b3a', 0, deckY + 0.68, dz);
         for (let x = -half; x <= half + 0.01; x += 2.6) {
-          const post = new THREE.Mesh(new THREE.BoxGeometry(0.12, 2.5, 0.12), steelGreen);
-          post.position.set(x, deckY + 1.25, dz);
-          bg.add(post);
+          addPart(new THREE.BoxGeometry(0.12, 2.5, 0.12), '#1b6b3a', x, deckY + 1.25, dz);
         }
       }
 
       const roofGeo = new THREE.CylinderGeometry(deckW * 0.58, deckW * 0.58, b.span + 1.6, 8, 1, false, -Math.PI / 2, Math.PI);
       roofGeo.rotateZ(Math.PI / 2);
       roofGeo.scale(1, 0.42, 1);
-      const roof = new THREE.Mesh(roofGeo, canopyMat);
-      roof.position.set(0, deckY + 2.45, 0);
-      roof.castShadow = shadow;
-      bg.add(roof);
+      addPart(roofGeo, '#2b547e', 0, deckY + 2.45, 0, 0, true);
 
-      // Left and right pavement support piers + flush stepped access staircases
       for (const side of [-1, 1]) {
         const px = side * half;
         for (const dz of [-0.85, 0.85]) {
-          const pier = new THREE.Mesh(new THREE.CylinderGeometry(0.36, 0.42, deckY, 8), concreteMat);
-          pier.position.set(px, deckY / 2, dz);
-          pier.castShadow = shadow;
-          bg.add(pier);
+          addPart(new THREE.CylinderGeometry(0.36, 0.42, deckY, 8), '#cfc9bc', px, deckY / 2, dz);
         }
-        // Upper landing flush with bridge deck edge + continuous sloped stair flight to ground
-        const landing = new THREE.Mesh(new THREE.BoxGeometry(2.0, 0.3, 1.5), concreteMat);
-        landing.position.set(px, deckY - 0.15, deckW / 2 + 0.55);
+        addPart(new THREE.BoxGeometry(2.0, 0.3, 1.5), '#cfc9bc', px, deckY - 0.15, deckW / 2 + 0.55);
         const drop = deckY - 0.15;
         const run = 5.6;
         const stairLen = Math.hypot(drop, run);
         const stairTilt = Math.atan2(drop, run);
         const stairMidZ = deckW / 2 + 1.15 + run * 0.5;
-        const stair = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.26, stairLen), steelGreen);
-        stair.position.set(px, drop * 0.5, stairMidZ);
-        stair.rotation.x = stairTilt;
-        const rail = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.14, stairLen), railYellow);
-        rail.position.set(px + side * 0.72, drop * 0.5 + 0.88, stairMidZ);
-        rail.rotation.x = stairTilt;
-        const midPost = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.18, drop * 0.55, 6), concreteMat);
-        midPost.position.set(px, drop * 0.275, stairMidZ);
-        bg.add(landing, stair, rail, midPost);
+        addPart(new THREE.BoxGeometry(1.5, 0.26, stairLen), '#1b6b3a', px, drop * 0.5, stairMidZ, stairTilt);
+        addPart(new THREE.BoxGeometry(0.1, 0.14, stairLen), '#f2b705', px + side * 0.72, drop * 0.5 + 0.88, stairMidZ, stairTilt);
+        addPart(new THREE.CylinderGeometry(0.16, 0.18, drop * 0.55, 6), '#cfc9bc', px, drop * 0.275, stairMidZ);
       }
 
-      // Double-sided illuminated municipal gantry sign over the roadway
+      const mergedBridge = mergeGeometries(parts, false);
+      parts.forEach((g) => g.dispose());
+      if (mergedBridge) ak.clutterGeos.push(mergedBridge);
+
+      // Double-sided illuminated municipal gantry sign -> DecalAtlas
       const signTex = signTexture([b.name, 'PEDESTRIAN BRIDGE · PAIDAL PUL'], '#0f5c2e', '#ffffff', 512, 96);
-      this.ownedTex.push(signTex);
-      const signMat = new THREE.MeshLambertMaterial({
-        color: '#ffffff',
-        map: signTex,
-        emissiveMap: signTex,
-        emissive: new THREE.Color('#d8ffd0'),
-        emissiveIntensity: 0,
-      });
-      this.ownedMats.push(signMat);
-      this.litProps.push(signMat);
+      const rect = decalBuilder.pack(signTex, signTex, BRIDGE_EMISSIVE, true);
       for (const dir of [-1, 1]) {
-        const board = new THREE.Mesh(new THREE.PlaneGeometry(Math.min(11.5, b.span * 0.68), 1.25), signMat);
-        board.position.set(0, deckY + 0.55, dir * (deckW / 2 + 0.16));
-        if (dir < 0) board.rotation.y = Math.PI;
-        bg.add(board);
+        const sg = new THREE.PlaneGeometry(Math.min(11.5, b.span * 0.68), 1.25);
+        if (dir < 0) sg.rotateY(Math.PI);
+        sg.translate(0, deckY + 0.55, dir * (deckW / 2 + 0.16));
+        const sUv = sg.getAttribute('uv');
+        for (let i = 0; i < sUv.count; i++) {
+          sUv.setXY(i, rect.u0 + sUv.getX(i) * (rect.u1 - rect.u0), rect.v0 + sUv.getY(i) * (rect.v1 - rect.v0));
+        }
+        ak.decalGeos.push(prepBatchGeo(sg, true, '#ffffff', bgMat));
+        sg.dispose();
       }
     }
   }
@@ -1002,8 +1229,6 @@ export class CityScenery {
     for (const br of map.bridges) {
       const dx = x - br.x, dz = z - br.z;
       const c = Math.cos(br.heading), s = Math.sin(br.heading);
-      // Local frame matches CityScenery.pedestrianBridges rotation.y = -br.heading:
-      // alongSpan aligns with bridge span; alongRoad runs along traffic passing under it.
       const alongSpan = dx * c + dz * s;
       const alongRoad = Math.abs(-dx * s + dz * c);
       if (Math.abs(alongSpan) <= br.span * 0.5 + padSpan && alongRoad <= padAlong) return true;
@@ -1031,7 +1256,6 @@ export class CityScenery {
     return true;
   }
 
-  /** True when stepping outward across this kerb reaches another roadway before any solid building (divided median / splitter). */
   private isMedianSide(map: CityMap, l: CityLink, s: number, side: number): boolean {
     for (const d of [2.2, 3.4, 4.6, 5.8, 7.0, 8.2]) {
       const q = map.linkPoint(l, s, side * (l.hw + d));
@@ -1045,23 +1269,16 @@ export class CityScenery {
     return false;
   }
 
-  private buildings(map: CityMap, shadow: boolean): void {
+  private buildings(map: CityMap): void {
     const awningPalette = ['#1e6fb8', '#2e7d32', '#c62828', '#f9a825', '#6a1b9a', '#00838f'].map((c) => new THREE.Color(c));
     const clothPalette = ['#e53935', '#1e88e5', '#fdd835', '#43a047', '#ffffff', '#8e24aa', '#fb8c00', '#00acc1', '#f06292'].map((c) => new THREE.Color(c));
-
-    const facadeBuckets = new Map<THREE.Group, { mats: THREE.Matrix4[]; cols: THREE.Color[] }>();
-    const fBucket = (x: number, z: number) => {
-      const group = this.chunkFor(x, z);
-      let b = facadeBuckets.get(group);
-      if (!b) facadeBuckets.set(group, (b = { mats: [], cols: [] }));
-      return b;
-    };
 
     const tankGeo = prepBatchGeo(new THREE.CylinderGeometry(0.6, 0.6, 1.3, 10).translate(0, 0.65, 0), false, '#ffffff');
     const roomGeo = prepBatchGeo(new THREE.BoxGeometry(1, 1, 1).translate(0, 0.5, 0), false, '#cfcac0');
     const awningRaw = new THREE.BoxGeometry(1, 1, 1);
     awningRaw.rotateX(-0.25);
     const awningGeo = prepBatchGeo(awningRaw, false, '#ffffff');
+    awningRaw.dispose();
 
     const slab = new THREE.BoxGeometry(1, 0.14, 0.95).translate(0, 0, 0.475);
     paint(slab, '#d8d2c4');
@@ -1069,24 +1286,40 @@ export class CityScenery {
     paint(parapet, '#b7a47c');
     const rail = new THREE.BoxGeometry(1, 0.08, 0.1).translate(0, 0.94, 0.92);
     paint(rail, '#3f4341');
-    const balconyMerged = mergeGeometries([slab.toNonIndexed(), parapet.toNonIndexed(), rail.toNonIndexed()]);
+    const balconyMerged = mergeGeometries([slab.toNonIndexed(), parapet.toNonIndexed(), rail.toNonIndexed()], false);
+    slab.dispose();
+    parapet.dispose();
+    rail.dispose();
     const balconyGeo = balconyMerged ? prepBatchGeo(balconyMerged, false) : prepBatchGeo(new THREE.BoxGeometry(1, 0.2, 0.95).translate(0, 0, 0.475), false, '#d8d2c4');
+    balconyMerged?.dispose();
     const clothGeo = prepBatchGeo(new THREE.BoxGeometry(1, 1, 0.035).translate(0, -0.5, 0), false, '#ffffff');
-    this.ownedGeos.push(tankGeo, roomGeo, awningGeo, balconyGeo, clothGeo);
+
+    const bldgMats: THREE.Matrix4[] = [];
+    const bldgCols: THREE.Color[] = [];
+    const bldgChunkKeys: string[] = [];
+
+    const shadowMats: THREE.Matrix4[] = [];
+    const shadowChunkKeys: string[] = [];
+
+    const pushClutterGeo = (x: number, z: number, proto: THREE.BufferGeometry, mat: THREE.Matrix4, tint?: THREE.Color) => {
+      this.accumFor(x, z).clutterGeos.push(prepBatchGeo(proto, false, tint, mat));
+    };
 
     for (const b of map.buildings) {
       const rng = new Rng(b.seed);
       const base = KERB_H;
       const ry = -b.heading;
       const s = Math.sin(b.heading), c = Math.cos(b.heading);
-      const fb = fBucket(b.x, b.z);
-      fb.mats.push(place(b.x, base, -b.z, ry, b.hw * 2, b.h, b.hl * 2));
-      fb.cols.push(new THREE.Color(BUILDING_COLORS[rng.int(0, BUILDING_COLORS.length - 1)]).multiplyScalar(rng.range(0.92, 1.05)));
+      const ck = this.chunkKeyFor(b.x, b.z);
+
+      bldgMats.push(place(b.x, base, -b.z, ry, b.hw * 2, b.h, b.hl * 2));
+      bldgCols.push(new THREE.Color(BUILDING_COLORS[rng.int(0, BUILDING_COLORS.length - 1)]).multiplyScalar(rng.range(0.92, 1.05)));
+      bldgChunkKeys.push(ck);
+
+      shadowMats.push(place(b.x, base + 0.018, -b.z, ry, b.hw * 2 + 3.6, 1, b.hl * 2 + 3.6));
+      shadowChunkKeys.push(ck);
 
       const top = base + b.h;
-      // Soft contact shadow on the pavement round the footprint.
-      this.bucketFor(b.x, b.z).shadows.push(place(b.x, base + 0.018, -b.z, ry, b.hw * 2 + 3.6, 1, b.hl * 2 + 3.6));
-      // Roof clutter: black / blue water tanks and a stair room.
       if (rng.chance(0.7)) {
         const n = rng.int(1, 3);
         for (let i = 0; i < n; i++) {
@@ -1094,7 +1327,7 @@ export class CityScenery {
           const lr = rng.range(-b.hw + 1.2, b.hw - 1.2);
           const tx = b.x + lf * s + lr * c;
           const tz = b.z + lf * c - lr * s;
-          this.pushClutter(tx, tz, tankGeo, place(tx, top, -tz, ry, 1, rng.range(0.9, 1.2), 1), new THREE.Color(rng.chance(0.75) ? '#1d1f22' : '#2f6fb0'));
+          pushClutterGeo(tx, tz, tankGeo, place(tx, top, -tz, ry, 1, rng.range(0.9, 1.2), 1), rng.chance(0.75) ? TANK_BLACK : TANK_BLUE);
         }
       }
       if (rng.chance(0.5) && b.hw > 2.5 && b.hl > 2.5) {
@@ -1102,11 +1335,9 @@ export class CityScenery {
         const lr = rng.range(-b.hw + 2, b.hw - 2);
         const rx = b.x + lf * s + lr * c;
         const rz = b.z + lf * c - lr * s;
-        this.pushClutter(rx, rz, roomGeo, place(rx, top, -rz, ry, 2.6, 2.6, 2.6));
+        pushClutterGeo(rx, rz, roomGeo, place(rx, top, -rz, ry, 2.6, 2.6, 2.6));
       }
 
-      // Street-facing sides: shop signs, awnings, upper balconies with hanging laundry, and sidewalk glow pools.
-      // Each face: [outward sim normal nx, nz, distance from center, wall half-length, local Three ry]
       const faces: Array<[number, number, number, number, number]> = [
         [c, -s, b.hw, b.hl, Math.PI / 2],
         [-c, s, b.hw, b.hl, -Math.PI / 2],
@@ -1120,19 +1351,16 @@ export class CityScenery {
         if (!map.nearRoad(fx + nx * (SIDEWALK + 0.8), fz + nz * (SIDEWALK + 0.8), 1.5)) continue;
         const w = Math.min(half * 1.7, rng.range(5, 10));
         const off = rng.range(-(half - w / 2), half - w / 2) * 0.6;
-        // Tangent along wall perpendicular to (nx, nz): (-nz, nx)
         const ax = fx + nx * 0.06 - nz * off, az = fz + nz * 0.06 + nx * off;
         const fRy = localRy + ry;
-        const bk = this.bucketFor(ax, az);
-        bk.signs[rng.int(0, SHOP_SIGN_COUNT - 1)].push(place(ax, base + 3.15, -az, fRy, w, w / 4.6 + 0.2, 1));
+        const ak = this.accumFor(ax, az);
+        ak.signs[rng.int(0, SHOP_SIGN_COUNT - 1)].push(place(ax, base + 3.15, -az, fRy, w, w / 4.6 + 0.2, 1));
         if (b.storeys >= 2 && half >= 4 && rng.chance(0.42)) {
           const w2 = Math.min(half * 1.4, rng.range(3.6, 7.4));
           const off2 = rng.range(-(half - w2 / 2), half - w2 / 2) * 0.5;
           const ax2 = fx + nx * 0.09 - nz * off2, az2 = fz + nz * 0.09 + nx * off2;
-          bk.signs[rng.int(0, SHOP_SIGN_COUNT - 1)].push(place(ax2, base + GROUND_FLOOR_H + 0.48, -az2, fRy, w2, w2 / 4.2 + 0.16, 1));
+          this.accumFor(ax2, az2).signs[rng.int(0, SHOP_SIGN_COUNT - 1)].push(place(ax2, base + GROUND_FLOOR_H + 0.48, -az2, fRy, w2, w2 / 4.2 + 0.16, 1));
         }
-        // Neon: a blade sign jutting from the wall above the awning, and a
-        // bilingual neon board on an upper floor.
         const blades = half > 7 ? 2 : 1;
         for (let k = 0; k < blades; k++) {
           if (!rng.chance(0.55)) continue;
@@ -1140,22 +1368,22 @@ export class CityScenery {
           const out = 0.75;
           const vx = fx + nx * out - nz * bo, vz = fz + nz * out + nx * bo;
           const vh = rng.range(2.6, 3.6);
-          bk.neonV[rng.int(0, NEON_V_COUNT - 1)].push(place(vx, base + GROUND_FLOOR_H + 0.4 + vh / 2, -vz, fRy + Math.PI / 2, 1.05, vh, 1));
+          this.accumFor(vx, vz).neonV[rng.int(0, NEON_V_COUNT - 1)].push(place(vx, base + GROUND_FLOOR_H + 0.4 + vh / 2, -vz, fRy + Math.PI / 2, 1.05, vh, 1));
         }
         if (b.storeys >= 3 && rng.chance(0.6)) {
           const nw = Math.min(half * 1.6, rng.range(4.2, 6.8));
           const no = rng.range(-(half - nw / 2), half - nw / 2) * 0.6;
           const st = rng.int(1, Math.min(2, b.storeys - 2));
           const hx = fx + nx * 0.12 - nz * no, hz = fz + nz * 0.12 + nx * no;
-          bk.neonH[rng.int(0, NEON_H_COUNT - 1)].push(place(hx, base + GROUND_FLOOR_H + st * STOREY_H - 0.15, -hz, fRy, nw, nw / 4, 1));
+          this.accumFor(hx, hz).neonH[rng.int(0, NEON_H_COUNT - 1)].push(place(hx, base + GROUND_FLOOR_H + st * STOREY_H - 0.15, -hz, fRy, nw, nw / 4, 1));
         }
         if (rng.chance(0.6)) {
-          this.pushClutter(fx, fz, awningGeo, place(fx + nx * 0.7, base + 2.55, -(fz + nz * 0.7), fRy, half * 1.8, 0.1, 1.4), awningPalette[rng.int(0, awningPalette.length - 1)]);
+          pushClutterGeo(fx, fz, awningGeo, place(fx + nx * 0.7, base + 2.55, -(fz + nz * 0.7), fRy, half * 1.8, 0.1, 1.4), awningPalette[rng.int(0, awningPalette.length - 1)]);
         }
         if (rng.chance(0.55)) {
           const gx = fx + nx * 1.8 - nz * off, gz = fz + nz * 1.8 + nx * off;
           if (!map.isRoad(gx, gz) && !map.onIsland(gx, gz)) {
-            bk.glows.push(place(gx, KERB_H + 0.025, -gz, 0, 7.2, 1, 7.2));
+            this.pushGlow(gx, gz, place(gx, KERB_H + 0.025, -gz, 0, 7.2, 1, 7.2));
           }
         }
         if (b.storeys >= 2 && half >= 3.2 && rng.chance(0.62) && !map.isRoad(fx + nx * 1.4, fz + nz * 1.4) && !map.onIsland(fx + nx * 1.4, fz + nz * 1.4)) {
@@ -1166,14 +1394,14 @@ export class CityScenery {
             const by = base + GROUND_FLOOR_H + st * STOREY_H;
             if (by + 1.1 >= top) break;
             if (b.storeys > 3 && rng.chance(0.28)) continue;
-            this.pushClutter(bx, bz, balconyGeo, place(bx, by, -bz, fRy, bLen, 1, 1));
+            pushClutterGeo(bx, bz, balconyGeo, place(bx, by, -bz, fRy, bLen, 1, 1));
             if (rng.chance(0.55)) {
               const pieces = rng.int(2, 4);
               for (let k = 0; k < pieces; k++) {
                 const cOff = rng.range(-bLen * 0.42, bLen * 0.42);
                 const cx = bx + nx * 0.98 - nz * cOff;
                 const cz = bz + nz * 0.98 + nx * cOff;
-                this.pushClutter(cx, cz, clothGeo, place(cx, by + 0.9, -cz, fRy, rng.range(0.36, 0.68), rng.range(0.45, 0.82), 1), clothPalette[rng.int(0, clothPalette.length - 1)]);
+                pushClutterGeo(cx, cz, clothGeo, place(cx, by + 0.9, -cz, fRy, rng.range(0.36, 0.68), rng.range(0.45, 0.82), 1), clothPalette[rng.int(0, clothPalette.length - 1)]);
               }
             }
           }
@@ -1181,16 +1409,77 @@ export class CityScenery {
       }
     }
 
+    tankGeo.dispose();
+    roomGeo.dispose();
+    awningGeo.dispose();
+    balconyGeo.dispose();
+    clothGeo.dispose();
+
     const box = new THREE.BoxGeometry(1, 1, 1).translate(0, 0.5, 0);
     this.facadeMat = makeFacadeMaterial(saddarFacadeAtlas());
     this.ownedGeos.push(box);
     this.ownedMats.push(this.facadeMat);
-    for (const [group, fb] of facadeBuckets) {
-      instanced(group, box, this.facadeMat, fb.mats, fb.cols, shadow);
+
+    if (bldgMats.length > 0) {
+      const bMesh = new THREE.InstancedMesh(box, this.facadeMat, bldgMats.length);
+      bMesh.frustumCulled = false;
+      bMesh.castShadow = false;
+      bMesh.receiveShadow = true;
+      for (let i = 0; i < bldgMats.length; i++) {
+        bMesh.setMatrixAt(i, bldgMats[i]);
+        bMesh.setColorAt(i, bldgCols[i]);
+      }
+      bMesh.instanceMatrix.needsUpdate = true;
+      if (bMesh.instanceColor) bMesh.instanceColor.needsUpdate = true;
+      this.ownedInsts.push(bMesh);
+      this.group.add(bMesh);
+      this.registerChunkInst(bMesh, bldgMats, bldgChunkKeys);
+    }
+
+    if (shadowMats.length > 0) {
+      const glowGeo = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
+      const shadowMat = new THREE.MeshBasicMaterial({
+        color: '#1a120c',
+        alphaMap: contactShadowTexture(),
+        transparent: true,
+        opacity: 0.5,
+        depthWrite: false,
+        polygonOffset: true,
+        polygonOffsetFactor: -2,
+        polygonOffsetUnits: -2,
+      });
+      this.ownedGeos.push(glowGeo);
+      this.ownedMats.push(shadowMat);
+
+      const sMesh = new THREE.InstancedMesh(glowGeo, shadowMat, shadowMats.length);
+      sMesh.frustumCulled = false;
+      sMesh.castShadow = false;
+      sMesh.receiveShadow = false;
+      for (let i = 0; i < shadowMats.length; i++) {
+        sMesh.setMatrixAt(i, shadowMats[i]);
+      }
+      sMesh.instanceMatrix.needsUpdate = true;
+      this.ownedInsts.push(sMesh);
+      this.group.add(sMesh);
+      this.registerChunkInst(sMesh, shadowMats, shadowChunkKeys);
     }
   }
 
-  /** Concrete poles with wires, overhead street banners, and lit streetlamp bulbs. */
+  private readonly bulbMats: THREE.Matrix4[] = [];
+  private readonly bulbChunkKeys: string[] = [];
+  private readonly glowMats: THREE.Matrix4[] = [];
+  private readonly glowChunkKeys: string[] = [];
+
+  private pushBulb(x: number, z: number, mat: THREE.Matrix4): void {
+    this.bulbMats.push(mat);
+    this.bulbChunkKeys.push(this.chunkKeyFor(x, z));
+  }
+
+  private pushGlow(x: number, z: number, mat: THREE.Matrix4): void {
+    this.glowMats.push(mat);
+    this.glowChunkKeys.push(this.chunkKeyFor(x, z));
+  }
+
   private poles(map: CityMap): void {
     const H = 8.2;
     const shaft = new THREE.CylinderGeometry(0.1, 0.16, H, 6).translate(0, H / 2, 0);
@@ -1201,15 +1490,16 @@ export class CityScenery {
     paint(lampArm, '#989c9f');
     const housing = new THREE.BoxGeometry(0.46, 0.1, 0.28).translate(1.42, H - 0.12, 0);
     paint(housing, '#34383c');
-    const poleMerged = mergeGeometries([shaft.toNonIndexed(), crossArm.toNonIndexed(), lampArm.toNonIndexed(), housing.toNonIndexed()]);
-    const poleGeo = poleMerged ? prepBatchGeo(poleMerged, false) : prepBatchGeo(shaft, false);
-    this.ownedGeos.push(poleGeo);
+    const poleMerged = mergeGeometries([shaft.toNonIndexed(), crossArm.toNonIndexed(), lampArm.toNonIndexed(), housing.toNonIndexed()], false);
+    shaft.dispose();
+    crossArm.dispose();
+    lampArm.dispose();
+    housing.dispose();
+    const poleGeo = poleMerged ? prepBatchGeo(poleMerged, false) : prepBatchGeo(new THREE.BoxGeometry(0.2, H, 0.2), false);
+    poleMerged?.dispose();
 
-    const wireBuckets = new Map<THREE.Group, number[]>();
     const pushWireSegment = (x: number, z: number, a: V3, b: V3, sag: number) => {
-      const g = this.chunkFor(x, z);
-      let wire = wireBuckets.get(g);
-      if (!wire) wireBuckets.set(g, (wire = []));
+      const wire = this.accumFor(x, z).wires;
       const n = 5;
       let prev = a;
       for (let i = 1; i <= n; i++) {
@@ -1238,15 +1528,14 @@ export class CityScenery {
           }
           this.occupied.push([p.x, p.z, 0.75]);
           const top: V3 = [p.x, KERB_H + H, -p.z];
-          this.pushClutter(p.x, p.z, poleGeo, place(p.x, KERB_H, -p.z, poleRy));
+          this.accumFor(p.x, p.z).clutterGeos.push(prepBatchGeo(poleGeo, false, undefined, place(p.x, KERB_H, -p.z, poleRy)));
 
           const bx = p.x + Math.cos(poleRy) * 1.42;
           const bz = p.z + Math.sin(poleRy) * 1.42;
-          const bk = this.bucketFor(bx, bz);
-          bk.bulbs.push(place(bx, KERB_H + H - 0.17, -bz, poleRy));
+          this.pushBulb(bx, bz, place(bx, KERB_H + H - 0.17, -bz, poleRy));
           const gx = p.x + Math.cos(poleRy) * 1.65;
           const gz = p.z + Math.sin(poleRy) * 1.65;
-          bk.glows.push(place(gx, map.isRoad(gx, gz) ? 0.035 : KERB_H + 0.03, -gz, 0, 8.5, 1, 8.5));
+          this.pushGlow(gx, gz, place(gx, map.isRoad(gx, gz) ? 0.035 : KERB_H + 0.03, -gz, 0, 8.5, 1, 8.5));
 
           if (prev && Math.hypot(top[0] - prev[0], top[2] - prev[2]) < 42) {
             for (let k = 0; k < 3; k++) pushWireSegment(p.x, p.z, [prev[0], prev[1] - 0.35 * k, prev[2]], [top[0], top[1] - 0.35 * k, top[2]], rng.range(0.4, 0.9));
@@ -1261,7 +1550,6 @@ export class CityScenery {
         }
       }
 
-      // Overhead banners strung across roads (once per physical street).
       if ((l.oneway || l.id < l.reverse) && l.len >= 32) {
         const fracs = l.len >= 125 ? [0.28, 0.72] : [0.5];
         for (const f of fracs) {
@@ -1283,7 +1571,6 @@ export class CityScenery {
                 if (pointObbDistance(ep.x, ep.z, sol) < 0.35) blocked = true;
               });
               if (blocked) break;
-              // Keep banner clear of utility poles and trees so nothing slices through the cloth.
               for (const [ox, oz] of this.occupied) {
                 if ((ep.x - ox) ** 2 + (ep.z - oz) ** 2 < 2.8 * 2.8) {
                   blocked = true;
@@ -1309,7 +1596,7 @@ export class CityScenery {
           const cz = (pL.z + pR.z) * 0.5;
           const ry = -l.heading;
           const by = 6.2;
-          this.bucketFor(cx, cz).banners[bannerIdx++ % BANNER_COUNT].push(place(cx, by, -cz, ry, w, 1.05, 1));
+          this.accumFor(cx, cz).banners[bannerIdx++ % BANNER_COUNT].push(place(cx, by, -cz, ry, w, 1.05, 1));
           const ux = (pR.x - pL.x) / span, uz = -(pR.z - pL.z) / span;
           const e0: V3 = [cx - ux * (w * 0.5), by, -cz - uz * (w * 0.5)];
           const e1: V3 = [cx + ux * (w * 0.5), by, -cz + uz * (w * 0.5)];
@@ -1320,112 +1607,13 @@ export class CityScenery {
         }
       }
     }
-
-    const wireMat = new THREE.LineBasicMaterial({ color: '#2a2a2a' });
-    this.ownedMats.push(wireMat);
-    for (const [group, pts] of wireBuckets) {
-      if (pts.length) {
-        const g = new THREE.BufferGeometry();
-        g.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
-        group.add(new THREE.LineSegments(g, wireMat));
-      }
-    }
+    poleGeo.dispose();
   }
 
-  /** Bare dirt construction yards with oriented site boards. */
-  private yards(map: CityMap): void {
-    const q = new Tris();
-    const uvS = 1 / 4;
-    for (const y of map.yards) {
-      const s = Math.sin(y.heading), c = Math.cos(y.heading);
-      const pt = (lf: number, lr: number): V3 => [y.x + lf * s + lr * c, KERB_H + 0.012, -(y.z + lf * c - lr * s)];
-      q.quad(
-        pt(-y.hl, -y.hw),
-        pt(-y.hl, y.hw),
-        pt(y.hl, y.hw),
-        pt(y.hl, -y.hw),
-        [-y.hw * uvS, -y.hl * uvS, y.hw * uvS, -y.hl * uvS, y.hw * uvS, y.hl * uvS, -y.hw * uvS, y.hl * uvS],
-        UP,
-      );
-    }
-    if (q.empty) return;
-    const m = new THREE.Mesh(q.build(), new THREE.MeshLambertMaterial({ map: dirtTexture(), color: '#d9bf8f', polygonOffset: true, polygonOffsetFactor: -1 }));
-    m.receiveShadow = true;
-    this.group.add(m);
-    const boardMat = new THREE.MeshLambertMaterial({
-      map: signTexture(['KMC ROAD WORKS', 'KAAM JAARI HAI'], '#f9a825', '#1b1b1b', 512, 192),
-    });
-    const fBoard = new THREE.PlaneGeometry(5, 1.9).translate(0, 0, 0.02).toNonIndexed();
-    const bBoard = new THREE.PlaneGeometry(5, 1.9).rotateY(Math.PI).translate(0, 0, -0.02).toNonIndexed();
-    const boardGeo = mergeGeometries([fBoard, bBoard]) ?? new THREE.PlaneGeometry(5, 1.9);
-    fBoard.dispose();
-    bBoard.dispose();
-    const postGeo = new THREE.CylinderGeometry(0.07, 0.07, 3.2, 6);
-    const postMat = new THREE.MeshLambertMaterial({ color: '#555' });
-    for (const y of map.yards) {
-      const s = Math.sin(y.heading), c = Math.cos(y.heading);
-      const lf = -(y.hl - 1.5);
-      const bx = y.x + lf * s, bz = y.z + lf * c;
-      const board = new THREE.Mesh(boardGeo, boardMat);
-      board.position.set(bx, KERB_H + 3.2, -bz);
-      board.rotation.y = -y.heading;
-      for (const lr of [-2.2, 2.2]) {
-        const post = new THREE.Mesh(postGeo, postMat);
-        post.position.set(bx + lr * c, KERB_H + 1.6, -(bz - lr * s));
-        this.group.add(post);
-      }
-      this.group.add(board);
-    }
-  }
-
-  /** Wedge ramps: steel kickers with hazard stripes on the street, packed dirt in the yard. */
-  private ramps(map: CityMap, shadow: boolean): void {
-    const tops = new Tris();
-    const sides = new Tris();
-    const steel = new THREE.Color('#b3ada2');
-    const dirt = new THREE.Color('#b08a5a');
-    const inYard = (x: number, z: number) => map.yards.some((y) => pointObbDistance(x, z, y) === 0);
-    for (const r of map.ramps) {
-      const base = map.isRoad(r.x, r.z) ? 0 : KERB_H;
-      const yard = inYard(r.x, r.z);
-      const s = Math.sin(r.heading), c = Math.cos(r.heading);
-      const pt = (f: number, l: number, up: boolean): V3 => {
-        const x = r.x + f * s + l * c, z = r.z + f * c - l * s;
-        return [x, base + (up ? (r.h * (f + r.hl)) / (2 * r.hl) : 0) + 0.005, -z];
-      };
-      const fwd: V3 = [s, 0, -c];
-      const right: V3 = [c, 0, s];
-      // Sloping top.
-      const len = Math.hypot(2 * r.hl, r.h);
-      tops.quad(pt(-r.hl, -r.hw, true), pt(-r.hl, r.hw, true), pt(r.hl, r.hw, true), pt(r.hl, -r.hw, true), [0, 0, 1, 0, 1, len, 0, len], UP, yard ? dirt : steel);
-      // Tall end and the two triangular sides.
-      const hiL = pt(r.hl, -r.hw, true), hiR = pt(r.hl, r.hw, true), loL = pt(r.hl, -r.hw, false), loR = pt(r.hl, r.hw, false);
-      // Dirt ramps sample a plain patch of the stripe texture (no hazard paint).
-      const plain = [0.2, 0.5, 0.2, 0.5, 0.2, 0.5, 0.2, 0.5];
-      sides.quad(loL, loR, hiR, hiL, yard ? plain : [0, 0, r.hw * 2, 0, r.hw * 2, 1, 0, 1], fwd, yard ? dirt.clone().multiplyScalar(0.55) : undefined);
-      for (const side of [-1, 1]) {
-        const a = pt(-r.hl, side * r.hw, false), b = pt(r.hl, side * r.hw, false), t = pt(r.hl, side * r.hw, true);
-        sides.quad(a, b, t, t, yard ? plain : [0, 0, r.hl * 2, 0, r.hl * 2, 1, r.hl * 2, 1], side > 0 ? right : [-right[0], 0, -right[2]], yard ? dirt.clone().multiplyScalar(0.55) : undefined);
-      }
-    }
-    if (tops.empty) return;
-    const top = new THREE.Mesh(tops.build(), new THREE.MeshLambertMaterial({ vertexColors: true, map: dirtTexture() }));
-    const tex = kerbStripeTexture().clone();
-    tex.needsUpdate = true;
-    this.ownedTex.push(tex);
-    const side = new THREE.Mesh(sides.build(), new THREE.MeshLambertMaterial({ vertexColors: true, map: tex }));
-    for (const m of [top, side]) {
-      m.castShadow = shadow;
-      m.receiveShadow = true;
-      this.group.add(m);
-    }
-  }
-
-  /** Neem trees in Jehangir Park, along arterials and around the Empress Market plaza. */
-  private trees(map: CityMap, _shadow: boolean): void {
+  private trees(map: CityMap): void {
     const trunkGeo = prepBatchGeo(new THREE.CylinderGeometry(0.16, 0.24, 3, 6).translate(0, 1.5, 0), false, '#6b5440');
     const crownGeo = prepBatchGeo(new THREE.IcosahedronGeometry(2.2, 0), false, '#ffffff');
-    this.ownedGeos.push(trunkGeo, crownGeo);
+    const crownCol = new THREE.Color();
 
     const placed: Array<[number, number]> = [];
     const rng = new Rng(31);
@@ -1437,17 +1625,20 @@ export class CityScenery {
       placed.push([x, z]);
       this.occupied.push([x, z, 1.4]);
       const s = rng.range(0.8, 1.25);
-      this.pushClutter(x, z, trunkGeo, place(x, KERB_H, -z, 0, s, s, s));
-      this.pushClutter(
-        x,
-        z,
-        crownGeo,
-        place(x, KERB_H + 3.6 * s, -z, rng.range(0, 6), s * rng.range(0.9, 1.2), s, s * rng.range(0.9, 1.2)),
-        new THREE.Color().setHSL(rng.range(0.22, 0.28), 0.35, rng.range(0.3, 0.38)),
+      const ak = this.accumFor(x, z);
+      ak.clutterGeos.push(prepBatchGeo(trunkGeo, false, undefined, place(x, KERB_H, -z, 0, s, s, s)));
+      crownCol.setHSL(rng.range(0.22, 0.28), 0.35, rng.range(0.3, 0.38));
+      ak.clutterGeos.push(
+        prepBatchGeo(
+          crownGeo,
+          false,
+          crownCol,
+          place(x, KERB_H + 3.6 * s, -z, rng.range(0, 6), s * rng.range(0.9, 1.2), s, s * rng.range(0.9, 1.2)),
+        ),
       );
     };
+
     for (const [x, z] of this.gardenTrees) add(x, z, 5, true);
-    // Jehangir Park scatter.
     for (const slab of map.slabs) {
       if (slab.kind !== 1) continue;
       const pts = slab.pts;
@@ -1468,7 +1659,6 @@ export class CityScenery {
         }
       }
     }
-    // Major arterials.
     for (const l of map.links) {
       if (l.turnaround || l.cls !== 'arterial' || l.len < 34) continue;
       if (map.nodes[l.from].roundabout && map.nodes[l.to].roundabout) continue;
@@ -1478,7 +1668,6 @@ export class CityScenery {
         add(p.x, p.z, 12);
       }
     }
-    // Empress Market front plaza.
     for (const l of map.landmarks) {
       if (l.kind !== 'empress') continue;
       const o = l.obb;
@@ -1488,9 +1677,10 @@ export class CityScenery {
         add(o.x + lf * s + lr * c, o.z + lf * c - lr * s, 8);
       }
     }
+    trunkGeo.dispose();
+    crownGeo.dispose();
   }
 
-  /** Roadside Quetta Chai Hotel dhabas with shamiana tarps, charpais, glowing samovar counters, and rising steam. */
   private chaiDhabas(map: CityMap): void {
     const tarpColors = ['#1565c0', '#c62828', '#2e7d32', '#ef6c00'];
     const dhabaGeos = tarpColors.map((tarpCol) => {
@@ -1499,7 +1689,6 @@ export class CityScenery {
         paint(g, col);
         parts.push(g.index ? g.toNonIndexed() : g);
       };
-      // 4 bamboo corner poles + colorful shamiana canopy roof
       for (const sx of [-1.4, 1.4]) {
         for (const sz of [-1.8, 1.8]) {
           addPart(new THREE.CylinderGeometry(0.045, 0.055, 2.8, 5).translate(sx, 1.4, sz), '#8d6e43');
@@ -1507,14 +1696,10 @@ export class CityScenery {
       }
       addPart(new THREE.BoxGeometry(3.2, 0.14, 4.0).translate(0, 2.82, 0), tarpCol);
       addPart(new THREE.BoxGeometry(3.3, 0.24, 4.1).translate(0, 2.68, 0), '#f9a825');
-
-      // Red-brick & stainless-steel chai counter + copper samovar urn + tandoor drum
       addPart(new THREE.BoxGeometry(0.95, 0.98, 1.85).translate(-0.85, 0.49, -0.7), '#a63a28');
       addPart(new THREE.BoxGeometry(1.02, 0.08, 1.92).translate(-0.85, 1.0, -0.7), '#cfd8dc');
       addPart(new THREE.CylinderGeometry(0.24, 0.28, 0.72, 8).translate(-0.85, 1.38, -0.95), '#d4883a');
       addPart(new THREE.CylinderGeometry(0.38, 0.42, 0.82, 8).translate(-0.85, 0.41, 0.65), '#8d4925');
-
-      // Traditional woven charpai (wooden frame + cream rope weave) & red plastic dhaba chairs/table
       addPart(new THREE.BoxGeometry(1.15, 0.1, 1.85).translate(0.65, 0.46, -0.75), '#e6d7b8');
       for (const cx of [0.15, 1.15]) {
         for (const cz of [-1.6, 0.1]) {
@@ -1526,12 +1711,12 @@ export class CityScenery {
       for (const dz of [0.42, 1.68]) {
         addPart(new THREE.BoxGeometry(0.46, 0.44, 0.46).translate(0.65, 0.22, dz), '#c62828');
       }
-
-      const merged = mergeGeometries(parts);
+      const merged = mergeGeometries(parts, false);
       parts.forEach((g) => g.dispose());
-      return prepBatchGeo(merged ?? new THREE.BoxGeometry(2.8, 2.8, 3.6), false);
+      const res = prepBatchGeo(merged ?? new THREE.BoxGeometry(2.8, 2.8, 3.6), false);
+      merged?.dispose();
+      return res;
     });
-    this.ownedGeos.push(...dhabaGeos);
 
     const rng = new Rng(0xc4a1);
     let placedCount = 0;
@@ -1552,13 +1737,12 @@ export class CityScenery {
         placedCount++;
 
         const ry = -l.heading + (side > 0 ? 0 : Math.PI);
-        this.pushClutter(p.x, p.z, dhabaGeos[placedCount % dhabaGeos.length], place(p.x, KERB_H, -p.z, ry));
+        const m = place(p.x, KERB_H, -p.z, ry);
+        this.accumFor(p.x, p.z).clutterGeos.push(prepBatchGeo(dhabaGeos[placedCount % dhabaGeos.length], false, undefined, m));
 
-        const bk = this.bucketFor(p.x, p.z);
-        bk.bulbs.push(place(p.x, KERB_H + 2.62, -p.z, ry, 1.15, 1.15, 1.15));
-        bk.glows.push(place(p.x, KERB_H + 0.03, -p.z, 0, 8.5, 1, 8.5));
+        this.pushBulb(p.x, p.z, place(p.x, KERB_H + 2.62, -p.z, ry, 1.15, 1.15, 1.15));
+        this.pushGlow(p.x, p.z, place(p.x, KERB_H + 0.03, -p.z, 0, 8.5, 1, 8.5));
 
-        // 4 rising steam puffs above the copper samovar urn
         const sinR = Math.sin(ry), cosR = Math.cos(ry);
         const localX = -0.85, localZ = -0.95;
         const wx = p.x + localX * cosR + localZ * sinR;
@@ -1568,6 +1752,7 @@ export class CityScenery {
         }
       }
     }
+    dhabaGeos.forEach((g) => g.dispose());
 
     if (this.steamSeeds.length > 0) {
       const count = this.steamSeeds.length / 4;
@@ -1594,7 +1779,6 @@ export class CityScenery {
     }
   }
 
-  /** Kerbside rows of parked CD-70 motorbikes and shaded fruit pushcarts. */
   private parkedClutter(map: CityMap): void {
     const bikeGeos = PARKED_BIKE_COLORS.map((tankCol) => {
       const raw = buildParkedBikeGeometry(tankCol);
@@ -1616,12 +1800,12 @@ export class CityScenery {
       addPart(new THREE.CylinderGeometry(0.4, 0.4, 0.08, 8).rotateZ(Math.PI / 2).translate(-0.6, 0.4, 0), '#3e2a16');
       addPart(new THREE.CylinderGeometry(0.03, 0.03, 2.2, 4).translate(0, 1.9, 0), '#555555');
       addPart(new THREE.ConeGeometry(1.4, 0.6, 8).translate(0, 3.0, 0), umbCol);
-      const merged = mergeGeometries(parts);
+      const merged = mergeGeometries(parts, false);
       parts.forEach((g) => g.dispose());
-      return prepBatchGeo(merged ?? new THREE.BoxGeometry(1.1, 2.0, 1.9), false);
+      const res = prepBatchGeo(merged ?? new THREE.BoxGeometry(1.1, 2.0, 1.9), false);
+      merged?.dispose();
+      return res;
     });
-
-    this.ownedGeos.push(...bikeGeos, ...cartGeos);
 
     const rng = new Rng(505);
     for (const l of map.links) {
@@ -1645,7 +1829,7 @@ export class CityScenery {
               if (!this.canPlaceOnPavement(map, p.x, p.z, 0.55, 0.55, 0.85)) continue;
               this.occupied.push([p.x, p.z, 0.55]);
               const bikeRy = -l.heading + (side > 0 ? -Math.PI / 2 : Math.PI / 2) + rng.range(-0.22, 0.22);
-              this.pushClutter(p.x, p.z, bikeGeos[rng.int(0, bikeGeos.length - 1)], place(p.x, KERB_H, -p.z, bikeRy));
+              this.accumFor(p.x, p.z).clutterGeos.push(prepBatchGeo(bikeGeos[rng.int(0, bikeGeos.length - 1)], false, undefined, place(p.x, KERB_H, -p.z, bikeRy)));
             }
             s += rng.range(16, 26);
           } else if (roll < 0.6) {
@@ -1653,7 +1837,7 @@ export class CityScenery {
             const p = map.linkPoint(l, s, off);
             if (this.canPlaceOnPavement(map, p.x, p.z, 1.2, 0.55, 1.15)) {
               this.occupied.push([p.x, p.z, 1.2]);
-              this.pushClutter(p.x, p.z, cartGeos[rng.int(0, cartGeos.length - 1)], place(p.x, KERB_H, -p.z, -l.heading + rng.range(-0.18, 0.18)));
+              this.accumFor(p.x, p.z).clutterGeos.push(prepBatchGeo(cartGeos[rng.int(0, cartGeos.length - 1)], false, undefined, place(p.x, KERB_H, -p.z, -l.heading + rng.range(-0.18, 0.18))));
             }
             s += rng.range(22, 34);
           } else {
@@ -1662,35 +1846,474 @@ export class CityScenery {
         }
       }
     }
+    bikeGeos.forEach((g) => g.dispose());
+    cartGeos.forEach((g) => g.dispose());
   }
 
-  /** Flush chunked static clutter, shop signs, banners, bulbs and night pools into BatchedMeshes. */
-  private flushBatches(shadow: boolean): void {
-    const signGeos = Array.from({ length: SHOP_SIGN_COUNT }, (_, i) => atlasQuadGeo(shopSignAtlasUv(i)));
-    const bannerGeos = Array.from({ length: BANNER_COUNT }, (_, i) => doubleSidedAtlasQuadGeo(streetBannerAtlasUv(i)));
-    const bulbGeo = new THREE.BoxGeometry(0.42, 0.14, 0.24);
-    const glowGeo = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
-    const neonHGeos = Array.from({ length: NEON_H_COUNT }, (_, i) => atlasQuadGeo(neonHAtlasUv(i)));
-    const neonVGeos = Array.from({ length: NEON_V_COUNT }, (_, i) => doubleSidedAtlasQuadGeo(neonVAtlasUv(i)));
-    this.ownedGeos.push(...signGeos, ...bannerGeos, bulbGeo, glowGeo, ...neonHGeos, ...neonVGeos);
-    const neonMat = (map: THREE.Texture, mask: THREE.Texture) =>
-      new THREE.MeshLambertMaterial({ map, emissiveMap: mask, emissive: new THREE.Color('#ffffff'), emissiveIntensity: 0.45 });
-    const neonHMat = neonMat(neonHAtlas(), neonHAtlas(true));
-    const neonVMat = neonMat(neonVAtlas(), neonVAtlas(true));
-    this.neonMats.push(neonHMat, neonVMat);
-    const shadowMat = new THREE.MeshBasicMaterial({
-      color: '#1a120c',
-      alphaMap: contactShadowTexture(),
-      transparent: true,
-      opacity: 0.5,
-      depthWrite: false,
-      polygonOffset: true,
-      polygonOffsetFactor: -2,
-      polygonOffsetUnits: -2,
-    });
-    this.ownedMats.push(neonHMat, neonVMat, shadowMat);
+  private yards(map: CityMap): void {
+    const q = new Tris();
+    const uvS = 1 / 4;
+    for (const y of map.yards) {
+      const s = Math.sin(y.heading), c = Math.cos(y.heading);
+      const pt = (lf: number, lr: number): V3 => [y.x + lf * s + lr * c, KERB_H + 0.012, -(y.z + lf * c - lr * s)];
+      q.quad(
+        pt(-y.hl, -y.hw),
+        pt(-y.hl, y.hw),
+        pt(y.hl, y.hw),
+        pt(y.hl, -y.hw),
+        [-y.hw * uvS, -y.hl * uvS, y.hw * uvS, -y.hl * uvS, y.hw * uvS, y.hl * uvS, -y.hw * uvS, y.hl * uvS],
+        UP,
+        YARD_TINT,
+      );
+    }
+    if (q.empty) return;
+    const yardGeo = q.build();
+    this.dirtParts.push(prepBatchGeo(yardGeo, true));
+    yardGeo.dispose();
+
+    const decalBuilder = this.ensureDecalBuilder();
+    const boardTex = signTexture(['KMC ROAD WORKS', 'KAAM JAARI HAI'], '#f9a825', '#1b1b1b', 512, 192);
+    const rect = decalBuilder.pack(boardTex, null, BLACK_COL, false);
+
+    const fBoard = new THREE.PlaneGeometry(5, 1.9).translate(0, 0, 0.02).toNonIndexed();
+    const bBoard = new THREE.PlaneGeometry(5, 1.9).rotateY(Math.PI).translate(0, 0, -0.02).toNonIndexed();
+    const boardGeo = mergeGeometries([fBoard, bBoard], false) ?? new THREE.PlaneGeometry(5, 1.9).toNonIndexed();
+    fBoard.dispose();
+    bBoard.dispose();
+    const bUv = boardGeo.getAttribute('uv');
+    for (let i = 0; i < bUv.count; i++) {
+      bUv.setXY(i, rect.u0 + bUv.getX(i) * (rect.u1 - rect.u0), rect.v0 + bUv.getY(i) * (rect.v1 - rect.v0));
+    }
+    const postGeo = new THREE.CylinderGeometry(0.07, 0.07, 3.2, 6);
+
+    for (const y of map.yards) {
+      const s = Math.sin(y.heading), c = Math.cos(y.heading);
+      const lf = -(y.hl - 1.5);
+      const bx = y.x + lf * s, bz = y.z + lf * c;
+      const ak = this.accumFor(bx, bz);
+      ak.decalGeos.push(prepBatchGeo(boardGeo, true, '#ffffff', place(bx, KERB_H + 3.2, -bz, -y.heading)));
+      for (const lr of [-2.2, 2.2]) {
+        ak.clutterGeos.push(prepBatchGeo(postGeo, false, '#555555', place(bx + lr * c, KERB_H + 1.6, -(bz - lr * s))));
+      }
+    }
+    boardGeo.dispose();
+    postGeo.dispose();
+  }
+
+  private ramps(map: CityMap): void {
+    const tops = new Tris();
+    const sides = new Tris();
+    const steel = new THREE.Color('#b3ada2');
+    const dirt = new THREE.Color('#b08a5a');
+    const inYard = (x: number, z: number) => map.yards.some((y) => pointObbDistance(x, z, y) === 0);
+    for (const r of map.ramps) {
+      const base = map.isRoad(r.x, r.z) ? 0 : KERB_H;
+      const yard = inYard(r.x, r.z);
+      const s = Math.sin(r.heading), c = Math.cos(r.heading);
+      const pt = (f: number, l: number, up: boolean): V3 => {
+        const x = r.x + f * s + l * c, z = r.z + f * c - l * s;
+        return [x, base + (up ? (r.h * (f + r.hl)) / (2 * r.hl) : 0) + 0.005, -z];
+      };
+      const fwd: V3 = [s, 0, -c];
+      const right: V3 = [c, 0, s];
+      const len = Math.hypot(2 * r.hl, r.h);
+      tops.quad(pt(-r.hl, -r.hw, true), pt(-r.hl, r.hw, true), pt(r.hl, r.hw, true), pt(r.hl, -r.hw, true), [0, 0, 1, 0, 1, len, 0, len], UP, yard ? dirt : steel);
+      const hiL = pt(r.hl, -r.hw, true), hiR = pt(r.hl, r.hw, true), loL = pt(r.hl, -r.hw, false), loR = pt(r.hl, r.hw, false);
+      const plain = [0.2, 0.5, 0.2, 0.5, 0.2, 0.5, 0.2, 0.5];
+      sides.quad(loL, loR, hiR, hiL, yard ? plain : [0, 0, r.hw * 2, 0, r.hw * 2, 1, 0, 1], fwd, yard ? dirt.clone().multiplyScalar(0.55) : undefined);
+      for (const side of [-1, 1]) {
+        const a = pt(-r.hl, side * r.hw, false), b = pt(r.hl, side * r.hw, false), t = pt(r.hl, side * r.hw, true);
+        sides.quad(a, b, t, t, yard ? plain : [0, 0, r.hl * 2, 0, r.hl * 2, 1, r.hl * 2, 1], side > 0 ? right : [-right[0], 0, -right[2]], yard ? dirt.clone().multiplyScalar(0.55) : undefined);
+      }
+    }
+    if (!tops.empty) {
+      const topGeo = tops.build();
+      this.dirtParts.push(prepBatchGeo(topGeo, true));
+      topGeo.dispose();
+    }
+    if (!sides.empty) {
+      const sideGeo = sides.build();
+      this.kerbParts.push(prepBatchGeo(sideGeo, true));
+      sideGeo.dispose();
+    }
+  }
+
+  private flushSurfaces(): void {
+    // 1. Merged kerbs (pavement kerbs + roundabout collars + island kerbs + ramp sides)
+    if (this.kerbParts.length > 0) {
+      const merged = mergeGeometries(this.kerbParts, false);
+      this.kerbParts.forEach((g) => g.dispose());
+      this.kerbParts.length = 0;
+      if (merged) {
+        const tex = kerbStripeTexture().clone();
+        tex.needsUpdate = true;
+        this.ownedTex.push(tex);
+        const mat = new THREE.MeshLambertMaterial({ map: tex, vertexColors: true });
+        const m = new THREE.Mesh(merged, mat);
+        m.receiveShadow = true;
+        m.castShadow = false;
+        this.group.add(m);
+      }
+    }
+
+    // 2. Merged dirt/gravel (garden gravel walks + construction yards + ramp tops)
+    const allDirt = [...this.gardenGravelGeos, ...this.dirtParts];
+    this.gardenGravelGeos = [];
+    this.dirtParts = [];
+    if (allDirt.length > 0) {
+      const merged = mergeGeometries(allDirt, false);
+      allDirt.forEach((g) => g.dispose());
+      if (merged) {
+        const mat = new THREE.MeshLambertMaterial({
+          map: dirtTexture(),
+          vertexColors: true,
+          polygonOffset: true,
+          polygonOffsetFactor: -1,
+          polygonOffsetUnits: -1,
+        });
+        const m = new THREE.Mesh(merged, mat);
+        m.receiveShadow = true;
+        m.castShadow = false;
+        this.group.add(m);
+      }
+    }
+
+    // 3. Merged landmark garden lawns
+    if (this.gardenLawnGeos.length > 0) {
+      const merged = mergeGeometries(this.gardenLawnGeos, false);
+      this.gardenLawnGeos.forEach((g) => g.dispose());
+      this.gardenLawnGeos = [];
+      if (merged) {
+        const mat = new THREE.MeshLambertMaterial({
+          color: '#ffffff',
+          vertexColors: true,
+          map: lawnTexture(),
+          polygonOffset: true,
+          polygonOffsetFactor: -2,
+          polygonOffsetUnits: -2,
+        });
+        const m = new THREE.Mesh(merged, mat);
+        m.receiveShadow = true;
+        m.castShadow = false;
+        this.group.add(m);
+      }
+    }
+  }
+
+  private decalBuilder: DecalAtlasBuilder | null = null;
+  private ensureDecalBuilder(): DecalAtlasBuilder {
+    return (this.decalBuilder ??= new DecalAtlasBuilder());
+  }
+
+  /** Build all 31 Saddar landmarks into unified BatchedMesh layers. */
+  private landmarks(map: CityMap): void {
+    const decalBuilder = this.ensureDecalBuilder();
+
+    for (const l of map.landmarks) {
+      const tmpGroup = new THREE.Group();
+      const lmLitMats: THREE.MeshLambertMaterial[] = [];
+      buildSaddarLandmark(tmpGroup, l, false, lmLitMats);
+      tmpGroup.updateMatrixWorld(true);
+      const litSet = new Set<THREE.Material>(lmLitMats);
+
+      const ak = this.accumFor(l.obb.x, l.obb.z);
+      const clutterParts: THREE.BufferGeometry[] = [];
+      const floodParts: THREE.BufferGeometry[] = [];
+      const decalParts: THREE.BufferGeometry[] = [];
+      const repBuckets = new Map<string, { mat: THREE.MeshLambertMaterial; geos: THREE.BufferGeometry[] }>();
+
+      const seenGeos = new Set<THREE.BufferGeometry>();
+      const seenMats = new Set<THREE.Material>();
+
+      tmpGroup.traverse((o) => {
+        if (!(o instanceof THREE.Mesh)) return;
+        const mat = Array.isArray(o.material) ? o.material[0] : o.material;
+        if (!mat) return;
+        seenGeos.add(o.geometry);
+        seenMats.add(mat);
+
+        const isBasic = mat instanceof THREE.MeshBasicMaterial;
+        const isLambert = mat instanceof THREE.MeshLambertMaterial;
+        const mapTex = (mat as THREE.MeshLambertMaterial | THREE.MeshBasicMaterial).map;
+        const emMap = isLambert ? mat.emissiveMap : null;
+        const matCol = (mat as THREE.MeshLambertMaterial | THREE.MeshBasicMaterial).color ?? WHITE;
+        const doubleSided = mat.side === THREE.DoubleSide;
+
+        if (!mapTex) {
+          // Untextured solid part
+          let g = prepBatchGeo(o.geometry, false, matCol, o.matrixWorld);
+          if (doubleSided) g = makeDoubleSidedGeo(g);
+          const hasEmissive = isBasic || (isLambert && (mat.emissive.getHex() !== 0 || litSet.has(mat)));
+          if (hasEmissive) floodParts.push(g);
+          else clutterParts.push(g);
+          return;
+        }
+
+        const wraps = mapTex.wrapS === THREE.RepeatWrapping || mapTex.wrapT === THREE.RepeatWrapping;
+        if (!wraps) {
+          // Non-wrapping sign, poster, clock face, or front facade -> DecalAtlas
+          const emCol = isLambert ? mat.emissive : WHITE;
+          const lit = isBasic || litSet.has(mat) || emMap !== null || (isLambert && mat.emissive.getHex() !== 0);
+          const rect = decalBuilder.pack(mapTex, emMap, emCol, lit);
+          let g = prepBatchGeo(o.geometry, true, matCol, o.matrixWorld);
+          const uv = g.getAttribute('uv');
+          const du = rect.u1 - rect.u0;
+          const dv = rect.v1 - rect.v0;
+          for (let i = 0; i < uv.count; i++) {
+            const u = Math.max(0, Math.min(1, uv.getX(i)));
+            const v = Math.max(0, Math.min(1, uv.getY(i)));
+            uv.setXY(i, rect.u0 + u * du, rect.v0 + v * dv);
+          }
+          if (doubleSided) g = makeDoubleSidedGeo(g);
+          decalParts.push(g);
+          return;
+        }
+
+        // Wrapping architectural bay/stone/lawn texture -> bake repeat/offset into UVs & deduplicate material
+        const emHex = isLambert && (emMap || mat.emissive.getHex() !== 0) ? mat.emissive.getHexString() : '000000';
+        const sharedMat = this.repeatingMaterial(mapTex, emMap, emHex);
+        let g = prepBatchGeo(o.geometry, true, matCol, o.matrixWorld);
+        const rx = mapTex.repeat.x;
+        const ry = mapTex.repeat.y;
+        const ox = mapTex.offset.x;
+        const oy = mapTex.offset.y;
+        if (rx !== 1 || ry !== 1 || ox !== 0 || oy !== 0) {
+          const uv = g.getAttribute('uv');
+          for (let i = 0; i < uv.count; i++) {
+            uv.setXY(i, uv.getX(i) * rx + ox, uv.getY(i) * ry + oy);
+          }
+        }
+        if (doubleSided) g = makeDoubleSidedGeo(g);
+        const rKey = sharedMat.uuid;
+        let rb = repBuckets.get(rKey);
+        if (!rb) {
+          rb = { mat: sharedMat, geos: [] };
+          repBuckets.set(rKey, rb);
+        }
+        rb.geos.push(g);
+      });
+
+      if (clutterParts.length > 0) {
+        const merged = mergeGeometries(clutterParts, false);
+        clutterParts.forEach((g) => g.dispose());
+        if (merged) ak.clutterGeos.push(merged);
+      }
+      if (floodParts.length > 0) {
+        const merged = mergeGeometries(floodParts, false);
+        floodParts.forEach((g) => g.dispose());
+        if (merged) ak.floodlitGeos.push(merged);
+      }
+      if (decalParts.length > 0) {
+        const merged = mergeGeometries(decalParts, false);
+        decalParts.forEach((g) => g.dispose());
+        if (merged) ak.decalGeos.push(merged);
+      }
+      for (const [rKey, rb] of repBuckets) {
+        const merged = mergeGeometries(rb.geos, false);
+        rb.geos.forEach((g) => g.dispose());
+        if (!merged) continue;
+        let chunkRb = ak.repeating.get(rKey);
+        if (!chunkRb) {
+          chunkRb = { mat: rb.mat, geos: [] };
+          ak.repeating.set(rKey, chunkRb);
+        }
+        chunkRb.geos.push(merged);
+      }
+
+      for (const g of seenGeos) g.dispose();
+      for (const m of seenMats) m.dispose();
+    }
+  }
+
+  private registerChunkInst(mesh: THREE.InstancedMesh, allMats: THREE.Matrix4[], allKeys: string[]): void {
+    const byChunk = new Map<string, { indices: number[]; mats: THREE.Matrix4[] }>();
+    for (let i = 0; i < allKeys.length; i++) {
+      const key = allKeys[i];
+      let b = byChunk.get(key);
+      if (!b) {
+        b = { indices: [], mats: [] };
+        byChunk.set(key, b);
+      }
+      b.indices.push(i);
+      b.mats.push(allMats[i]);
+    }
+    for (const [key, b] of byChunk) {
+      this.ensureChunkRef(key).insts.push({ mesh, indices: b.indices, mats: b.mats });
+    }
+  }
+
+  private buildChunkBatchedMesh(
+    entries: Array<{ key: string; geo: THREE.BufferGeometry }>,
+    mat: THREE.Material,
+  ): THREE.BatchedMesh | null {
+    if (entries.length === 0) return null;
+    let totalVerts = 0;
+    for (const e of entries) totalVerts += e.geo.getAttribute('position').count;
+    const bm = new THREE.BatchedMesh(entries.length, totalVerts, 0, mat);
+    bm.sortObjects = false;
+    bm.frustumCulled = false;
+    bm.perObjectFrustumCulled = true;
+    bm.castShadow = false;
+    bm.receiveShadow = true;
+
+    for (let i = 0; i < entries.length; i++) {
+      const e = entries[i];
+      const gid = bm.addGeometry(e.geo);
+      const iid = bm.addInstance(gid);
+      bm.setMatrixAt(iid, IDENTITY_MAT);
+      bm.setColorAt(iid, WHITE);
+      e.geo.dispose();
+      const ref = this.ensureChunkRef(e.key);
+      let bRef = ref.batches.find((x) => x.bm === bm);
+      if (!bRef) {
+        bRef = { bm, ids: [] };
+        ref.batches.push(bRef);
+      }
+      bRef.ids.push(iid);
+    }
+    bm.computeBoundingBox();
+    bm.computeBoundingSphere();
+    this.ownedBatches.push(bm);
+    this.group.add(bm);
+    return bm;
+  }
+
+  private buildProtoBatchedMesh(
+    protos: THREE.BufferGeometry[],
+    mat: THREE.Material,
+    items: BatchProtoEntry[],
+  ): THREE.BatchedMesh | null {
+    if (items.length === 0) return null;
+    let totalVerts = 0;
+    for (const g of protos) totalVerts += g.getAttribute('position').count;
+    const bm = new THREE.BatchedMesh(items.length, totalVerts, 0, mat);
+    bm.sortObjects = false;
+    bm.frustumCulled = false;
+    bm.perObjectFrustumCulled = true;
+    bm.castShadow = false;
+    bm.receiveShadow = true;
+
+    const gids = protos.map((g) => bm.addGeometry(g));
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i];
+      const iid = bm.addInstance(gids[it.geoIdx]);
+      bm.setMatrixAt(iid, it.matrix);
+      bm.setColorAt(iid, it.color);
+      const ref = this.ensureChunkRef(it.chunkKey);
+      let bRef = ref.batches.find((x) => x.bm === bm);
+      if (!bRef) {
+        bRef = { bm, ids: [] };
+        ref.batches.push(bRef);
+      }
+      bRef.ids.push(iid);
+    }
+    bm.computeBoundingBox();
+    bm.computeBoundingSphere();
+    this.ownedBatches.push(bm);
+    this.group.add(bm);
+    return bm;
+  }
+
+  private flushAllChunks(): void {
+    // 1. Static clutter, floodlit accents, decal atlas, and repeating landmark batches
+    const clutterEntries: Array<{ key: string; geo: THREE.BufferGeometry }> = [];
+    const floodEntries: Array<{ key: string; geo: THREE.BufferGeometry }> = [];
+    const decalEntries: Array<{ key: string; geo: THREE.BufferGeometry }> = [];
+    const repAll = new Map<string, { mat: THREE.MeshLambertMaterial; entries: Array<{ key: string; geo: THREE.BufferGeometry }> }>();
+    const allWires: number[] = [];
+
+    const signItems: BatchProtoEntry[] = [];
+    const bannerItems: BatchProtoEntry[] = [];
+    const neonHItems: BatchProtoEntry[] = [];
+    const neonVItems: BatchProtoEntry[] = [];
+
+    for (const [key, ak] of this.chunkAccum) {
+      if (ak.clutterGeos.length > 0) {
+        const m = mergeGeometries(ak.clutterGeos, false);
+        ak.clutterGeos.forEach((g) => g.dispose());
+        if (m) clutterEntries.push({ key, geo: m });
+      }
+      if (ak.floodlitGeos.length > 0) {
+        const m = mergeGeometries(ak.floodlitGeos, false);
+        ak.floodlitGeos.forEach((g) => g.dispose());
+        if (m) floodEntries.push({ key, geo: m });
+      }
+      if (ak.decalGeos.length > 0) {
+        const m = mergeGeometries(ak.decalGeos, false);
+        ak.decalGeos.forEach((g) => g.dispose());
+        if (m) decalEntries.push({ key, geo: m });
+      }
+      for (const [rKey, rb] of ak.repeating) {
+        const m = mergeGeometries(rb.geos, false);
+        rb.geos.forEach((g) => g.dispose());
+        if (!m) continue;
+        let bucket = repAll.get(rKey);
+        if (!bucket) {
+          bucket = { mat: rb.mat, entries: [] };
+          repAll.set(rKey, bucket);
+        }
+        bucket.entries.push({ key, geo: m });
+      }
+      if (ak.wires.length > 0) {
+        for (let i = 0; i < ak.wires.length; i++) allWires.push(ak.wires[i]);
+      }
+      for (let gi = 0; gi < ak.signs.length; gi++) {
+        for (const mat of ak.signs[gi]) signItems.push({ chunkKey: key, geoIdx: gi, matrix: mat, color: WHITE });
+      }
+      for (let gi = 0; gi < ak.banners.length; gi++) {
+        for (const mat of ak.banners[gi]) bannerItems.push({ chunkKey: key, geoIdx: gi, matrix: mat, color: WHITE });
+      }
+      for (let gi = 0; gi < ak.neonH.length; gi++) {
+        for (const mat of ak.neonH[gi]) neonHItems.push({ chunkKey: key, geoIdx: gi, matrix: mat, color: WHITE });
+      }
+      for (let gi = 0; gi < ak.neonV.length; gi++) {
+        for (const mat of ak.neonV[gi]) neonVItems.push({ chunkKey: key, geoIdx: gi, matrix: mat, color: WHITE });
+      }
+    }
+    this.chunkAccum.clear();
 
     const clutterMat = new THREE.MeshLambertMaterial({ vertexColors: true });
+    this.ownedMats.push(clutterMat);
+    this.buildChunkBatchedMesh(clutterEntries, clutterMat);
+
+    const floodMat = new THREE.MeshLambertMaterial({
+      vertexColors: true,
+      emissive: new THREE.Color('#ffead0'),
+      emissiveIntensity: 0,
+    });
+    this.ownedMats.push(floodMat);
+    this.litProps.push(floodMat);
+    this.buildChunkBatchedMesh(floodEntries, floodMat);
+
+    if (this.decalBuilder && decalEntries.length > 0) {
+      const { albedo, emissive } = this.decalBuilder.buildTextures();
+      this.ownedTex.push(albedo, emissive);
+      const decalMat = new THREE.MeshLambertMaterial({
+        color: '#ffffff',
+        vertexColors: true,
+        map: albedo,
+        emissiveMap: emissive,
+        emissive: new THREE.Color('#ffffff'),
+        emissiveIntensity: 0,
+      });
+      this.ownedMats.push(decalMat);
+      this.litProps.push(decalMat);
+      this.buildChunkBatchedMesh(decalEntries, decalMat);
+    } else {
+      decalEntries.forEach((e) => e.geo.dispose());
+    }
+
+    for (const bucket of repAll.values()) {
+      this.buildChunkBatchedMesh(bucket.entries, bucket.mat);
+    }
+
+    // 2. Signage & neon BatchedMeshes (prototype geometry sharing across Saddar)
+    const signGeos = Array.from({ length: SHOP_SIGN_COUNT }, (_, i) => atlasQuadGeo(shopSignAtlasUv(i)));
+    const bannerGeos = Array.from({ length: BANNER_COUNT }, (_, i) => doubleSidedAtlasQuadGeo(streetBannerAtlasUv(i)));
+    const neonHGeos = Array.from({ length: NEON_H_COUNT }, (_, i) => atlasQuadGeo(neonHAtlasUv(i)));
+    const neonVGeos = Array.from({ length: NEON_V_COUNT }, (_, i) => doubleSidedAtlasQuadGeo(neonVAtlasUv(i)));
+    this.ownedGeos.push(...signGeos, ...bannerGeos, ...neonHGeos, ...neonVGeos);
+
     this.shopSignMat = new THREE.MeshLambertMaterial({
       map: shopSignAtlas(),
       emissiveMap: shopSignAtlas(),
@@ -1703,52 +2326,87 @@ export class CityScenery {
       emissive: new THREE.Color('#fff4db'),
       emissiveIntensity: 0,
     });
-    this.lampBulbMat = new THREE.MeshLambertMaterial({
-      color: '#e6e0cc',
-      emissive: new THREE.Color('#ffcc66'),
-      emissiveIntensity: 0,
-    });
-    this.warmGlowMat = new THREE.MeshBasicMaterial({
-      map: warmGlowTexture(),
-      color: '#ffc966',
-      transparent: true,
-      opacity: 0.4,
-      depthWrite: false,
-      blending: THREE.AdditiveBlending,
-      polygonOffset: true,
-      polygonOffsetFactor: -3,
-    });
-    this.ownedMats.push(clutterMat, this.shopSignMat, this.bannerMat, this.lampBulbMat, this.warmGlowMat);
+    const neonMat = (map: THREE.Texture, mask: THREE.Texture) =>
+      new THREE.MeshLambertMaterial({ map, emissiveMap: mask, emissive: new THREE.Color('#ffffff'), emissiveIntensity: 0.45 });
+    const neonHMat = neonMat(neonHAtlas(), neonHAtlas(true));
+    const neonVMat = neonMat(neonVAtlas(), neonVAtlas(true));
+    this.neonMats.push(neonHMat, neonVMat);
+    this.ownedMats.push(this.shopSignMat, this.bannerMat, neonHMat, neonVMat);
 
-    for (const bk of this.clutterBuckets.values()) {
-      addBatch(bk.group, clutterMat, Array.from(bk.entries.values()), shadow, true);
-      addBatch(
-        bk.group,
-        this.shopSignMat,
-        bk.signs.map((mats, i) => ({ geo: signGeos[i], mats })),
-        false,
-        true,
-      );
-      addBatch(
-        bk.group,
-        this.bannerMat,
-        bk.banners.map((mats, i) => ({ geo: bannerGeos[i], mats })),
-        false,
-        true,
-      );
-      instanced(bk.group, bulbGeo, this.lampBulbMat, bk.bulbs, undefined, false, false);
-      addBatch(bk.group, neonHMat, bk.neonH.map((mats, i) => ({ geo: neonHGeos[i], mats })), false, true);
-      addBatch(bk.group, neonVMat, bk.neonV.map((mats, i) => ({ geo: neonVGeos[i], mats })), false, true);
-      instanced(bk.group, glowGeo, shadowMat, bk.shadows, undefined, false, false);
-      const gm = instanced(bk.group, glowGeo, this.warmGlowMat, bk.glows, undefined, false, false);
-      if (gm) {
-        gm.visible = false;
-        gm.renderOrder = 1;
-        this.glowMeshes.push(gm);
-      }
+    this.buildProtoBatchedMesh(signGeos, this.shopSignMat, signItems);
+    this.buildProtoBatchedMesh(bannerGeos, this.bannerMat, bannerItems);
+    this.buildProtoBatchedMesh(neonHGeos, neonHMat, neonHItems);
+    this.buildProtoBatchedMesh(neonVGeos, neonVMat, neonVItems);
+
+    // 3. Single streetlamp bulb InstancedMesh & single night glow InstancedMesh
+    if (this.bulbMats.length > 0) {
+      const bulbGeo = new THREE.BoxGeometry(0.42, 0.14, 0.24);
+      this.lampBulbMat = new THREE.MeshLambertMaterial({
+        color: '#e6e0cc',
+        emissive: new THREE.Color('#ffcc66'),
+        emissiveIntensity: 0,
+      });
+      this.ownedGeos.push(bulbGeo);
+      this.ownedMats.push(this.lampBulbMat);
+      const bInst = new THREE.InstancedMesh(bulbGeo, this.lampBulbMat, this.bulbMats.length);
+      bInst.frustumCulled = false;
+      bInst.castShadow = false;
+      for (let i = 0; i < this.bulbMats.length; i++) bInst.setMatrixAt(i, this.bulbMats[i]);
+      bInst.instanceMatrix.needsUpdate = true;
+      this.ownedInsts.push(bInst);
+      this.group.add(bInst);
+      this.registerChunkInst(bInst, this.bulbMats, this.bulbChunkKeys);
     }
+
+    if (this.glowMats.length > 0) {
+      const glowGeo = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
+      this.warmGlowMat = new THREE.MeshBasicMaterial({
+        map: warmGlowTexture(),
+        color: '#ffc966',
+        transparent: true,
+        opacity: 0.4,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+        polygonOffset: true,
+        polygonOffsetFactor: -3,
+      });
+      this.ownedGeos.push(glowGeo);
+      this.ownedMats.push(this.warmGlowMat);
+      const gInst = new THREE.InstancedMesh(glowGeo, this.warmGlowMat, this.glowMats.length);
+      gInst.frustumCulled = false;
+      gInst.castShadow = false;
+      gInst.visible = false;
+      gInst.renderOrder = 1;
+      for (let i = 0; i < this.glowMats.length; i++) gInst.setMatrixAt(i, this.glowMats[i]);
+      gInst.instanceMatrix.needsUpdate = true;
+      this.ownedInsts.push(gInst);
+      this.glowInst = gInst;
+      this.group.add(gInst);
+      this.registerChunkInst(gInst, this.glowMats, this.glowChunkKeys);
+    }
+
+    // 4. Single merged LineSegments for all utility pole & banner wires
+    if (allWires.length > 0) {
+      const wireGeo = new THREE.BufferGeometry();
+      wireGeo.setAttribute('position', new THREE.Float32BufferAttribute(allWires, 3));
+      const wireMat = new THREE.LineBasicMaterial({ color: '#2a2a2a' });
+      this.ownedGeos.push(wireGeo);
+      this.ownedMats.push(wireMat);
+      const wireLines = new THREE.LineSegments(wireGeo, wireMat);
+      wireLines.frustumCulled = false;
+      this.group.add(wireLines);
+    }
+
+    // Initialize chunk visibility cleanly around origin
+    this.update(0, 0, 0);
   }
 }
+
+const BLACK_COL = new THREE.Color('#000000');
+const BRIDGE_EMISSIVE = new THREE.Color('#d8ffd0');
+const YARD_TINT = new THREE.Color('#d9bf8f');
+const TANK_BLACK = new THREE.Color('#1d1f22');
+const TANK_BLUE = new THREE.Color('#2f6fb0');
 
 let flagTex: THREE.Texture | null = null;
 function flagTexture(): THREE.Texture {

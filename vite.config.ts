@@ -157,7 +157,7 @@ export default defineConfig({
         ? { codeSplitting: false }
         : {
             manualChunks(id: string) {
-              if (id.includes('node_modules/three/')) return 'three';
+              if (id.includes('node_modules/three/') || id.includes('node_modules/postprocessing/')) return 'three';
               return undefined;
             },
           },

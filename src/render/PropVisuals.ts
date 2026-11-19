@@ -13,12 +13,16 @@ function part(g: G, color: string, x = 0, y = 0, z = 0): G {
   return g.index ? g.toNonIndexed() : g;
 }
 
-function merge(parts: G[]): G {
-  // Keep only the attributes every part has.
+function mergePropParts(parts: G[]): G {
   for (const g of parts) {
-    if (!g.getAttribute('uv')) g.setAttribute('uv', new THREE.Float32BufferAttribute(new Float32Array(g.getAttribute('position').count * 2), 2));
+    if (!g.getAttribute('normal')) g.computeVertexNormals();
+    for (const k of Object.keys(g.attributes)) {
+      if (k !== 'position' && k !== 'normal' && k !== 'color') g.deleteAttribute(k);
+    }
   }
-  return mergeGeometries(parts) ?? new THREE.BoxGeometry(0.5, 0.5, 0.5);
+  const merged = mergeGeometries(parts, false) ?? part(new THREE.BoxGeometry(0.5, 0.5, 0.5), '#ffffff');
+  for (const g of parts) g.dispose();
+  return merged;
 }
 
 /** Low-poly street clutter. Built standing on y = 0, front along -z (three). */
@@ -78,118 +82,136 @@ function propGeometry(kind: PropKind): G {
       for (const y of [0.1, 0.38]) p.push(part(new THREE.BoxGeometry(0.64, 0.06, 0.52), '#8d6440', 0, y, 0));
       break;
   }
-  const g = merge(p);
+  const g = mergePropParts(p);
   // Pivot at the centre of the prop so it tumbles about its middle.
   g.translate(0, -PROP_SPECS[kind].h / 2, 0);
   return g;
 }
 
-const KINDS: PropKind[] = ['cone', 'fruitcart', 'stall', 'drum', 'chair', 'crate'];
-
-const PROP_CHUNK = 280;
+const KINDS: readonly PropKind[] = ['cone', 'fruitcart', 'stall', 'drum', 'chair', 'crate'];
+const PROP_CHUNK = 240;
 
 interface PropChunk {
   cx: number;
   cz: number;
-  group: THREE.Group;
+  visible: boolean;
+  instanceIds: number[];
 }
 
-/** Instanced street props, partitioned by home chunk and posed from the sim when active. */
+/**
+ * Single-draw-call BatchedMesh street props partitioned by spatial chunks for fast visibility culling.
+ */
 export class PropVisuals {
   readonly group = new THREE.Group();
-  private chunks: PropChunk[] = [];
-  private propMesh: THREE.InstancedMesh[] = [];
-  private slot: number[] = [];
-  private sharedGeos: THREE.BufferGeometry[] = [];
-  private mat = new THREE.MeshLambertMaterial({ vertexColors: true });
-  private dummy = new THREE.Object3D();
+  private readonly batch: THREE.BatchedMesh | null = null;
+  private readonly mat = new THREE.MeshLambertMaterial({ vertexColors: true });
+  private readonly chunks: PropChunk[] = [];
+  private readonly instanceIds: number[];
+  private readonly away: Uint8Array;
+  private readonly dummy = new THREE.Object3D();
   private first = true;
-  /** props drawn away from their home pose last time (must be redrawn once more when reset) */
-  private away: boolean[] = [];
 
-  constructor(props: Props, shadow: boolean) {
+  constructor(props: Props, _shadow: boolean) {
+    this.dummy.rotation.order = 'YXZ';
+    const list = props.props;
+    this.instanceIds = new Array<number>(list.length);
+    this.away = new Uint8Array(list.length);
+
+    if (list.length === 0) return;
+
     const geos = new Map<PropKind, THREE.BufferGeometry>();
+    let totalVerts = 0;
     for (const k of KINDS) {
       const g = propGeometry(k);
       geos.set(k, g);
-      this.sharedGeos.push(g);
+      totalVerts += g.getAttribute('position').count;
     }
 
-    const byKey = new Map<string, { cx: number; cz: number; items: typeof props.props }>();
-    for (const p of props.props) {
+    const batch = new THREE.BatchedMesh(list.length, totalVerts, 0, this.mat);
+    batch.sortObjects = false;
+    batch.frustumCulled = false;
+    batch.perObjectFrustumCulled = true;
+    batch.castShadow = false;
+    batch.receiveShadow = true;
+
+    const gidByKind = new Map<PropKind, number>();
+    for (const k of KINDS) {
+      const g = geos.get(k)!;
+      gidByKind.set(k, batch.addGeometry(g));
+      g.dispose();
+    }
+
+    const chunkMap = new Map<string, PropChunk>();
+    for (let i = 0; i < list.length; i++) {
+      const p = list[i];
+      const iid = batch.addInstance(gidByKind.get(p.kind)!);
+      this.instanceIds[p.id] = iid;
+
+      const spec = PROP_SPECS[p.kind];
+      this.dummy.position.set(p.x, p.y + spec.h * 0.5, -p.z);
+      this.dummy.rotation.set(0, -p.heading, 0);
+      this.dummy.updateMatrix();
+      batch.setMatrixAt(iid, this.dummy.matrix);
+      batch.setVisibleAt(iid, false);
+
       const gx = Math.floor(p.homeX / PROP_CHUNK);
       const gz = Math.floor(p.homeZ / PROP_CHUNK);
       const key = `${gx},${gz}`;
-      let entry = byKey.get(key);
-      if (!entry) {
-        entry = { cx: (gx + 0.5) * PROP_CHUNK, cz: (gz + 0.5) * PROP_CHUNK, items: [] };
-        byKey.set(key, entry);
+      let c = chunkMap.get(key);
+      if (!c) {
+        c = {
+          cx: (gx + 0.5) * PROP_CHUNK,
+          cz: (gz + 0.5) * PROP_CHUNK,
+          visible: false,
+          instanceIds: [],
+        };
+        chunkMap.set(key, c);
+        this.chunks.push(c);
       }
-      entry.items.push(p);
+      c.instanceIds.push(iid);
     }
 
-    for (const entry of byKey.values()) {
-      const counts = new Map<PropKind, number>();
-      for (const p of entry.items) {
-        const c = counts.get(p.kind) ?? 0;
-        this.slot[p.id] = c;
-        counts.set(p.kind, c + 1);
-      }
-      const chunkGroup = new THREE.Group();
-      const meshes = new Map<PropKind, THREE.InstancedMesh>();
-      for (const k of KINDS) {
-        const n = counts.get(k) ?? 0;
-        if (!n) continue;
-        const m = new THREE.InstancedMesh(geos.get(k)!, this.mat, n);
-        m.castShadow = shadow;
-        m.receiveShadow = true;
-        m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-        meshes.set(k, m);
-        chunkGroup.add(m);
-      }
-      for (const p of entry.items) {
-        this.propMesh[p.id] = meshes.get(p.kind)!;
-      }
-      this.group.add(chunkGroup);
-      this.chunks.push({ cx: entry.cx, cz: entry.cz, group: chunkGroup });
-    }
-    this.dummy.rotation.order = 'YXZ';
+    this.batch = batch;
+    this.group.add(batch);
   }
 
   update(props: Props, px = 0, pz = 0): void {
-    for (const c of this.chunks) {
-      c.group.visible = Math.abs(c.cx - px) < 420 && Math.abs(c.cz - pz) < 420;
+    const batch = this.batch;
+    if (!batch) return;
+
+    for (let i = 0; i < this.chunks.length; i++) {
+      const c = this.chunks[i];
+      const on = Math.abs(c.cx - px) < 420 && Math.abs(c.cz - pz) < 420;
+      if (on !== c.visible) {
+        c.visible = on;
+        const ids = c.instanceIds;
+        for (let j = 0; j < ids.length; j++) {
+          batch.setVisibleAt(ids[j], on);
+        }
+      }
     }
+
     if (!props.dirty && !this.first) return;
-    const touched = new Set<THREE.InstancedMesh>();
-    for (const p of props.props) {
+    const list = props.props;
+    const d = this.dummy;
+    for (let i = 0; i < list.length; i++) {
+      const p = list[i];
       const atHome = p.state === 0 && p.tumble === 0 && p.x === p.homeX && p.z === p.homeZ;
       if (!this.first && atHome && !this.away[p.id]) continue;
-      this.away[p.id] = !atHome;
-      const mesh = this.propMesh[p.id];
-      if (!mesh) continue;
+      this.away[p.id] = atHome ? 0 : 1;
       const spec = PROP_SPECS[p.kind];
-      // Half-extent pointing up after tumbling about the sideways axis.
-      const up = (spec.h / 2) * Math.abs(Math.cos(p.tumble)) + spec.hl * Math.abs(Math.sin(p.tumble));
-      const d = this.dummy;
+      const up = (spec.h * 0.5) * Math.abs(Math.cos(p.tumble)) + spec.hl * Math.abs(Math.sin(p.tumble));
       d.position.set(p.x, p.y + up, -p.z);
       d.rotation.set(p.tumble, -p.heading, 0);
       d.updateMatrix();
-      mesh.setMatrixAt(this.slot[p.id], d.matrix);
-      touched.add(mesh);
-    }
-    for (const m of touched) {
-      m.instanceMatrix.needsUpdate = true;
-      m.computeBoundingSphere();
+      batch.setMatrixAt(this.instanceIds[p.id], d.matrix);
     }
     this.first = false;
   }
 
   dispose(): void {
-    for (const g of this.sharedGeos) g.dispose();
+    this.batch?.dispose();
     this.mat.dispose();
-    this.sharedGeos = [];
-    this.chunks = [];
-    this.propMesh = [];
+    this.chunks.length = 0;
   }
 }

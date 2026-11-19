@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 /**
  * Builds a self-contained single-file HTML bundle for mobile & offline playback.
- * Run with: SINGLE_FILE=1 vite build && node tools/pack_html.mjs [--out PATH]
+ * Run with: node tools/pack_html.mjs --build [--out PATH]
  */
+import { execFileSync } from 'node:child_process';
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
@@ -11,6 +12,15 @@ const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const args = process.argv.slice(2);
 const outIdx = args.indexOf('--out');
 const outPath = path.resolve(outIdx >= 0 && args[outIdx + 1] ? args[outIdx + 1] : path.join(repo, 'dist/Karachi Traffic 3D.html'));
+
+if (args.includes('--build')) {
+  const viteBin = path.join(repo, 'node_modules/vite/bin/vite.js');
+  execFileSync(process.execPath, [viteBin, 'build'], {
+    cwd: repo,
+    stdio: 'inherit',
+    env: { ...process.env, SINGLE_FILE: '1' },
+  });
+}
 
 const assetsDir = path.join(repo, 'dist/assets');
 const files = readdirSync(assetsDir);

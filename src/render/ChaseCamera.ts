@@ -12,7 +12,7 @@ export interface ChaseInput {
   /** speed (m/s) at which the FOV is fully widened */
   topSpeed: number;
   /** optional camera collision push-in so buildings/awnings never clip view */
-  clip?: (camPos: THREE.Vector3, target: THREE.Vector3) => void;
+  clip?: (camPos: THREE.Vector3, target: THREE.Vector3, dt: number) => void;
 }
 
 const smoothstep = (a: number, b: number, x: number) => {
@@ -49,6 +49,7 @@ export class ChaseCamera {
   private trauma = 0;
   private fov = 62;
   private time = 0;
+  private reverseBlend = 0;
   private initialised = false;
 
   /** Distance behind and height above the car. */
@@ -78,6 +79,7 @@ export class ChaseCamera {
   reset(): void {
     this.initialised = false;
     this.trauma = 0;
+    this.reverseBlend = 0;
   }
 
   /** Pixels per world unit at distance 1 (for size-attenuated point sprites). */
@@ -93,8 +95,12 @@ export class ChaseCamera {
   update(dt: number, target: THREE.Vector3, heading: number, speed: number, o: ChaseInput): void {
     this.time += dt;
     const fwd = Math.max(0, speed);
-    const reversing = speed < -0.5;
     const ratio = Math.min(1.2, fwd / Math.max(1, o.topSpeed));
+    if (speed < -0.6) {
+      this.reverseBlend += (1 - this.reverseBlend) * (1 - Math.exp(-dt * 4.5));
+    } else if (speed > 0.3) {
+      this.reverseBlend += (0 - this.reverseBlend) * (1 - Math.exp(-dt * 5.0));
+    }
 
     // ---- Orbit yaw: spring toward heading, biased into the slide ---------------------
     const slip = wrap(o.travel - heading);
@@ -102,13 +108,14 @@ export class ChaseCamera {
     if (!this.initialised) {
       this.yaw = yawTarget;
       this.yawVel = 0;
+      this.reverseBlend = speed < -0.6 ? 1 : 0;
     }
     const prevYaw = this.yaw;
     // Sub-step the springs: frame dt can be large on slow devices.
     const steps = Math.max(1, Math.ceil(dt / (1 / 120)));
     const h = dt / steps;
-    const yawK = reversing ? 16 : 38;
-    const yawC = reversing ? 9 : 11.5;
+    const yawK = 38 - 10 * this.reverseBlend;
+    const yawC = 11.5;
     for (let i = 0; i < steps; i++) {
       const err = wrap(yawTarget - this.yaw);
       this.yawVel += (yawK * err - yawC * this.yawVel) * h;
@@ -117,9 +124,9 @@ export class ChaseCamera {
     const turnRate = (this.yaw - prevYaw) / Math.max(dt, 1e-4);
 
     // ---- Desired position: dolly-compensated FOV + steady reverse sightline ------------
-    const revPush = reversing ? 1.15 : 1;
+    const revPush = 1 + 0.12 * this.reverseBlend;
     const dist = Math.max(3.6, (this.distance - ratio * 0.28) * this.zoom * this.distScale * revPush);
-    const height = (this.height - ratio * 0.22 + (reversing ? 0.45 : 0)) * (1 + (this.zoom - 1) * 0.8) * this.heightScale;
+    const height = (this.height - ratio * 0.22 + 0.55 * this.reverseBlend) * (1 + (this.zoom - 1) * 0.8) * this.heightScale;
     this.desired.set(
       target.x - Math.sin(this.yaw) * dist,
       target.y + height,
@@ -127,7 +134,7 @@ export class ChaseCamera {
     );
     if (!this.initialised) {
       if (o.clip) {
-        o.clip(this.desired, target);
+        o.clip(this.desired, target, 0);
         this.desired.y = Math.max(this.desired.y, target.y + 1.0);
       }
       this.pos.copy(this.desired);
@@ -157,12 +164,13 @@ export class ChaseCamera {
       const s = 2.2 / lag;
       this.pos.set(this.desired.x + lagX * s, this.desired.y + lagY * s, this.desired.z + lagZ * s);
     }
-    if (o.clip) o.clip(this.pos, target);
+    if (o.clip) o.clip(this.pos, target, dt);
     // Keep above the ground / kerb.
     this.pos.y = Math.max(this.pos.y, target.y + 0.9);
 
-    // Look ahead of the car, further at speed (or closer when reversing).
-    const ahead = (reversing ? 3 : 6 + ratio * 4) * this.aheadScale;
+    // Look ahead of the car, further at speed (or closer & centered when reversing).
+    const aheadBase = 6 + ratio * 4;
+    const ahead = (aheadBase + (1.5 - aheadBase) * this.reverseBlend) * this.aheadScale;
     this.lookAhead.set(target.x + Math.sin(this.yaw) * ahead, target.y + this.lookHeight, target.z - Math.cos(this.yaw) * ahead);
     this.look.lerp(this.lookAhead, 1 - Math.exp(-dt * 12));
 
