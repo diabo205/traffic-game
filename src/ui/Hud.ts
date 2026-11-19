@@ -1,3 +1,5 @@
+import { RADIO_STATIONS } from '../audio/engineDspMath';
+import type { RadioStationId } from '../audio/engineDspMath';
 import type { TouchSteerMode } from '../input/InputManager';
 import type { TimeOfDay } from '../render/Renderer';
 import type { FareKind, ShiftRank } from '../sim/city/Fares';
@@ -470,8 +472,10 @@ export class Hud {
     setCard(this.hapticsBtn, on ? 'ON' : 'OFF');
   }
 
-  setRadio(on: boolean): void {
-    const label = on ? 'DHOL FM' : 'OFF';
+  setRadio(stationOrOn: RadioStationId | boolean): void {
+    const id: RadioStationId =
+      typeof stationOrOn === 'boolean' ? (stationOrOn ? 'dhol' : 'off') : stationOrOn;
+    const label = RADIO_STATIONS[id]?.hudLabel ?? 'OFF';
     setCard(this.radioBtn, label);
     setCard(this.pauseRadioBtn, label);
   }

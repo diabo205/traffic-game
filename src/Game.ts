@@ -1,4 +1,5 @@
-import { SoundEngine } from './audio/SoundEngine';
+import { RADIO_STATIONS, RADIO_STATION_ORDER, SoundEngine } from './audio/SoundEngine';
+import type { RadioStationId } from './audio/SoundEngine';
 import { InputManager } from './input/InputManager';
 import type { TouchSteerMode } from './input/InputManager';
 import { Renderer } from './render/Renderer';
@@ -8,6 +9,8 @@ import { PLAYER_VEHICLES, VEHICLE_COST, VEHICLE_SPECS } from './sim/PlayerCar';
 import { FINISH_Z, ZONES } from './sim/road';
 import { COMBO_WINDOW, DT } from './sim/types';
 import type { PlayerVehicle, SimEvent } from './sim/types';
+import { HORN_CATALOG } from './sim/upgrades';
+import type { HornId } from './sim/upgrades';
 import { Hud } from './ui/Hud';
 import { Minimap } from './ui/Minimap';
 import { TouchControls } from './ui/TouchControls';
@@ -69,6 +72,13 @@ function parseCityBest(raw: string | null): { earned: number; rank?: ShiftRank }
   return { earned, rank };
 }
 
+function parseRadioPref(raw: string | null): RadioStationId {
+  if (raw === '0') return 'off';
+  if (raw === '1') return 'dhol';
+  if (raw && (RADIO_STATION_ORDER as readonly string[]).includes(raw)) return raw as RadioStationId;
+  return 'dhol';
+}
+
 /**
  * Wires sim, renderer, input, audio and UI together and runs the
  * fixed-timestep loop (sim at 60 Hz, rendering at display rate).
@@ -82,12 +92,11 @@ export class Game {
   private autoGas = false;
   private haptics = true;
   private steerMode: TouchSteerMode = 'buttons';
-  private whooshCooldown = 0;
-  private npcHornCooldown = 0;
+  private hornOverride: HornId | undefined;
   private lastTrackedMoney = 0;
   private lastCountdownSec = -1;
   private readonly input = new InputManager();
-  private readonly audio = new SoundEngine();
+  private readonly audio: SoundEngine;
   private readonly hud: Hud;
   private readonly touch: TouchControls;
   private readonly carSelectScreen: CarSelectScreen;
@@ -119,6 +128,7 @@ export class Game {
     vehicle: PlayerVehicle,
     tod: TimeOfDay,
     uiRoot: HTMLElement,
+    audioOpts: { lowSpec: boolean; forceFallback: boolean; hornOverride?: HornId; radioOverride?: RadioStationId },
   ) {
     this.world = world;
     this.mode = mode;
@@ -127,6 +137,15 @@ export class Game {
     this.vehicle = vehicle;
     this.tod = tod;
     this.world.weather = tod === 'monsoon' ? 'monsoon' : 'clear';
+    this.hornOverride = audioOpts.hornOverride;
+
+    const initialRadio = parseRadioPref(audioOpts.radioOverride ?? storageGet('kt3d.radio'));
+    this.audio = new SoundEngine({
+      lowSpec: audioOpts.lowSpec,
+      forceFallback: audioOpts.forceFallback,
+      hornId: audioOpts.hornOverride ?? world.player.build.horn,
+      radioStation: initialRadio,
+    });
 
     this.hud = new Hud(uiRoot);
     this.hud.setMode(mode);
@@ -168,7 +187,7 @@ export class Game {
     this.setAutoGas(storageGet('kt3d.autogas') === '1', false);
     this.setHaptics(storageGet('kt3d.haptics') !== '0', false);
     this.setMuted(storageGet('kt3d.muted') === '1');
-    this.setRadio(storageGet('kt3d.radio') !== '0', false);
+    this.setRadioStation(initialRadio, false);
     this.setCamera(storageGet('kt3d.cam') === 'far', false);
 
     this.bindUi();
@@ -213,13 +232,27 @@ export class Game {
     else if (askedTod === 'noon' || askedTod === 'sunset' || askedTod === 'night' || askedTod === 'monsoon') tod = askedTod;
     else if (savedTod === 'noon' || savedTod === 'sunset' || savedTod === 'night' || savedTod === 'monsoon') tod = savedTod;
 
+    const forceFallback = params.has('audioFallback');
+    const askedHorn = params.get('horn');
+    const hornOverride = askedHorn && HORN_CATALOG.some((h) => h.id === askedHorn) ? (askedHorn as HornId) : undefined;
+    const askedRadio = params.get('radio');
+    const radioOverride =
+      askedRadio && (RADIO_STATION_ORDER as readonly string[]).includes(askedRadio)
+        ? (askedRadio as RadioStationId)
+        : undefined;
+
     const renderer = await Renderer.create(container, lowSpec);
     const activeSeed = isDaily ? daily.seed : seed;
     const world = await Game.buildWorld(mode, activeSeed, startZ, vehicle);
     world.weather = tod === 'monsoon' ? 'monsoon' : 'clear';
     renderer.setTimeOfDay(tod);
     await renderer.attach(world);
-    return new Game(renderer, world, seed, fixedSeed, startZ, mode, isDaily, bank, vehicle, tod, uiRoot);
+    return new Game(renderer, world, seed, fixedSeed, startZ, mode, isDaily, bank, vehicle, tod, uiRoot, {
+      lowSpec,
+      forceFallback,
+      hornOverride,
+      radioOverride,
+    });
   }
 
   private resetRunTrackers(): void {
@@ -227,6 +260,7 @@ export class Game {
     this.lastCountdownSec = -1;
     this.hadFirstShift = false;
     this.pendingToast = null;
+    this.audio.resetSpatialTraffic();
   }
 
   private async swapWorld(mode: Mode, dailyMode: boolean, vehicle: PlayerVehicle): Promise<boolean> {
@@ -537,17 +571,18 @@ export class Game {
     storageSet('kt3d.muted', m ? '1' : '0');
   }
 
-  private setRadio(on: boolean, save = true): void {
-    this.audio.setRadio(on);
-    this.hud.setRadio(on);
-    if (save) storageSet('kt3d.radio', on ? '1' : '0');
+  private setRadioStation(station: RadioStationId, save = true, playStatic = false): void {
+    this.audio.setRadioStation(station, playStatic);
+    this.hud.setRadio(station);
+    if (save) storageSet('kt3d.radio', station);
   }
 
   private toggleRadio(): void {
-    const next = !this.audio.isRadioOn;
-    this.setRadio(next);
+    const next = this.audio.cycleRadioStation();
+    this.hud.setRadio(next);
+    storageSet('kt3d.radio', next);
     if (!this.hud.settingsOpen && !this.paused) {
-      this.toastNow(next ? '📻 KARACHI DHOL FM · ON' : '📻 RADIO OFF', next);
+      this.toastNow(`📻 ${RADIO_STATIONS[next].toastLabel}`, next !== 'off');
     }
   }
 
@@ -747,6 +782,10 @@ export class Game {
         vehicle: p.vehicle,
         monsoon: this.tod === 'monsoon',
         fever: this.world.mode === 'city' ? this.world.fares.chain : this.world.speedRush() * 2,
+        engineTier: p.build.engine,
+        boost: p.boostTime > 0 ? 1 : 0,
+        load: Math.max(0, Math.min(1, p.accel / 10)),
+        hornId: this.hornOverride ?? p.build.horn,
       },
       frameDt,
     );
@@ -762,61 +801,21 @@ export class Game {
   }
 
   private updateSpatialTrafficAudio(dt: number): void {
-    this.whooshCooldown = Math.max(0, this.whooshCooldown - dt);
-    this.npcHornCooldown = Math.max(0, this.npcHornCooldown - dt);
-    if (this.world.phase !== 'running' || !this.audio.unlocked || this.audio.isMuted) return;
-
     const p = this.world.player;
     const sinH = Math.sin(p.heading);
     const cosH = Math.cos(p.heading);
-    const pvx = p.speed * sinH;
-    const pvz = p.speed * cosH;
-
-    if (this.whooshCooldown <= 0 && Math.abs(p.speed) > 9) {
-      let bestDist = 7.5;
-      let bestPan = 0;
-      let bestRel = 0;
-      for (const n of this.world.npcs) {
-        const dx = n.x - p.x;
-        const dz = n.z - p.z;
-        const distSq = dx * dx + dz * dz;
-        if (distSq > 56.25) continue;
-        const localFwd = dx * sinH + dz * cosH;
-        const localRight = dx * cosH - dz * sinH;
-        const absRight = Math.abs(localRight);
-        if (Math.abs(localFwd) > 4.5 || absRight < 1.4 || absRight > 7.5) continue;
-        const nvx = (n.x - n.prevX) / DT;
-        const nvz = (n.z - n.prevZ) / DT;
-        const relSpeed = Math.hypot(nvx - pvx, nvz - pvz);
-        if (relSpeed > 11 && absRight < bestDist) {
-          bestDist = absRight;
-          bestPan = Math.max(-0.9, Math.min(0.9, localRight / 5.5));
-          bestRel = relSpeed;
-        }
-      }
-      if (bestRel > 0) {
-        this.audio.passingRush(bestPan, Math.min(1, bestRel / 26));
-        this.whooshCooldown = 0.45;
-      }
-    }
-
-    if (this.npcHornCooldown <= 0 && (p.horn || Math.abs(p.speed) > 13)) {
-      for (const n of this.world.npcs) {
-        if (n.kind === 'cart') continue;
-        const dx = n.x - p.x;
-        const dz = n.z - p.z;
-        const localFwd = dx * sinH + dz * cosH;
-        const localRight = dx * cosH - dz * sinH;
-        if (localFwd < 1 || localFwd > 20 || Math.abs(localRight) > 5.5) continue;
-        const opposing = Math.cos(n.heading - p.heading) < -0.35;
-        if (p.horn || (opposing && localFwd < 14)) {
-          const pan = Math.max(-0.85, Math.min(0.85, localRight / 5.5));
-          this.audio.npcHorn(pan, 0.9 + ((n.id % 5) - 2) * 0.06);
-          this.npcHornCooldown = 2.6;
-          break;
-        }
-      }
-    }
+    this.audio.updateSpatialTraffic(
+      this.world.npcs,
+      p.x,
+      p.z,
+      p.heading,
+      p.speed * sinH,
+      p.speed * cosH,
+      dt,
+      this.world.phase === 'running' && !this.paused,
+      p.horn,
+      p.speed,
+    );
   }
 
   private updateTaxiHud(dt: number): void {
@@ -947,10 +946,12 @@ export class Game {
         break;
       }
       case 'fareSpill':
+        this.audio.chaiSpill();
         this.toastNow('CHAI SPILLED!', false);
         this.hud.damageFlash(0.18);
         break;
       case 'boostCharge':
+        if (e.meter >= 100 && e.delta > 0) this.audio.boostReady();
         break;
       case 'dropoff': {
         if (e.nextStop) {
