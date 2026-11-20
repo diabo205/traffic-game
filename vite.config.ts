@@ -1,5 +1,3 @@
-import { readFileSync } from 'node:fs';
-import path from 'node:path';
 import { defineConfig } from 'vite';
 import type { Plugin } from 'vite';
 
@@ -36,6 +34,15 @@ function fnv1aBytes(buf: Uint8Array): string {
     h = Math.imul(h, 0x01000193);
   }
   return (h >>> 0).toString(16).padStart(8, '0');
+}
+
+function readPublicAsset(relPath: string): Uint8Array | null {
+  const proc = (globalThis as {
+    process?: { getBuiltinModule?: (id: string) => { readFileSync?: (u: URL) => Uint8Array } | undefined };
+  }).process;
+  const fsMod = proc?.getBuiltinModule?.('node:fs');
+  if (!fsMod?.readFileSync) return null;
+  return fsMod.readFileSync(new URL(`./public/${relPath}`, import.meta.url));
 }
 
 function isSingleFile(): boolean {
@@ -86,8 +93,8 @@ function karachiPwaPlugin(): Plugin {
       const modelFingerprints = staticAssets
         .filter((asset) => asset.startsWith('./models/') && asset.endsWith('.glb'))
         .map((asset) => {
-          const full = path.resolve(process.cwd(), 'public', asset.slice(2));
-          return `${asset}:${fnv1aBytes(readFileSync(full))}`;
+          const bytes = readPublicAsset(asset.slice(2));
+          return bytes ? `${asset}:${fnv1aBytes(bytes)}` : asset;
         });
       const version = fnv1aHex([...precache, ...modelFingerprints].join('|'));
 
