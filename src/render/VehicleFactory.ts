@@ -416,10 +416,18 @@ export class VehicleFactory {
       const m = o.material as THREE.MeshStandardMaterial;
       let lm = mats.get(m.name);
       if (!lm) {
-        const map = maps[m.name] ? gltfTexture(maps[m.name]) : null;
+        const overrideMap = maps[m.name] ? gltfTexture(maps[m.name]) : null;
+        const map = overrideMap ?? m.map ?? null;
         const override = matColors[m.name] ?? (m.name === 'paint' ? paint : undefined);
-        const color = map ? new THREE.Color('#ffffff') : override !== undefined ? new THREE.Color(override) : m.color;
-        lm = new THREE.MeshLambertMaterial({ color, map, name: m.name });
+        const color = overrideMap ? new THREE.Color('#ffffff') : override !== undefined ? new THREE.Color(override) : m.color;
+        lm = new THREE.MeshLambertMaterial({
+          color,
+          map,
+          transparent: m.transparent || m.opacity < 1,
+          opacity: m.opacity,
+          alphaTest: m.alphaTest,
+          name: m.name,
+        });
         mats.set(m.name, lm);
       }
       o.material = lm;
