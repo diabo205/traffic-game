@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { defineConfig } from 'vite';
 import type { Plugin } from 'vite';
 
@@ -22,6 +24,15 @@ function fnv1aHex(str: string): string {
   let h = 0x811c9dc5;
   for (let i = 0; i < str.length; i++) {
     h ^= str.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0).toString(16).padStart(8, '0');
+}
+
+function fnv1aBytes(buf: Uint8Array): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < buf.length; i++) {
+    h ^= buf[i];
     h = Math.imul(h, 0x01000193);
   }
   return (h >>> 0).toString(16).padStart(8, '0');
@@ -72,7 +83,13 @@ function karachiPwaPlugin(): Plugin {
         './models/truck.glb',
       ];
       const precache = Array.from(new Set([...staticAssets, ...emitted.map((f) => `./${f}`)]));
-      const version = fnv1aHex(precache.join('|'));
+      const modelFingerprints = staticAssets
+        .filter((asset) => asset.startsWith('./models/') && asset.endsWith('.glb'))
+        .map((asset) => {
+          const full = path.resolve(process.cwd(), 'public', asset.slice(2));
+          return `${asset}:${fnv1aBytes(readFileSync(full))}`;
+        });
+      const version = fnv1aHex([...precache, ...modelFingerprints].join('|'));
 
       this.emitFile({
         type: 'asset',
