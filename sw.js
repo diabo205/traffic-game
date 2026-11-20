@@ -1,5 +1,5 @@
 /* Karachi Traffic 3D Offline Service Worker */
-const CACHE = 'kt3d-v-2495ebca';
+const CACHE = 'kt3d-v-d41409e8';
 const PRECACHE = [
   "./",
   "./index.html",
