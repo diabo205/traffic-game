@@ -120,6 +120,7 @@ export type SimEvent =
   | { type: 'pickup'; name: string; time: number; distance: number; kind?: 'standard' | 'vip' | 'party'; stops?: number }
   | { type: 'dropoff'; name: string; pay: number; tip: number; bonus: number; rating: number; chain?: number; kind?: 'standard' | 'vip' | 'party'; nextStop?: string }
   | { type: 'fareFailed'; name: string; reason: 'time' | 'shift' | 'towed' }
+  | { type: 'wrecked' }
   | { type: 'towed'; cost: number }
   | { type: 'boost'; kind: 'launch' | 'dash' | 'drift' }
   | { type: 'drift'; seconds: number }

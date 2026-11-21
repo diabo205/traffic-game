@@ -34,13 +34,14 @@ const GradeShader = {
     glowTint: { value: new THREE.Color(1, 1, 1) },
     glow: { value: 0 },
     aspect: { value: 1 },
+    fade: { value: 0 },
   },
   vertexShader: /* glsl */ `
     varying vec2 vUv;
     void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
   fragmentShader: /* glsl */ `
     uniform sampler2D tDiffuse;
-    uniform float saturation, contrast, vignette, glow, aspect;
+    uniform float saturation, contrast, vignette, glow, aspect, fade;
     uniform vec3 shadowTint, highlightTint, glowTint;
     varying vec2 vUv;
     void main() {
@@ -57,6 +58,7 @@ const GradeShader = {
       // Vignette
       vec2 d = (vUv - 0.5) * vec2(aspect, 1.0);
       c *= 1.0 - vignette * smoothstep(0.35, 0.95, length(d));
+      c *= 1.0 - clamp(fade, 0.0, 1.0);
       gl_FragColor = vec4(clamp(c, 0.0, 1.0), 1.0);
     }`,
 };
@@ -98,6 +100,10 @@ export class PostFx {
     u.vignette.value = p.vignette;
     (u.glowTint.value as THREE.Color).set(p.glowTint);
     u.glow.value = p.glow;
+  }
+
+  setFade(amount: number): void {
+    this.grade.uniforms.fade.value = Math.max(0, Math.min(1, amount));
   }
 
   setSize(w: number, h: number): void {

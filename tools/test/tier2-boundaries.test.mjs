@@ -169,6 +169,41 @@ describe('Tier 2 — Boundary & Edge-Case Tests', () => {
       assert.equal(w2.player.integrity, 100);
     });
 
+    it('runs a 90-tick CityWorld wreck beat before respawning on the road with a boost penalty', () => {
+      const { CityWorld } = mods.cityWorldMod;
+      const w = new CityWorld(1337, 'alto');
+      w.start();
+      for (let t = 0; t < 20; t++) w.step(makeInput({ throttle: 1 }));
+      w.drainEvents();
+
+      const preX = w.player.x;
+      const preZ = w.player.z;
+      w.player.integrity = 0;
+      w.step(makeInput({ throttle: 1 }));
+      const startEvents = w.drainEvents();
+
+      assert.equal(w.wrecking, true);
+      assert.ok(startEvents.some((e) => e.type === 'wrecked'), 'Expected wrecked event on beat start');
+      assert.equal(startEvents.some((e) => e.type === 'towed'), false, 'Must not tow on the initial wreck tick');
+      assert.ok(Math.hypot(w.player.x - preX, w.player.z - preZ) < 1.5, 'Car must stay at crash site during beat start');
+
+      for (let t = 1; t < 90; t++) {
+        w.step(makeInput({ throttle: 1 }));
+        const midEvents = w.drainEvents();
+        assert.equal(w.wrecking, true, `Expected wrecking to stay true at beat tick ${t}`);
+        assert.equal(midEvents.some((e) => e.type === 'towed'), false, `Unexpected early tow at beat tick ${t}`);
+      }
+
+      w.step(makeInput({ throttle: 1 }));
+      const endEvents = w.drainEvents();
+      assert.ok(endEvents.some((e) => e.type === 'towed'), 'Expected towed event at beat tick 90');
+      assert.equal(w.wrecking, false);
+      assert.equal(w.wreckProgress, 0);
+      assert.equal(w.player.integrity, 100);
+      assert.ok(w.player.boostCooldown > w.player.spec.boostCooldown, 'Expected extended post-wreck boost cooldown');
+      assert.ok(w.player.boostCharge < 1, 'Expected post-wreck boost charge below 1');
+    });
+
     it('keeps World frozen while phase === ready even under full throttle inputs', () => {
       const { World } = mods.worldMod;
       for (const v of EXPECTED_VEHICLES) {

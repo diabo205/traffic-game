@@ -42,6 +42,8 @@ class CityLevel {
 /** Towing and repairs when the player vehicle is wrecked. */
 const TOW_COST = 300;
 const TOW_TIME = 10;
+const WRECK_BEAT_TICKS = 90;
+const WRECK_BOOST_PENALTY = 4.5;
 
 /**
  * Open-world Saddar: free driving on a street network with junctions,
@@ -75,6 +77,7 @@ export class CityWorld {
   private street = '';
   private streetCandidate = '';
   private streetTicks = 0;
+  private wreckTicks = 0;
 
   constructor(seed: number, vehicle: PlayerVehicle = 'alto') {
     this.seed = seed >>> 0;
@@ -169,6 +172,14 @@ export class CityWorld {
     return this.level.phase;
   }
 
+  get wrecking(): boolean {
+    return this.wreckTicks > 0;
+  }
+
+  get wreckProgress(): number {
+    return this.wreckTicks > 0 ? 1 - this.wreckTicks / WRECK_BEAT_TICKS : 0;
+  }
+
   get npcs(): readonly NpcView[] {
     return this.traffic.npcs;
   }
@@ -209,7 +220,7 @@ export class CityWorld {
   }
 
   private damage(amount: number): void {
-    if (amount <= 0 || this.level.phase !== 'running') return;
+    if (amount <= 0 || this.level.phase !== 'running' || this.wreckTicks > 0) return;
     const grace = this.postLandGrace > 0 ? 0.35 : 1;
     const scaled = amount * this.player.spec.damageRes * grace;
     this.player.integrity = Math.max(0, this.player.integrity - scaled);
@@ -258,7 +269,7 @@ export class CityWorld {
     const running = this.level.phase === 'running';
     const firstEvent = this.events.length;
     this.applySurface();
-    p.update(input, this.topSpeed(), 1 / 60, running);
+    p.update(input, this.topSpeed(), 1 / 60, running && this.wreckTicks === 0);
     if (p.boostFired) this.events.push({ type: 'boost', kind: p.boostFired });
     if (p.driftEnded > 0.85) this.events.push({ type: 'drift', seconds: p.driftEnded });
     this.staticCollisions();
@@ -284,7 +295,12 @@ export class CityWorld {
       const st = this.level.stats;
       st.elapsed += 1 / 60;
       st.topSpeed = Math.max(st.topSpeed, Math.max(0, p.speed));
-      if (p.integrity <= 0) this.tow();
+      if (this.wreckTicks > 0) {
+        this.wreckTicks--;
+        if (this.wreckTicks === 0) this.tow();
+      } else if (p.integrity <= 0) {
+        this.beginWreck();
+      }
     }
     // Stunts: score what happened this tick (including tow combo-break), then tick the combo clock.
     const f = this.fares;
@@ -295,6 +311,14 @@ export class CityWorld {
     const end = this.events.length;
     for (let i = firstEvent; i < end; i++) this.stunts.handle(this.events[i], this.events);
     this.stunts.update(1 / 60, this.tick, p, this.traffic.npcs, !!f.fare, this.events, pay, f.fare?.partyCount ?? 1);
+  }
+
+  /** Begin the post-wreck crash-cam beat before towing back onto the road. */
+  private beginWreck(): void {
+    this.wreckTicks = WRECK_BEAT_TICKS;
+    if (this.fares.fare) this.events.push({ type: 'fareFailed', name: this.fares.places[this.fares.fare.dest].name, reason: 'towed' });
+    this.fares.cancelFare();
+    this.events.push({ type: 'wrecked' });
   }
 
   /** Wrecked: no game over, just a tow onto the nearest clear kerb, a repair bill and lost time. */
@@ -351,6 +375,7 @@ export class CityWorld {
       th = bestLink.heading;
     }
     this.player.reset(tx, tz, th, this.map.groundY(tx, tz));
+    this.player.penalizeBoost(WRECK_BOOST_PENALTY);
     this.player.freeRoam = true;
     this.onRoad = true;
     this.events.push({ type: 'towed', cost: paid });

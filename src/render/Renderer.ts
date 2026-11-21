@@ -191,6 +191,8 @@ export class Renderer {
   private tyres = new TyreFx();
   private rain = new RainFx();
   private sprayTimer = 0;
+  private wreckSmokeTimer = 0;
+  private respawnFade = 0;
   private lightningTimer = 9;
   private lightningFlash = 0;
   onThunder: ((pan: number, intensity: number) => void) | null = null;
@@ -408,6 +410,8 @@ export class Renderer {
     this.npcVisuals.clear();
     this.chase.reset();
     this.tyres.clear();
+    this.respawnFade = 0;
+    this.wreckSmokeTimer = 0;
     this.setTimeOfDay(this.timeOfDay);
     // Compile every shader now, so nothing pops in (or hitches) the first
     // time it is drawn: a new road material, the first skid, the first puff.
@@ -430,9 +434,15 @@ export class Renderer {
     const p = world.player;
     const y = world.groundY(p.x, p.z);
     switch (e.type) {
+      case 'wrecked':
+        this.effects.sparks(p.x, y + 0.4, -p.z, 1.2);
+        this.effects.dust(p.x, y, -p.z, 1.0);
+        this.chase.addTrauma(0.85);
+        break;
       case 'towed':
         this.tyres.clear();
         this.chase.reset();
+        this.respawnFade = 1;
         break;
       case 'smash':
         this.effects.dust(e.x, world.groundY(e.x, e.z), -e.z, Math.min(1, e.impact / 15));
@@ -553,6 +563,8 @@ export class Renderer {
     const p = world.player;
     const lerp = (a: number, b: number) => a + (b - a) * alpha;
     const lowLight = this.timeOfDay !== 'noon';
+    const wrecking = world.mode === 'city' && world.wrecking;
+    const wreckProgress = wrecking ? world.wreckProgress : 0;
 
     // ---- Player -----------------------------------------------------------
     const px = lerp(p.prevX, p.x);
@@ -569,12 +581,26 @@ export class Renderer {
       v.body.position.y = lerp(p.prevBump, p.bump) * 0.6;
       v.setBrake(p.braking || p.reversing);
       v.setHeadlights(p.dipper ? 2 : 1, lowLight);
-      v.setHazard(world.phase === 'gameover' && Math.floor(this.time * 3) % 2 === 0);
+      v.setHazard((world.phase === 'gameover' || wrecking) && Math.floor(this.time * 3) % 2 === 0);
       for (const w of v.wheels) {
         w.rotation.order = 'YXZ';
         w.rotation.x -= (p.speed * dt) / v.wheelRadius;
         if (w.position.z < 0) w.rotation.y = -p.steerAngle;
       }
+    }
+    if (wrecking && dt > 0) {
+      this.wreckSmokeTimer -= dt;
+      if (this.wreckSmokeTimer <= 0) {
+        this.wreckSmokeTimer = 0.09;
+        this.effects.dust(
+          px + Math.sin(heading) * p.spec.halfLength * 0.7,
+          elev + 0.45,
+          -(pz + Math.cos(heading) * p.spec.halfLength * 0.7),
+          0.45,
+        );
+      }
+    } else {
+      this.wreckSmokeTimer = 0;
     }
 
     // ---- NPCs --------------------------------------------------------------
@@ -619,6 +645,7 @@ export class Renderer {
       slide: Math.max(slide.front, slide.rear),
       topSpeed: world.topSpeed(),
       clip: world.mode === 'city' ? (camPos, target) => this.clipCamera(world, camPos, target) : undefined,
+      wrecked: wreckProgress,
     });
 
     const pLight = LIGHTING[this.timeOfDay];
@@ -666,6 +693,15 @@ export class Renderer {
       (this.flame.material as THREE.MeshBasicMaterial).color.set(Math.random() < 0.5 ? '#7fd3ff' : '#ffb347');
     }
     this.effects.update(dt);
+
+    let fade = 0;
+    if (wrecking) {
+      fade = Math.max(0, Math.min(1, (wreckProgress - 0.75) / 0.25));
+    } else if (this.respawnFade > 0) {
+      this.respawnFade = Math.max(0, this.respawnFade - dt * 2.8);
+      fade = this.respawnFade;
+    }
+    this.post.setFade(fade);
 
     const t0 = performance.now();
     this.post.render();

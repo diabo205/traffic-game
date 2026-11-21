@@ -374,6 +374,7 @@ export class PlayerCar {
   /** duration of the current active boost (s), for HUD meter normalization */
   boostMax = 0.75;
   boostCooldown = 0;
+  private boostCooldownMax = 0;
   /** set for one tick when a boost fires (World turns it into an event) */
   boostFired: BoostKind | null = null;
   /** set for one tick when a drift ends: its length in seconds */
@@ -447,6 +448,22 @@ export class PlayerCar {
     return 1 - clamp(this.dashCooldown / MOVES.dashCooldown, 0, 1);
   }
 
+  /** 0..1 recharge progress for HUD boost meter (respects extended wreck penalties). */
+  get boostCharge(): number {
+    if (this.boostCooldown <= 0) return 1;
+    const denom = Math.max(this.spec.boostCooldown, this.boostCooldownMax);
+    return 1 - clamp(this.boostCooldown / denom, 0, 1);
+  }
+
+  /** Clear active boost and lock boost/dash for `seconds` (e.g. post-wreck penalty). */
+  penalizeBoost(seconds: number): void {
+    this.boostTime = 0;
+    this.launchCharge = 0;
+    this.boostCooldown = Math.max(this.boostCooldown, seconds);
+    this.boostCooldownMax = Math.max(this.spec.boostCooldown, this.boostCooldown);
+    this.dashCooldown = Math.max(this.dashCooldown, seconds);
+  }
+
   reset(x: number, z: number, heading = 0, y = 0): void {
     this.x = this.prevX = x;
     this.z = this.prevZ = z;
@@ -468,7 +485,7 @@ export class PlayerCar {
     this.extraDrag = 0;
     this.throttle = 0;
     this.accel = 0;
-    this.drift = this.driftTime = this.boostTime = this.boostCooldown = 0;
+    this.drift = this.driftTime = this.boostTime = this.boostCooldown = this.boostCooldownMax = 0;
     this.boostMax = 0.75;
     this.handbrake = false;
     this.boostFired = null;
@@ -597,6 +614,7 @@ export class PlayerCar {
     this.boostTime = Math.max(this.boostTime, scaled);
     this.boostMax = Math.max(this.boostTime, 0.35);
     this.boostCooldown = this.spec.boostCooldown;
+    this.boostCooldownMax = this.spec.boostCooldown;
     this.boostFired = kind;
   }
 

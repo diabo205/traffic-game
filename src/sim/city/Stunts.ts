@@ -107,6 +107,7 @@ export class Stunts {
       case 'crash':
         if (e.damage >= 4) this.breakCombo(events);
         break;
+      case 'wrecked':
       case 'towed':
         this.breakCombo(events);
         break;

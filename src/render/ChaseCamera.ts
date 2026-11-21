@@ -13,6 +13,8 @@ export interface ChaseInput {
   topSpeed: number;
   /** optional camera collision push-in so buildings/awnings never clip view */
   clip?: (camPos: THREE.Vector3, target: THREE.Vector3) => void;
+  /** 0 = normal driving, 0..1 = Burnout-style crash-cam orbit progress */
+  wrecked?: number;
 }
 
 const smoothstep = (a: number, b: number, x: number) => {
@@ -50,6 +52,8 @@ export class ChaseCamera {
   private fov = 62;
   private time = 0;
   private initialised = false;
+  private crashYaw = 0;
+  private inCrashCam = false;
 
   /** Distance behind and height above the car. */
   distance = 5.0;
@@ -78,6 +82,7 @@ export class ChaseCamera {
   reset(): void {
     this.initialised = false;
     this.trauma = 0;
+    this.inCrashCam = false;
   }
 
   /** Pixels per world unit at distance 1 (for size-attenuated point sprites). */
@@ -92,6 +97,53 @@ export class ChaseCamera {
    */
   update(dt: number, target: THREE.Vector3, heading: number, speed: number, o: ChaseInput): void {
     this.time += dt;
+    if ((o.wrecked ?? 0) > 0) {
+      if (!this.inCrashCam) {
+        this.crashYaw = this.yaw;
+        this.inCrashCam = true;
+      }
+      this.crashYaw += dt * 0.55;
+      const dist = Math.max(4.8, (this.distance + 1.4) * this.zoom * this.distScale);
+      const height = (this.height + 0.5) * (1 + (this.zoom - 1) * 0.8) * this.heightScale;
+      this.desired.set(
+        target.x - Math.sin(this.crashYaw) * dist,
+        target.y + height,
+        target.z + Math.cos(this.crashYaw) * dist,
+      );
+      if (o.clip) o.clip(this.desired, target);
+      this.desired.y = Math.max(this.desired.y, target.y + 0.9);
+      if (!this.initialised) {
+        this.pos.copy(this.desired);
+        this.vel.set(0, 0, 0);
+        this.fov = this.baseFov;
+        this.initialised = true;
+      } else {
+        this.pos.lerp(this.desired, 1 - Math.exp(-dt * 8));
+      }
+      if (o.clip) o.clip(this.pos, target);
+      this.pos.y = Math.max(this.pos.y, target.y + 0.9);
+      this.look.set(target.x, target.y + this.lookHeight * 0.85, target.z);
+
+      this.trauma = Math.max(0, this.trauma - dt * 1.6);
+      const t = this.time;
+      const impact = this.trauma * this.trauma;
+      const sx = noise(t * 11, 1.3) * 0.38 * impact;
+      const sy = noise(t * 13, 7.7) * 0.32 * impact;
+      this.camera.position.set(this.pos.x + sx, this.pos.y + sy, this.pos.z);
+      this.camera.lookAt(this.look.x + sx * 0.5, this.look.y + sy * 0.6, this.look.z);
+      this.roll += (0 - this.roll) * (1 - Math.exp(-dt * 5));
+      this.camera.rotateZ(this.roll + noise(t * 9, 2.2) * 0.03 * impact);
+
+      const targetFov = this.baseFov - 4;
+      this.fov += (targetFov - this.fov) * (1 - Math.exp(-dt * 3.0));
+      if (Math.abs(this.camera.fov - this.fov) > 0.01) {
+        this.camera.fov = this.fov;
+        this.camera.updateProjectionMatrix();
+      }
+      return;
+    }
+    this.inCrashCam = false;
+
     const fwd = Math.max(0, speed);
     const reversing = speed < -0.5;
     const ratio = Math.min(1.2, fwd / Math.max(1, o.topSpeed));
