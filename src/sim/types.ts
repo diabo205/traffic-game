@@ -121,6 +121,7 @@ export type SimEvent =
   | { type: 'dropoff'; name: string; pay: number; tip: number; bonus: number; rating: number; chain?: number; kind?: 'standard' | 'vip' | 'party' | 'chai'; nextStop?: string }
   | { type: 'fareSpill'; name: string; spills: number }
   | { type: 'fareFailed'; name: string; reason: 'time' | 'shift' | 'towed' }
+  | { type: 'wrecked' }
   | { type: 'towed'; cost: number }
   | { type: 'boost'; kind: 'launch' | 'dash' | 'drift' }
   | { type: 'boostCharge'; meter: number; delta: number; source: 'drift' | 'nearMiss' | 'air' | 'honk' }

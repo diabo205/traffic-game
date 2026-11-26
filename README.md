@@ -72,4 +72,8 @@ npm run playtest:metrics # run all headless sim feel probes
 
 See [`CLAUDE.md`](./CLAUDE.md) for architectural invariants and [`HANDOFF.md`](./HANDOFF.md) for a detailed codebase guide.
 
+## Credits
+
+- Player car model (`public/models/alto.glb`): [2017 Suzuki Alto Works](https://sketchfab.com/3d-models/2017-suzuki-alto-works-0fda9e9048524ddba8f13e64de958f70) by DisneyCars (`@supercarmodels`), licensed under CC Attribution.
+
 Map geometry © OpenStreetMap contributors.

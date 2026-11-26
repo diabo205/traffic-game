@@ -401,7 +401,14 @@ function finalize(p: Proto, keepWheels: boolean): void {
         if (o instanceof THREE.Mesh) wMeshes.push(o);
       });
       if (wMeshes.length > 0) {
-        const mergedWheel = mergeMeshesVC(w, wMeshes, 'wheel_vc', false);
+        const firstMat = wMeshes[0].material as THREE.MeshLambertMaterial;
+        const allSameTextured =
+          firstMat instanceof THREE.MeshLambertMaterial &&
+          !!firstMat.map &&
+          wMeshes.every((wm) => wm.material === firstMat);
+        const mergedWheel = allSameTextured
+          ? mergeMeshes(w, wMeshes, firstMat, 'wheel_tex', false)
+          : mergeMeshesVC(w, wMeshes, 'wheel_vc', false);
         for (const ch of [...w.children]) {
           if (ch !== mergedWheel) w.remove(ch);
         }
@@ -443,7 +450,7 @@ function finalize(p: Proto, keepWheels: boolean): void {
     : null;
   if (keepWheels && paintMerged) applyPaintBoxUvs(paintMerged);
   if (vcMeshes.length) mergeMeshesVC(body, vcMeshes, 'part_vc', true);
-  for (const [mat, list] of byMat) mergeMeshes(body, list, mat, 'part', true);
+  for (const [mat, list] of byMat) mergeMeshes(body, list, mat, 'part', !mat.transparent);
 
   // Remove originals.
   const remove: THREE.Object3D[] = [];
@@ -732,13 +739,27 @@ export class VehicleFactory {
     body.traverse((o) => {
       if (!(o instanceof THREE.Mesh)) return;
       const m = o.material as THREE.MeshStandardMaterial;
-      let lm = mats.get(m.name);
+      const overrideMap = maps[m.name] ? gltfTexture(maps[m.name]) : null;
+      const map = overrideMap ?? m.map ?? null;
+      const override = matColors[m.name] ?? (m.name === 'paint' ? paint : undefined);
+      const color = overrideMap ? new THREE.Color('#ffffff') : override !== undefined ? new THREE.Color(override) : m.color;
+      const opacity = m.opacity >= 0.99 ? 1 : m.opacity;
+      const transparent = m.transparent || opacity < 1;
+      const key =
+        m.name === 'paint' || overrideMap || override !== undefined
+          ? `name:${m.name}`
+          : `mat:${map?.uuid ?? 'none'}:${color.getHexString()}:${transparent ? 1 : 0}:${opacity.toFixed(3)}:${m.alphaTest.toFixed(3)}`;
+      let lm = mats.get(key);
       if (!lm) {
-        const map = maps[m.name] ? gltfTexture(maps[m.name]) : null;
-        const override = matColors[m.name] ?? (m.name === 'paint' ? paint : undefined);
-        const color = map ? new THREE.Color('#ffffff') : override !== undefined ? new THREE.Color(override) : m.color;
-        lm = new THREE.MeshLambertMaterial({ color, map, name: m.name });
-        mats.set(m.name, lm);
+        lm = new THREE.MeshLambertMaterial({
+          color,
+          map,
+          transparent,
+          opacity,
+          alphaTest: m.alphaTest,
+          name: m.name,
+        });
+        mats.set(key, lm);
       }
       o.material = lm;
       o.castShadow = true;

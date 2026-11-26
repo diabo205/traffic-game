@@ -34,6 +34,7 @@ uniform float contrast;
 uniform float vignette;
 uniform float glow;
 uniform float gradeAspect;
+uniform float fade;
 uniform vec3 shadowTint;
 uniform vec3 highlightTint;
 uniform vec3 glowTint;
@@ -62,6 +63,7 @@ void mainImage(const in vec4 inputColor, const in vec2 uv, out vec4 outputColor)
   // Vignette
   vec2 d = (uv - 0.5) * vec2(gradeAspect, 1.0);
   c *= 1.0 - vignette * smoothstep(0.35, 0.95, length(d));
+  c *= 1.0 - clamp(fade, 0.0, 1.0);
   outputColor = vec4(kgSRGBToLinear(clamp(c, 0.0, 1.0)), inputColor.a);
 }
 `;
@@ -79,6 +81,7 @@ class KarachiGradeEffect extends Effect {
         ['glowTint', new THREE.Uniform(new THREE.Color(1, 1, 1))],
         ['glow', new THREE.Uniform(0)],
         ['gradeAspect', new THREE.Uniform(1)],
+        ['fade', new THREE.Uniform(0)],
       ]),
     });
   }
@@ -88,7 +91,7 @@ class KarachiGradeEffect extends Effect {
  * Tier-gated post-processing chain (render-only):
  * - Low tier: direct `gl.render(scene, camera)` with zero FBO/post passes.
  * - High tier: half-float HDR MSAA `EffectComposer` -> `RenderPass` -> single merged
- *   `EffectPass` (`BloomEffect` mipmapBlur 3 levels + ACES Filmic `ToneMappingEffect` + `KarachiGradeEffect`).
+ *   `EffectPass` (`BloomEffect` mipmapBlur 2 levels + ACES Filmic `ToneMappingEffect` + `KarachiGradeEffect`).
  */
 export class PostFx {
   readonly tier: 'low' | 'high';
@@ -120,7 +123,7 @@ export class PostFx {
       const renderPass = new RenderPass(scene, camera);
       const bloom = new BloomEffect({
         mipmapBlur: true,
-        levels: 3,
+        levels: 2,
         intensity: 0.25,
         luminanceThreshold: 0.95,
         luminanceSmoothing: 0.18,
@@ -162,6 +165,12 @@ export class PostFx {
     u.get('vignette')!.value = p.vignette;
     (u.get('glowTint')!.value as THREE.Color).set(p.glowTint);
     u.get('glow')!.value = p.glow;
+  }
+
+  setFade(amount: number): void {
+    if (this.grade) {
+      this.grade.uniforms.get('fade')!.value = Math.max(0, Math.min(1, amount));
+    }
   }
 
   setSize(w: number, h: number): void {

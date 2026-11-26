@@ -816,7 +816,7 @@ export class Game {
     this.updateTaxiHud(frameDt);
     // Boost meter: what's left while boosting, else drift charge or recharge.
     this.hud.setBoost(
-      p.boostTime > 0 ? p.boostFraction : 1 - p.boostCooldown / p.spec.boostCooldown,
+      p.boostTime > 0 ? p.boostFraction : p.boostCharge,
       p.boostTime > 0,
       p.handbrake,
       p.launchFraction,
@@ -1058,10 +1058,18 @@ export class Game {
       case 'fareFailed':
         if (e.reason !== 'shift') this.toastNow(e.reason === 'time' ? 'TOO SLOW! Passenger got out' : 'Fare lost', false);
         break;
+      case 'wrecked':
+        this.hud.showBanner(`${VEHICLE_SPECS[this.vehicle].label} WRECKED`);
+        this.hud.damageFlash(0.6);
+        this.audio.crash(1.3, 0);
+        this.vibrate([90, 50, 120]);
+        break;
       case 'towed':
-        this.hud.showBanner('TOWED TO THE MECHANIC');
-        this.toastNow(e.cost > 0 ? `Repairs −Rs ${e.cost} · −10s` : 'Towed to kerb · −10s', false);
-        this.vibrate([60, 50, 90]);
+        this.toastNow(
+          e.cost > 0 ? `BACK ON ROAD · −Rs ${e.cost} · −10s · BOOST LOCKED` : 'BACK ON ROAD · −10s · BOOST LOCKED',
+          false,
+        );
+        this.vibrate([40, 30, 50]);
         this.renderer.chase.reset();
         break;
       case 'boost':

@@ -15,6 +15,7 @@ export class Effects {
   private vel = new Float32Array(MAX * 3);
   private life = new Float32Array(MAX);
   private next = 0;
+  private active = false;
 
   constructor() {
     const g = new THREE.BufferGeometry();
@@ -23,10 +24,13 @@ export class Effects {
     const m = new THREE.PointsMaterial({ size: 0.22, vertexColors: true, transparent: true, depthWrite: false });
     this.points = new THREE.Points(g, m);
     this.points.frustumCulled = false;
+    this.points.visible = false;
     for (let i = 0; i < MAX; i++) this.pos[i * 3 + 1] = -1000;
   }
 
   private emit(x: number, y: number, z: number, n: number, color: THREE.Color, spread: number, up: number, life: number): void {
+    this.active = true;
+    this.points.visible = true;
     for (let k = 0; k < n; k++) {
       const i = this.next;
       this.next = (this.next + 1) % MAX;
@@ -62,6 +66,8 @@ export class Effects {
   }
 
   update(dt: number): void {
+    if (!this.active) return;
+    let alive = 0;
     for (let i = 0; i < MAX; i++) {
       if (this.life[i] <= 0) continue;
       this.life[i] -= dt;
@@ -69,6 +75,7 @@ export class Effects {
         this.pos[i * 3 + 1] = -1000;
         continue;
       }
+      alive++;
       this.vel[i * 3 + 1] -= 12 * dt;
       this.pos[i * 3] += this.vel[i * 3] * dt;
       this.pos[i * 3 + 1] += this.vel[i * 3 + 1] * dt;
@@ -76,5 +83,9 @@ export class Effects {
     }
     this.points.geometry.attributes.position.needsUpdate = true;
     this.points.geometry.attributes.color.needsUpdate = true;
+    if (alive === 0) {
+      this.active = false;
+      this.points.visible = false;
+    }
   }
 }

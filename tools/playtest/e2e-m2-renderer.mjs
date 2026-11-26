@@ -3,7 +3,7 @@
  * Tier 4 Headless Chromium CDP + SwiftShader WebGL2 M2 Renderer Verification Suite.
  *
  * Verifies:
- *   1. All 9 public/models/*.glb use EXT_meshopt_compression and total < 700 KB.
+ *   1. All 9 public/models/*.glb use EXT_meshopt_compression and total < 1700 KB.
  *   2. Real WebGL2 draw calls (both __KT3D_PERF__.calls and hooked WebGL2 calls)
  *      stay strictly < 60 across dense Saddar scenarios:
  *        - Low Noon (`?mode=city&seed=1337&low`, postTier === 'low')
@@ -95,7 +95,7 @@ function findChromium() {
   return null;
 }
 
-/** Verify GLB binary magic, EXT_meshopt_compression usage, and total payload budget < 700 KB. */
+/** Verify GLB binary magic, EXT_meshopt_compression usage, and total payload budget < 1700 KB. */
 function verifyMeshoptModels() {
   const dir = path.join(root, 'public/models');
   const files = readdirSync(dir)
@@ -122,7 +122,7 @@ function verifyMeshoptModels() {
     report.push({ file, kb: +(bytes / 1024).toFixed(1) });
   }
 
-  assert.ok(totalBytes < 700 * 1024, `GLB total ${(totalBytes / 1024).toFixed(1)} KB exceeds 700 KB budget`);
+  assert.ok(totalBytes < 1700 * 1024, `GLB total ${(totalBytes / 1024).toFixed(1)} KB exceeds 1700 KB budget`);
   return { count: files.length, totalKb: +(totalBytes / 1024).toFixed(1), files: report };
 }
 
@@ -557,7 +557,7 @@ async function main() {
   assert.ok(chromePath, 'No Chromium/Edge binary found for headless WebGL E2E');
 
   const modelReport = verifyMeshoptModels();
-  console.log(`Models OK: ${modelReport.count} Meshopt GLBs, total ${modelReport.totalKb} KB (< 700 KB)`);
+  console.log(`Models OK: ${modelReport.count} Meshopt GLBs, total ${modelReport.totalKb} KB (< 1700 KB)`);
 
   const server = await createServer({
     root,

@@ -18,11 +18,9 @@ function wrap(v: number, span: number): number {
 export class RainFx {
   readonly group = new THREE.Group();
   private readonly lines: THREE.LineSegments;
-  private readonly linePos = new Float32Array(STREAK_COUNT * 6);
+  private readonly linePos = new Float32Array((STREAK_COUNT + RIPPLE_COUNT) * 6);
   private readonly seeds = new Float32Array(STREAK_COUNT * 4);
 
-  private readonly ripples: THREE.Points;
-  private readonly ripplePos = new Float32Array(RIPPLE_COUNT * 3);
   private readonly rippleSeed = new Float32Array(RIPPLE_COUNT * 3);
   private fallDist = 0;
   private time = 0;
@@ -51,19 +49,8 @@ export class RainFx {
       this.rippleSeed[i * 3 + 1] = (Math.random() - 0.5) * 28;
       this.rippleSeed[i * 3 + 2] = Math.random();
     }
-    const ripGeo = new THREE.BufferGeometry();
-    ripGeo.setAttribute('position', new THREE.BufferAttribute(this.ripplePos, 3).setUsage(THREE.DynamicDrawUsage));
-    const ripMat = new THREE.PointsMaterial({
-      color: '#dceeff',
-      size: 0.18,
-      transparent: true,
-      opacity: 0.55,
-      depthWrite: false,
-    });
-    this.ripples = new THREE.Points(ripGeo, ripMat);
-    this.ripples.frustumCulled = false;
 
-    this.group.add(this.lines, this.ripples);
+    this.group.add(this.lines);
     this.group.visible = false;
   }
 
@@ -96,24 +83,26 @@ export class RainFx {
       this.linePos[p + 4] = ry + sy * spd;
       this.linePos[p + 5] = rz - sz * spd;
     }
-    this.lines.geometry.attributes.position.needsUpdate = true;
 
     for (let i = 0; i < RIPPLE_COUNT; i++) {
       const r = i * 3;
       const phase = (this.rippleSeed[r + 2] + this.time * 4.2) % 1;
       const rx = wrap(this.rippleSeed[r] - cx, 28) + cx;
       const rz = wrap(this.rippleSeed[r + 1] - cz, 28) + cz;
-      this.ripplePos[r] = rx;
-      this.ripplePos[r + 1] = cy + 0.04 + Math.sin(phase * Math.PI) * 0.14;
-      this.ripplePos[r + 2] = rz;
+      const p = (STREAK_COUNT + i) * 6;
+      const h = 0.16 * Math.sin(phase * Math.PI);
+      this.linePos[p] = rx;
+      this.linePos[p + 1] = cy + 0.04;
+      this.linePos[p + 2] = rz;
+      this.linePos[p + 3] = rx;
+      this.linePos[p + 4] = cy + 0.04 + h;
+      this.linePos[p + 5] = rz;
     }
-    this.ripples.geometry.attributes.position.needsUpdate = true;
+    this.lines.geometry.attributes.position.needsUpdate = true;
   }
 
   dispose(): void {
     this.lines.geometry.dispose();
     (this.lines.material as THREE.Material).dispose();
-    this.ripples.geometry.dispose();
-    (this.ripples.material as THREE.Material).dispose();
   }
 }

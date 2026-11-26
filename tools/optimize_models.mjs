@@ -23,7 +23,7 @@ const modelsDir = path.join(repo, 'public/models');
 const force = process.argv.includes('--force');
 
 const SPECIAL_NODE_RE = /^(wheel|head|brake|hazard)/i;
-const MAX_TOTAL_BYTES = 700 * 1024;
+const MAX_TOTAL_BYTES = 1700 * 1024;
 const MAX_BBOX_DELTA = 0.025;
 
 function readGlbJson(buf) {

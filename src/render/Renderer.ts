@@ -200,9 +200,14 @@ export class Renderer {
   private tyres = new TyreFx();
   private rain = new RainFx();
   private sprayTimer = 0;
+  private wreckSmokeTimer = 0;
+  private respawnFade = 0;
   private lightningTimer = 9;
   private lightningFlash = 0;
   onThunder: ((pan: number, intensity: number) => void) | null = null;
+  cameraOverride: ((camera: THREE.PerspectiveCamera, dt: number) => void) | null = null;
+  rainFocusOverride: { x: number; y: number; z: number } | null = null;
+  disableRandomLightning = false;
   private player: VehicleVisual | null = null;
   private playerVehicle: PlayerVehicle = 'alto';
   private readonly npcBatch: NpcTrafficBatch;
@@ -238,6 +243,7 @@ export class Renderer {
     slide: 0,
     topSpeed: 30,
     clip: undefined,
+    wrecked: 0,
   };
   private time = 0;
   private avgDt = 1 / 60;
@@ -253,8 +259,13 @@ export class Renderer {
     private readonly container: HTMLElement,
     private readonly factory: VehicleFactory,
     private readonly lowSpec: boolean,
+    opts?: { preserveDrawingBuffer?: boolean },
   ) {
-    this.gl = new THREE.WebGLRenderer({ antialias: !lowSpec, powerPreference: 'high-performance' });
+    this.gl = new THREE.WebGLRenderer({
+      antialias: !lowSpec,
+      powerPreference: 'high-performance',
+      preserveDrawingBuffer: opts?.preserveDrawingBuffer ?? false,
+    });
     this.gl.info.autoReset = false;
     const maxDpr = Math.min(window.devicePixelRatio || 1, lowSpec ? 1.5 : 2);
     const steps = [maxDpr, 1.5, 1.25, 1.0].filter((d) => d <= maxDpr + 1e-3);
@@ -319,10 +330,26 @@ export class Renderer {
     this.resize();
   }
 
-  static async create(container: HTMLElement, lowSpec: boolean): Promise<Renderer> {
+  static async create(
+    container: HTMLElement,
+    lowSpec: boolean,
+    opts?: { preserveDrawingBuffer?: boolean },
+  ): Promise<Renderer> {
     const factory = new VehicleFactory();
     await factory.preload();
-    return new Renderer(container, factory, lowSpec);
+    return new Renderer(container, factory, lowSpec, opts);
+  }
+
+  clearTyres(): void {
+    this.tyres.clear();
+  }
+
+  triggerSpray(x: number, y: number, z: number, intensity: number): void {
+    this.effects.spray(x, y, z, intensity);
+  }
+
+  getFactory(): VehicleFactory {
+    return this.factory;
   }
 
   setGarageMode(active: boolean, vehicle?: PlayerVehicle, adjacentVehicle?: PlayerVehicle): void {
@@ -369,7 +396,7 @@ export class Renderer {
     this.sun.color.set(p.sunColor);
     this.sun.intensity = p.sunIntensity;
     this.rain.setEnabled(tod === 'monsoon');
-    this.birds.mesh.visible = tod !== 'monsoon';
+    this.birds.mesh.visible = tod !== 'monsoon' && tod !== 'night';
     this.env?.setTimeOfDay?.(tod);
     this.garage.setTimeOfDay(tod);
     this.gl.toneMappingExposure = this.garageMode ? this.garage.exposure : p.exposure;
@@ -470,6 +497,8 @@ export class Renderer {
     this.chase.reset();
     this.occlusion.reset();
     this.tyres.clear();
+    this.respawnFade = 0;
+    this.wreckSmokeTimer = 0;
     this.setTimeOfDay(this.timeOfDay);
     // Compile every shader now, so nothing pops in (or hitches) the first
     // time it is drawn: a new road material, the first skid, the first puff.
@@ -493,10 +522,16 @@ export class Renderer {
     const p = world.player;
     const y = world.groundY(p.x, p.z);
     switch (e.type) {
+      case 'wrecked':
+        this.effects.sparks(p.x, y + 0.4, -p.z, 1.2);
+        this.effects.dust(p.x, y, -p.z, 1.0);
+        this.chase.addTrauma(0.85);
+        break;
       case 'towed':
         this.tyres.clear();
         this.chase.reset();
         this.occlusion.reset();
+        this.respawnFade = 1;
         break;
       case 'smash':
         this.effects.dust(e.x, world.groundY(e.x, e.z), -e.z, Math.min(1, e.impact / 15));
@@ -574,6 +609,8 @@ export class Renderer {
     this.activeWorld = world;
     const p = world.player;
     const lowLight = this.timeOfDay !== 'noon';
+    const wrecking = world.mode === 'city' && world.wrecking;
+    const wreckProgress = wrecking ? world.wreckProgress : 0;
 
     // ---- Player -----------------------------------------------------------
     const px = mix(p.prevX, p.x, alpha);
@@ -591,18 +628,35 @@ export class Renderer {
       v.body.position.y = bump * 0.6;
       v.setBrake(p.braking || p.reversing);
       v.setHeadlights(p.dipper ? 2 : 1, lowLight);
-      v.setHazard(world.phase === 'gameover' && Math.floor(this.time * 3) % 2 === 0);
+      v.setHazard((world.phase === 'gameover' || wrecking) && Math.floor(this.time * 3) % 2 === 0);
       for (const w of v.wheels) {
         w.rotation.order = 'YXZ';
         w.rotation.x -= (p.speed * dt) / v.wheelRadius;
         if (w.position.z < 0) w.rotation.y = -p.steerAngle;
       }
     }
+    if (wrecking && dt > 0) {
+      this.wreckSmokeTimer -= dt;
+      if (this.wreckSmokeTimer <= 0) {
+        this.wreckSmokeTimer = 0.09;
+        this.effects.dust(
+          px + Math.sin(heading) * p.spec.halfLength * 0.7,
+          elev + 0.45,
+          -(pz + Math.cos(heading) * p.spec.halfLength * 0.7),
+          0.45,
+        );
+      }
+    } else {
+      this.wreckSmokeTimer = 0;
+    }
 
     // ---- NPCs (batched into 4 noon / 5 night WebGL2 draw calls) -----------
     this.npcBatch.update(world.npcs, alpha, this.time, lowLight, this.boundGroundY, this.boundSlope);
 
     // ---- Camera / world -----------------------------------------------------
+    if (this.cameraOverride) {
+      this.cameraOverride(this.chase.camera, dt);
+    }
     const slide = this.tyres.update(dt, p, px, pz, heading, this.boundGroundY, this.chase.pixelScale(this.gl.domElement.height));
     this.tmp.set(px, elev, -pz);
     this.chaseInput.travel = p.travel;
@@ -611,11 +665,16 @@ export class Renderer {
     this.chaseInput.slide = Math.max(slide.front, slide.rear);
     this.chaseInput.topSpeed = world.topSpeed();
     this.chaseInput.clip = world.mode === 'city' ? this.boundClipCamera : undefined;
-    this.chase.update(dt, this.tmp, heading, p.speed, this.chaseInput);
+    this.chaseInput.wrecked = wreckProgress;
+    if (!this.cameraOverride) {
+      this.chase.update(dt, this.tmp, heading, p.speed, this.chaseInput);
+    }
 
     const pLight = LIGHTING[this.timeOfDay];
     if (this.timeOfDay === 'monsoon' && dt > 0) {
-      this.rain.update(dt, px, elev, -pz);
+      const rf = this.rainFocusOverride;
+      if (rf) this.rain.update(dt, rf.x, rf.y, rf.z);
+      else this.rain.update(dt, px, elev, -pz);
       this.sprayTimer -= dt;
       if (!p.airborne && Math.abs(p.speed) > 7 && this.sprayTimer <= 0) {
         this.sprayTimer = 0.045;
@@ -623,14 +682,16 @@ export class Renderer {
         const backZ = pz - Math.cos(heading) * (p.spec.halfLength * 0.85);
         this.effects.spray(backX, elev, -backZ, Math.min(1, (Math.abs(p.speed) - 7) / 18));
       }
-      this.lightningTimer -= dt;
-      if (this.lightningTimer <= 0) {
-        this.lightningTimer = 10 + Math.random() * 11;
-        this.lightningFlash = 1.0;
-        const pan = (Math.random() - 0.5) * 1.4;
-        this.onThunder?.(pan, 0.7 + Math.random() * 0.3);
+      if (!this.disableRandomLightning) {
+        this.lightningTimer -= dt;
+        if (this.lightningTimer <= 0) {
+          this.lightningTimer = 10 + Math.random() * 11;
+          this.lightningFlash = 1.0;
+          const pan = (Math.random() - 0.5) * 1.4;
+          this.onThunder?.(pan, 0.7 + Math.random() * 0.3);
+        }
       }
-      if (this.lightningFlash > 0) {
+      if (this.lightningFlash > 0 && !this.disableRandomLightning) {
         this.lightningFlash = Math.max(0, this.lightningFlash - dt * 5.2);
         const pulse = this.lightningFlash > 0.45 && this.lightningFlash < 0.65 ? 0.2 : this.lightningFlash;
         this.sun.intensity = pLight.sunIntensity + pulse * 3.2;
@@ -659,6 +720,15 @@ export class Renderer {
       (this.flame.material as THREE.MeshBasicMaterial).color.copy(Math.random() < 0.5 ? FLAME_CYAN : FLAME_AMBER);
     }
     this.effects.update(dt);
+
+    let fade = 0;
+    if (wrecking) {
+      fade = Math.max(0, Math.min(1, (wreckProgress - 0.75) / 0.25));
+    } else if (this.respawnFade > 0) {
+      this.respawnFade = Math.max(0, this.respawnFade - dt * 2.8);
+      fade = this.respawnFade;
+    }
+    this.post.setFade(fade);
 
     const t0 = performance.now();
     this.post.render();
