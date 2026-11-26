@@ -50,6 +50,9 @@ export interface AudioDiagnostics {
   radioStation: RadioStationId;
   radioOn: boolean;
   activeDopplerVoices: number;
+  musicRms: number;
+  sfxRms: number;
+  musicPeakRms: number;
   muted: boolean;
 }
 
@@ -66,6 +69,12 @@ export class SoundEngine {
 
   private ctx: AudioContext | null = null;
   private master!: GainNode;
+  private sfxBus!: GainNode;
+  private musicBus!: GainNode;
+  private musicAnalyser: AnalyserNode | null = null;
+  private sfxAnalyser: AnalyserNode | null = null;
+  private readonly meterBuf = new Float32Array(2048);
+  private musicPeakRms = 0;
   private noise!: AudioBuffer;
   private muted = false;
   private userPaused = false;
@@ -111,6 +120,9 @@ export class SoundEngine {
       radioStation: this.desiredRadioStation,
       radioOn: this.desiredRadioStation !== 'off',
       activeDopplerVoices: 0,
+      musicRms: 0,
+      sfxRms: 0,
+      musicPeakRms: 0,
       muted: this.muted,
     };
     this.syncDiagnostics();
@@ -137,6 +149,17 @@ export class SoundEngine {
     return this.diagnostics;
   }
 
+  private readRms(analyser: AnalyserNode | null): number {
+    if (!analyser || !this.ctx || this.ctx.state !== 'running') return 0;
+    analyser.getFloatTimeDomainData(this.meterBuf);
+    let sumSq = 0;
+    for (let i = 0; i < this.meterBuf.length; i++) {
+      const v = this.meterBuf[i];
+      sumSq += v * v;
+    }
+    return Math.sqrt(sumSq / this.meterBuf.length);
+  }
+
   private syncDiagnostics(): void {
     const d = this.diagnostics;
     const state = this.ctx ? this.ctx.state : 'uninitialized';
@@ -150,6 +173,12 @@ export class SoundEngine {
     d.radioStation = this.fmRadio ? this.fmRadio.getStation() : this.desiredRadioStation;
     d.radioOn = d.radioStation !== 'off';
     d.activeDopplerVoices = this.spatialTraffic ? this.spatialTraffic.activeCount : 0;
+    const mRms = this.readRms(this.musicAnalyser);
+    const sRms = this.readRms(this.sfxAnalyser);
+    if (mRms > this.musicPeakRms) this.musicPeakRms = mRms;
+    d.musicRms = Math.round(mRms * 10000) / 10000;
+    d.sfxRms = Math.round(sRms * 10000) / 10000;
+    d.musicPeakRms = Math.round(this.musicPeakRms * 10000) / 10000;
     d.muted = this.muted;
     if (typeof window !== 'undefined') {
       (window as unknown as { __KT3D_AUDIO__?: AudioDiagnostics }).__KT3D_AUDIO__ = d;
@@ -161,16 +190,20 @@ export class SoundEngine {
   }
 
   setRadioStation(station: RadioStationId, playStatic = false): void {
+    if (playStatic && (!this.ctx || this.ctx.state === 'suspended')) this.unlock();
     this.desiredRadioStation = station;
+    this.musicPeakRms = 0;
     this.fmRadio?.setStation(station, playStatic);
     this.syncDiagnostics();
   }
 
   cycleRadioStation(): RadioStationId {
+    if (!this.ctx || this.ctx.state === 'suspended') this.unlock();
     const next = this.fmRadio
       ? this.fmRadio.cycleStation()
       : RADIO_STATION_ORDER[(RADIO_STATION_ORDER.indexOf(this.desiredRadioStation) + 1) % RADIO_STATION_ORDER.length];
     this.desiredRadioStation = next;
+    this.musicPeakRms = 0;
     this.syncDiagnostics();
     return next;
   }
@@ -212,11 +245,32 @@ export class SoundEngine {
     this.ctx = ctx;
 
     this.master = ctx.createGain();
-    this.master.gain.value = this.muted ? 0 : 0.55;
+    this.master.gain.value = this.muted ? 0 : 0.72;
     const comp = ctx.createDynamicsCompressor();
-    comp.threshold.value = -14;
-    comp.ratio.value = 4;
+    comp.threshold.value = -8;
+    comp.knee.value = 12;
+    comp.ratio.value = 3;
+    comp.attack.value = 0.005;
+    comp.release.value = 0.12;
     this.master.connect(comp).connect(ctx.destination);
+
+    this.sfxBus = ctx.createGain();
+    this.sfxBus.gain.value = 0.72;
+    this.sfxBus.connect(this.master);
+
+    this.musicBus = ctx.createGain();
+    this.musicBus.gain.value = 1.0;
+    this.musicBus.connect(this.master);
+
+    if (typeof ctx.createAnalyser === 'function') {
+      this.musicAnalyser = ctx.createAnalyser();
+      this.musicAnalyser.fftSize = 2048;
+      this.musicBus.connect(this.musicAnalyser);
+
+      this.sfxAnalyser = ctx.createAnalyser();
+      this.sfxAnalyser.fftSize = 2048;
+      this.sfxBus.connect(this.sfxAnalyser);
+    }
 
     // White noise buffer shared across intake, tyres, rain, radio, and one-shots.
     this.noise = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
@@ -225,7 +279,7 @@ export class SoundEngine {
 
     this.engineVoice = new EngineVoice(
       ctx,
-      this.master,
+      this.sfxBus,
       this.noise,
       this.forceFallback,
       () => this.syncDiagnostics(),
@@ -236,12 +290,12 @@ export class SoundEngine {
 
     this.spatialTraffic = new SpatialTrafficAudio(
       ctx,
-      this.master,
+      this.sfxBus,
       this.lowSpec,
       (pan, intensity) => this.passingRush(pan, intensity),
       (pan, kind, ratio) => this.npcHorn(pan, kind, ratio),
     );
-    this.fmRadio = new KarachiFm(ctx, this.master, this.noise, this.desiredRadioStation);
+    this.fmRadio = new KarachiFm(ctx, this.musicBus, this.noise, this.desiredRadioStation);
 
     this.buildScreech(ctx);
     this.buildRoad(ctx);
@@ -287,7 +341,7 @@ export class SoundEngine {
 
   setMuted(m: boolean): void {
     this.muted = m;
-    if (this.ctx) this.master.gain.setTargetAtTime(m ? 0 : 0.55, this.ctx.currentTime, 0.05);
+    if (this.ctx) this.master.gain.setTargetAtTime(m ? 0 : 0.72, this.ctx.currentTime, 0.05);
     this.syncDiagnostics();
   }
 
@@ -302,13 +356,14 @@ export class SoundEngine {
   private connectMaster(node: AudioNode, pan = 0): void {
     const ctx = this.ctx;
     if (!ctx) return;
+    const dest = this.sfxBus ?? this.master;
     const p = Math.max(-1, Math.min(1, pan));
     if (Math.abs(p) > 0.02 && typeof ctx.createStereoPanner === 'function') {
       const panner = ctx.createStereoPanner();
       panner.pan.value = p;
-      node.connect(panner).connect(this.master);
+      node.connect(panner).connect(dest);
     } else {
-      node.connect(this.master);
+      node.connect(dest);
     }
   }
 
@@ -326,7 +381,7 @@ export class SoundEngine {
     const src = this.loopNoise(ctx);
     src.connect(bp).connect(this.screechGain);
     src.connect(bp2).connect(this.screechGain);
-    this.screechGain.connect(this.master);
+    this.screechGain.connect(this.sfxBus);
   }
 
   private buildRoad(ctx: AudioContext): void {
@@ -335,7 +390,7 @@ export class SoundEngine {
     this.roadFilter = ctx.createBiquadFilter();
     this.roadFilter.type = 'lowpass';
     this.roadFilter.frequency.value = 400;
-    this.loopNoise(ctx).connect(this.roadFilter).connect(this.roadGain).connect(this.master);
+    this.loopNoise(ctx).connect(this.roadFilter).connect(this.roadGain).connect(this.sfxBus);
   }
 
   private buildRain(ctx: AudioContext): void {
@@ -345,7 +400,7 @@ export class SoundEngine {
     this.rainFilter.type = 'bandpass';
     this.rainFilter.frequency.value = 1150;
     this.rainFilter.Q.value = 0.7;
-    this.loopNoise(ctx).connect(this.rainFilter).connect(this.rainGain).connect(this.master);
+    this.loopNoise(ctx).connect(this.rainFilter).connect(this.rainGain).connect(this.sfxBus);
   }
 
   /** Per-frame continuous voices. */
@@ -386,10 +441,10 @@ export class SoundEngine {
     const hornActive = this.hornSynth?.isActive() ?? p.horn;
 
     this.screechGain.gain.setTargetAtTime(Math.min(1, p.screech) * 0.22, t, 0.04);
-    this.roadGain.gain.setTargetAtTime(Math.min(0.25, v * 0.008), t, 0.1);
+    this.roadGain.gain.setTargetAtTime(Math.min(0.13, v * 0.0045), t, 0.1);
     this.roadFilter.frequency.setTargetAtTime(250 + v * 25, t, 0.1);
 
-    const rainLevel = p.monsoon ? (p.running ? 0.11 + Math.min(0.08, v * 0.003) : 0.07) : 0;
+    const rainLevel = p.monsoon ? (p.running ? 0.08 + Math.min(0.05, v * 0.002) : 0.05) : 0;
     this.rainGain.gain.setTargetAtTime(rainLevel, t, 0.12);
     this.rainFilter.frequency.setTargetAtTime(980 + v * 22, t, 0.12);
 

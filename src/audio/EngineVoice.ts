@@ -288,8 +288,8 @@ export class EngineVoice {
     const clampTier = Math.max(0, Math.min(3, Math.trunc(effTier)));
     const clampLoad = Math.max(0, Math.min(1, v.load));
     const clampBoost = Math.max(0, Math.min(1, effBoost));
-    const revGain = this.revTimer > 0 ? 0.85 : 0;
-    const outGain = effRunning ? Math.max(0.75, revGain) : 0.36;
+    const revGain = this.revTimer > 0 ? 0.65 : 0;
+    const outGain = effRunning ? Math.max(0.48, revGain) : 0.22;
 
     this.lastProfile = prof.index;
     this.lastTier = clampTier;
@@ -324,17 +324,17 @@ export class EngineVoice {
     this.fbLfo.frequency.setTargetAtTime(prof.idleLopeHz, t, 0.05);
 
     this.fbFilter.frequency.setTargetAtTime((240 + this.rpm * 0.145 + effThrottle * 340 + clampTier * 85) * prof.filtMul, t, 0.05);
-    this.fbGain.gain.setTargetAtTime(effRunning ? 0.07 + effThrottle * 0.09 : 0.025, t, 0.05);
+    this.fbGain.gain.setTargetAtTime(effRunning ? 0.05 + effThrottle * 0.065 : 0.018, t, 0.05);
 
     const idleFactor = Math.max(0, 1 - (this.rpm - 950) / 900);
-    this.fbLfoGain.gain.setTargetAtTime((effRunning ? 0.035 : 0.015) * idleFactor, t, 0.08);
+    this.fbLfoGain.gain.setTargetAtTime((effRunning ? 0.025 : 0.011) * idleFactor, t, 0.08);
 
     this.fbIntakeFilter.frequency.setTargetAtTime((300 + this.rpm * 0.12 + effThrottle * 480 + clampBoost * 600) * prof.filtMul, t, 0.06);
-    this.fbIntakeGain.gain.setTargetAtTime(effRunning ? 0.015 + effThrottle * 0.055 + clampBoost * 0.04 : 0.006, t, 0.06);
+    this.fbIntakeGain.gain.setTargetAtTime(effRunning ? 0.012 + effThrottle * 0.04 + clampBoost * 0.032 : 0.005, t, 0.06);
 
     this.fbExOsc.frequency.setTargetAtTime(fire * prof.exMul, t, 0.03);
     this.fbExFilter.frequency.setTargetAtTime((185 + this.rpm * 0.1 + effThrottle * 240 + clampTier * 70) * prof.filtMul, t, 0.05);
-    this.fbExGain.gain.setTargetAtTime((effRunning ? 0.025 + effThrottle * 0.06 + clampTier * 0.012 : 0.012) * prof.raspMix * 2.2, t, 0.05);
+    this.fbExGain.gain.setTargetAtTime((effRunning ? 0.018 + effThrottle * 0.042 + clampTier * 0.01 : 0.009) * prof.raspMix * 2.0, t, 0.05);
 
     const effTurbo = prof.turboBaseHz > 0 ? prof.turboBaseHz : clampTier >= 2 ? 2200 + clampTier * 350 : 0;
     if (effTurbo > 0 || clampBoost > 0.02) {

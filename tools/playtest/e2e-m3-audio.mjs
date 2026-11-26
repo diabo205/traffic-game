@@ -332,11 +332,55 @@ async function main() {
         assert.equal(initial.hornId, 'pak-melody');
 
         // Cycle through all 4 radio stations: dhol -> lyari -> clifton -> off -> dhol
-        const stationsObserved = [initial.radioStation];
+        // Measure live Karachi FM RMS vs engine/SFX RMS across all 3 active stations while driving.
+        const stationsObserved = [];
+        const stationMix = {};
+        const measureCurrentStation = async (stationId) => {
+          let maxMusicRms = 0;
+          let sumSfxRms = 0;
+          let samples = 0;
+          await s.dispatchKey('rawKeyDown', 'KeyW');
+          for (let step = 0; step < 24; step++) {
+            await sleep(90);
+            const snap = await s.evalFn(`window.__KT3D_AUDIO__`);
+            if (snap.musicRms > maxMusicRms) maxMusicRms = snap.musicRms;
+            if (snap.musicPeakRms > maxMusicRms) maxMusicRms = snap.musicPeakRms;
+            sumSfxRms += snap.sfxRms;
+            samples++;
+            if (samples >= 8 && maxMusicRms >= 0.045) break;
+          }
+          await s.dispatchKey('keyUp', 'KeyW');
+          const meanSfxRms = sumSfxRms / Math.max(1, samples);
+          const ratio = maxMusicRms / Math.max(meanSfxRms, 0.005);
+          stationMix[stationId] = {
+            maxMusicRms: Number(maxMusicRms.toFixed(4)),
+            meanSfxRms: Number(meanSfxRms.toFixed(4)),
+            ratio: Number(ratio.toFixed(2)),
+          };
+          assert.ok(
+            maxMusicRms >= 0.03,
+            `Path A (${stationId}): expected maxMusicRms >= 0.03, got ${maxMusicRms}`,
+          );
+          assert.ok(
+            ratio >= 0.4,
+            `Path A (${stationId}): expected music/sfx ratio >= 0.40, got ${ratio.toFixed(2)} (music=${maxMusicRms}, sfx=${meanSfxRms})`,
+          );
+        };
+
+        stationsObserved.push(initial.radioStation);
+        await measureCurrentStation(initial.radioStation);
         for (const expected of ['lyari', 'clifton', 'off', 'dhol']) {
           await s.press('KeyR');
           await s.waitFor(`window.__KT3D_AUDIO__.radioStation === ${JSON.stringify(expected)}`, 4000);
           stationsObserved.push(expected);
+          if (expected === 'off') {
+            await sleep(450);
+            const offSnap = await s.evalFn(`window.__KT3D_AUDIO__`);
+            stationMix.off = { musicRms: offSnap.musicRms };
+            assert.ok(offSnap.musicRms <= 0.003, `Path A (off): expected musicRms <= 0.003, got ${offSnap.musicRms}`);
+          } else if (expected !== 'dhol') {
+            await measureCurrentStation(expected);
+          }
         }
 
         // Drive forward in Saddar holding horn & observing Doppler spatial voices
@@ -377,6 +421,7 @@ async function main() {
           workletReady: initial.workletReady,
           hornId: initial.hornId,
           stationsObserved,
+          stationMix,
           maxDopplerVoices,
           maxSpd,
           perfCalls: perf.calls,
