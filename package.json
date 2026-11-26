@@ -16,7 +16,8 @@
     "test": "node --test tools/test/*.test.mjs",
     "test:e2e": "node tools/playtest/e2e-car-select.mjs",
     "test:e2e:m2": "node tools/playtest/e2e-m2-renderer.mjs",
-    "test:e2e:m3": "node tools/playtest/e2e-m3-audio.mjs"
+    "test:e2e:m3": "node tools/playtest/e2e-m3-audio.mjs",
+    "test:e2e:m4": "node tools/playtest/e2e-m4-garage-hud.mjs"
   },
   "dependencies": {
     "@fontsource/barlow-condensed": "^5.2.6",

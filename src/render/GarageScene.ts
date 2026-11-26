@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { PLAYER_VEHICLES, VEHICLE_SHOWCASE } from '../sim/PlayerCar';
 import type { PlayerVehicle } from '../sim/types';
+import type { VehicleBuild } from '../sim/upgrades';
 import type { TimeOfDay } from './Renderer';
 import type { VehicleFactory, VehicleVisual } from './VehicleFactory';
 
@@ -310,7 +311,13 @@ function measureVehicleBounds(root: THREE.Object3D, fallback: { roofY: number; h
   root.updateMatrixWorld(true);
   const box = new THREE.Box3();
   root.traverse((o) => {
-    if (o instanceof THREE.Mesh && o.name !== 'beam' && o.name !== 'pool' && o.name !== 'contactShadow') {
+    if (
+      o instanceof THREE.Mesh &&
+      o.name !== 'beam' &&
+      o.name !== 'pool' &&
+      o.name !== 'contactShadow' &&
+      o.name !== 'underglow'
+    ) {
       box.expandByObject(o);
     }
   });
@@ -332,6 +339,7 @@ export class GarageScene {
   exposure = GARAGE_MOODS.noon.exposure;
 
   private readonly pool = new Map<PlayerVehicle, GarageSlotEntry>();
+  private readonly builds = new Map<PlayerVehicle, VehicleBuild>();
   private readonly heroGroup = new THREE.Group();
   private readonly adjGroup = new THREE.Group();
 
@@ -437,7 +445,13 @@ export class GarageScene {
     for (const veh of PLAYER_VEHICLES) {
       const visual = factory.create(veh, 0, true, VEHICLE_SHOWCASE[veh].paintHex);
       visual.root.traverse((o) => {
-        if (o instanceof THREE.Mesh && o.name !== 'beam' && o.name !== 'pool' && o.name !== 'contactShadow') {
+        if (
+          o instanceof THREE.Mesh &&
+          o.name !== 'beam' &&
+          o.name !== 'pool' &&
+          o.name !== 'contactShadow' &&
+          o.name !== 'underglow'
+        ) {
           o.castShadow = !lowSpec;
         }
       });
@@ -644,6 +658,24 @@ export class GarageScene {
     return PLAYER_VEHICLES[(idx + 1) % PLAYER_VEHICLES.length];
   }
 
+  private syncHeroFloorGlow(): void {
+    const m = GARAGE_MOODS[this.timeOfDay];
+    const build = this.builds.get(this.activeVehicle);
+    const hasCustomGlow = Boolean(build && build.underglow !== 'none');
+    this.heroGlowMat.opacity = hasCustomGlow ? m.poolOpacity * 0.12 : m.poolOpacity;
+  }
+
+  setVehicleBuild(vehicle: PlayerVehicle, build: VehicleBuild): void {
+    this.builds.set(vehicle, build);
+    const slot = this.pool.get(vehicle);
+    if (slot) {
+      slot.visual.applyBuild(build, VEHICLE_SHOWCASE[vehicle].paintHex);
+    }
+    if (vehicle === this.activeVehicle) {
+      this.syncHeroFloorGlow();
+    }
+  }
+
   setVehicle(vehicle: PlayerVehicle, adjacentVehicle?: PlayerVehicle): void {
     this.activeVehicle = vehicle;
     this.adjacentVehicle = adjacentVehicle ?? this.nextVehicle(vehicle);
@@ -705,6 +737,7 @@ export class GarageScene {
     }
 
     this.applyHeadlights();
+    this.syncHeroFloorGlow();
   }
 
   private computeCameraGoals(hero: GarageSlotEntry): void {
@@ -759,9 +792,10 @@ export class GarageScene {
     this.rimLight.intensity = m.rimIntensity;
     this.magentaLight.intensity = m.magentaIntensity;
     this.cyanLight.intensity = m.cyanIntensity;
-    this.heroGlowMat.opacity = m.poolOpacity;
     this.adjGlowMat.opacity = m.poolOpacity * 0.85;
+    this.syncHeroFloorGlow();
     this.applyHeadlights();
+    this.syncHeroFloorGlow();
   }
 
   private applyHeadlights(): void {

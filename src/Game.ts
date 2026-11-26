@@ -10,7 +10,9 @@ import { FINISH_Z, ZONES } from './sim/road';
 import { COMBO_WINDOW, DT } from './sim/types';
 import type { PlayerVehicle, SimEvent } from './sim/types';
 import { HORN_CATALOG } from './sim/upgrades';
-import type { HornId } from './sim/upgrades';
+import type { HornId, UpgradeTrack, VehicleBuild } from './sim/upgrades';
+import { GarageStore } from './ui/GarageStore';
+import type { CosmeticSlot } from './ui/GarageStore';
 import { Hud } from './ui/Hud';
 import { Minimap } from './ui/Minimap';
 import { TouchControls } from './ui/TouchControls';
@@ -87,7 +89,8 @@ export class Game {
   private world: AnyWorld;
   private mode: Mode;
   private vehicle: PlayerVehicle = 'alto';
-  private bank = 0;
+  private readonly garageStore: GarageStore;
+  private buildDirty = false;
   private tod: TimeOfDay = 'noon';
   private autoGas = false;
   private haptics = true;
@@ -124,7 +127,7 @@ export class Game {
     private readonly startZ: number,
     mode: Mode,
     dailyMode: boolean,
-    bank: number,
+    garageStore: GarageStore,
     vehicle: PlayerVehicle,
     tod: TimeOfDay,
     uiRoot: HTMLElement,
@@ -133,7 +136,7 @@ export class Game {
     this.world = world;
     this.mode = mode;
     this.dailyMode = dailyMode;
-    this.bank = bank;
+    this.garageStore = garageStore;
     this.vehicle = vehicle;
     this.tod = tod;
     this.world.weather = tod === 'monsoon' ? 'monsoon' : 'clear';
@@ -149,13 +152,22 @@ export class Game {
 
     this.hud = new Hud(uiRoot);
     this.hud.setMode(mode);
-    this.hud.setVehicle(this.vehicle, this.bank);
+    this.hud.setVehicle(this.vehicle, this.garageStore.bank);
     this.hud.setTimeOfDay(this.tod);
     this.syncBestHud();
     this.syncMinimap();
     this.touch = new TouchControls(this.hud.root, this.input.touch);
     this.carSelectScreen = new CarSelectScreen(uiRoot, this.input);
-    this.carSelectScreen.setBank(this.bank);
+    this.carSelectScreen.setStore(this.garageStore);
+    this.carSelectScreen.setActionHandlers({
+      onBuyUpgrade: (v, track) => this.handleBuyUpgrade(v, track),
+      onHandlingBias: (v, bias) => this.handleHandlingBias(v, bias),
+      onSelectCosmetic: (v, slot, id) => this.handleSelectCosmetic(v, slot, id),
+      onPreviewHorn: (v, hornId) => {
+        this.audio.previewHorn(hornId as HornId, v);
+        this.carSelectScreen.announceStatus(`Previewing ${hornId} horn`);
+      },
+    });
     this.carSelectScreen.setOnSelect((v) => void this.selectVehicleAndStart(v));
     this.carSelectScreen.setOnChange((v, adj) => this.renderer.setGarageVehicle(v, adj));
     this.carSelectScreen.setOnBack(() => this.closeCarSelect());
@@ -195,13 +207,24 @@ export class Game {
     window.addEventListener('orientationchange', () => setTimeout(() => this.renderer.resize(), 200));
   }
 
-  private static async buildWorld(mode: Mode, seed: number, startZ: number, vehicle: PlayerVehicle): Promise<AnyWorld> {
+  private static async buildWorld(
+    mode: Mode,
+    seed: number,
+    startZ: number,
+    vehicle: PlayerVehicle,
+    build?: VehicleBuild,
+  ): Promise<AnyWorld> {
     if (mode === 'city') {
       const mod = await import('./sim/city/CityWorld');
-      return new mod.CityWorld(seed, vehicle);
+      return new mod.CityWorld(seed, vehicle, build);
     }
     const mod = await import('./sim/World');
-    return new mod.World(seed, startZ, vehicle);
+    const world = new mod.World(seed, startZ, vehicle);
+    if (build) {
+      world.player.setVehicle(vehicle, build);
+      world.player.integrity = world.player.maxIntegrity;
+    }
+    return world;
   }
 
   static async create(container: HTMLElement, uiRoot: HTMLElement): Promise<Game> {
@@ -219,10 +242,10 @@ export class Game {
     const saved = storageGet('kt3d.mode');
     const mode: Mode = isDaily ? 'city' : asked === 'route' || asked === 'city' ? asked : params.has('z') ? 'route' : saved === 'route' ? 'route' : 'city';
 
-    const bank = Math.max(0, Math.floor(Number(storageGet('kt3d.bank') ?? '0') || 0));
+    const garageStore = GarageStore.loadFromStorage();
     let vehicle: PlayerVehicle = 'alto';
     const savedVeh = storageGet('kt3d.veh');
-    if (savedVeh && PLAYER_VEHICLES.includes(savedVeh as PlayerVehicle) && bank >= VEHICLE_COST[savedVeh as PlayerVehicle]) {
+    if (savedVeh && PLAYER_VEHICLES.includes(savedVeh as PlayerVehicle) && garageStore.isVehicleUnlocked(savedVeh as PlayerVehicle)) {
       vehicle = savedVeh as PlayerVehicle;
     }
     let tod: TimeOfDay = 'noon';
@@ -243,11 +266,11 @@ export class Game {
 
     const renderer = await Renderer.create(container, lowSpec);
     const activeSeed = isDaily ? daily.seed : seed;
-    const world = await Game.buildWorld(mode, activeSeed, startZ, vehicle);
+    const world = await Game.buildWorld(mode, activeSeed, startZ, vehicle, garageStore.getBuild(vehicle));
     world.weather = tod === 'monsoon' ? 'monsoon' : 'clear';
     renderer.setTimeOfDay(tod);
     await renderer.attach(world);
-    return new Game(renderer, world, seed, fixedSeed, startZ, mode, isDaily, bank, vehicle, tod, uiRoot, {
+    return new Game(renderer, world, seed, fixedSeed, startZ, mode, isDaily, garageStore, vehicle, tod, uiRoot, {
       lowSpec,
       forceFallback,
       hornOverride,
@@ -268,7 +291,7 @@ export class Game {
     this.switching = true;
     try {
       const activeSeed = dailyMode ? this.daily.seed : this.seed;
-      const nextWorld = await Game.buildWorld(mode, activeSeed, this.startZ, vehicle);
+      const nextWorld = await Game.buildWorld(mode, activeSeed, this.startZ, vehicle, this.garageStore.getBuild(vehicle));
       nextWorld.weather = this.tod === 'monsoon' ? 'monsoon' : 'clear';
       if (seq !== this.worldSeq) return false;
       await this.renderer.attach(nextWorld);
@@ -300,15 +323,11 @@ export class Game {
   }
 
   private addBank(delta: number): void {
-    const gain = Math.round(delta);
-    if (gain <= 0) return;
-    const prev = this.bank;
-    this.bank += gain;
-    storageSet('kt3d.bank', String(this.bank));
-    this.hud.setVehicle(this.vehicle, this.bank);
-    for (const v of VEHICLES) {
-      const cost = VEHICLE_COST[v];
-      if (cost > 0 && prev < cost && this.bank >= cost) {
+    const unlocked = this.garageStore.addBank(delta);
+    this.hud.setVehicle(this.vehicle, this.garageStore.bank);
+    this.carSelectScreen.setBank(this.garageStore.bank);
+    for (const v of unlocked) {
+      if (VEHICLE_COST[v] > 0) {
         this.hud.showBanner(`${VEHICLE_SPECS[v].label} UNLOCKED!`);
         this.audio.chime();
       }
@@ -316,15 +335,14 @@ export class Game {
   }
 
   private async selectVehicle(v: PlayerVehicle, save = true): Promise<void> {
-    const cost = VEHICLE_COST[v];
-    if (this.bank < cost) {
-      this.toastNow(`NEED RS ${cost.toLocaleString('en-PK')} TOTAL IN BANK`, false);
+    if (!this.garageStore.isVehicleUnlocked(v)) {
+      this.toastNow(`NEED RS ${VEHICLE_COST[v].toLocaleString('en-PK')} TOTAL IN BANK`, false);
       return;
     }
     if (v === this.vehicle) return;
     this.vehicle = v;
     if (save) storageSet('kt3d.veh', v);
-    this.hud.setVehicle(v, this.bank);
+    this.hud.setVehicle(v, this.garageStore.bank);
     this.syncBestHud();
     if (this.world.phase === 'ready') {
       if (await this.swapWorld(this.mode, this.dailyMode, v)) this.syncMinimap();
@@ -333,11 +351,75 @@ export class Game {
     }
   }
 
+  private handleBuyUpgrade(v: PlayerVehicle, track: UpgradeTrack): void {
+    const res = this.garageStore.buyUpgrade(v, track);
+    if (!res.ok) {
+      const msg =
+        res.reason === 'max'
+          ? `${track.toUpperCase()} already at MAX tier`
+          : res.reason === 'locked'
+            ? `Unlock ${VEHICLE_SPECS[v].label} first`
+            : `Need RS ${res.cost.toLocaleString('en-PK')}`;
+      this.carSelectScreen.announceStatus(msg);
+      return;
+    }
+    this.buildDirty = true;
+    const build = this.garageStore.getBuild(v);
+    this.renderer.setGarageBuild(v, build);
+    this.hud.setVehicle(this.vehicle, this.garageStore.bank);
+    if (track === 'engine' || track === 'nitrous') {
+      this.audio.revBurst(v, build.engine);
+    } else {
+      this.audio.chime();
+    }
+    this.carSelectScreen.updateDisplay();
+    this.carSelectScreen.announceStatus(`${track.toUpperCase()} upgraded to Tier ${res.newTier}`);
+  }
+
+  private handleHandlingBias(v: PlayerVehicle, bias: number): void {
+    if (this.garageStore.setHandlingBias(v, bias)) {
+      this.buildDirty = true;
+      this.carSelectScreen.updateDisplay();
+    }
+  }
+
+  private handleSelectCosmetic(v: PlayerVehicle, slot: CosmeticSlot, id: string): void {
+    const res = this.garageStore.selectOrBuyCosmetic(v, slot, id);
+    if (!res.ok) {
+      const msg =
+        res.reason === 'locked'
+          ? `Unlock ${VEHICLE_SPECS[v].label} first`
+          : res.reason === 'insufficient'
+            ? `Need RS ${res.cost.toLocaleString('en-PK')}`
+            : 'Invalid selection';
+      this.carSelectScreen.announceStatus(msg);
+      return;
+    }
+    this.buildDirty = true;
+    const build = this.garageStore.getBuild(v);
+    this.renderer.setGarageBuild(v, build);
+    this.hud.setVehicle(this.vehicle, this.garageStore.bank);
+    if (slot === 'horn') {
+      this.audio.setHorn(build.horn);
+      this.audio.previewHorn(build.horn, v);
+    } else {
+      this.audio.chime();
+    }
+    this.carSelectScreen.updateDisplay();
+    this.carSelectScreen.announceStatus(
+      res.purchased ? `Purchased & equipped ${id} (-Rs ${res.cost})` : `Equipped ${id}`,
+    );
+  }
+
   private openCarSelect(): void {
     this.hud.showStart(false);
     this.hud.setMenu(true);
-    this.carSelectScreen.setBank(this.bank);
-    this.carSelectScreen.show(true, this.vehicle, this.bank);
+    this.buildDirty = false;
+    for (const v of VEHICLES) {
+      this.renderer.setGarageBuild(v, this.garageStore.getBuild(v));
+    }
+    this.carSelectScreen.setStore(this.garageStore);
+    this.carSelectScreen.show(true, this.vehicle, this.garageStore.bank);
     this.renderer.setGarageMode(true, this.vehicle, this.carSelectScreen.getAdjacentVehicle());
     this.carSelectScreen.updateProjection(this.renderer.getGarageProjection());
     this.input.consumeConfirm();
@@ -354,18 +436,19 @@ export class Game {
   }
 
   private async selectVehicleAndStart(v: PlayerVehicle): Promise<void> {
-    const cost = VEHICLE_COST[v];
-    if (this.bank < cost) {
-      this.toastNow(`NEED RS ${cost.toLocaleString('en-PK')} TOTAL IN BANK`, false);
+    if (!this.garageStore.isVehicleUnlocked(v)) {
+      this.toastNow(`NEED RS ${VEHICLE_COST[v].toLocaleString('en-PK')} TOTAL IN BANK`, false);
       return;
     }
-    if (v !== this.vehicle || this.dailyMode) {
+    if (v !== this.vehicle || this.dailyMode || this.buildDirty) {
       this.vehicle = v;
+      this.buildDirty = false;
       storageSet('kt3d.veh', v);
-      this.hud.setVehicle(v, this.bank);
+      this.hud.setVehicle(v, this.garageStore.bank);
       this.syncBestHud();
       if (await this.swapWorld(this.mode, this.dailyMode, v)) this.syncMinimap();
     }
+    this.audio.setHorn(this.hornOverride ?? this.garageStore.getBuild(v).horn);
     this.carSelectScreen.show(false);
     this.renderer.setGarageMode(false);
     this.hud.setMenu(false);
@@ -386,9 +469,9 @@ export class Game {
   }
 
   private cycleVehicle(): void {
-    const unlocked = VEHICLES.filter((v) => this.bank >= VEHICLE_COST[v]);
+    const unlocked = VEHICLES.filter((v) => this.garageStore.isVehicleUnlocked(v));
     if (unlocked.length <= 1) {
-      const next = VEHICLES.find((v) => this.bank < VEHICLE_COST[v]);
+      const next = VEHICLES.find((v) => !this.garageStore.isVehicleUnlocked(v));
       if (next) this.toastNow(`EARN RS ${VEHICLE_COST[next].toLocaleString('en-PK')} TO UNLOCK ${VEHICLE_SPECS[next].label}`, false);
       return;
     }
@@ -536,6 +619,7 @@ export class Game {
     this.hud.restartBtn.addEventListener('click', () => this.input.queueConfirm());
     this.hud.muteBtn.addEventListener('click', () => this.setMuted(!this.audio.isMuted));
     this.hud.radioBtn.addEventListener('click', () => this.toggleRadio());
+    this.hud.hudRadioBtn.addEventListener('click', () => this.toggleRadio());
     this.hud.touchBtn.addEventListener('click', () => this.setTouchVisible(!this.touch.visible));
     this.hud.stickBtn.addEventListener('click', () => void this.cycleSteerMode());
     this.hud.pauseSteerBtn.addEventListener('click', () => void this.cycleSteerMode());
@@ -747,7 +831,7 @@ export class Game {
       this.world.mode === 'route' && 'nextCheckpoint' in this.world.level
         ? Math.max(0, (this.world.level.nextCheckpoint < CHECKPOINTS.length ? CHECKPOINTS[this.world.level.nextCheckpoint].z : FINISH_Z) - p.z)
         : 0;
-    this.hud.update(frameDt, p.speed * 3.6, p.integrity, this.world.level.timeLeft, this.world.level.progress, nextDist);
+    this.hud.update(frameDt, p.speed * 3.6, p.integrity, this.world.level.timeLeft, this.world.level.progress, nextDist, p.maxIntegrity);
 
     const timerSecLeft =
       this.world.phase !== 'running'
@@ -845,6 +929,7 @@ export class Game {
         stop: f.fare.totalStops - f.fare.stopsLeft + 1,
         stops: f.fare.totalStops,
         chain: f.chain,
+        spills: f.fare.spills,
       });
     } else if (running && f.onShift) this.hud.setFare({ hint: 'Find a passenger · stop beside them' });
     else this.hud.setFare(null);

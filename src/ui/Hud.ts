@@ -33,6 +33,8 @@ export class Hud {
   private speed: HTMLSpanElement;
   private clock: HTMLDivElement;
   private clockText: HTMLSpanElement;
+  readonly hudRadioBtn: HTMLButtonElement;
+  private hudRadioLabel: HTMLSpanElement;
   private boost: HTMLDivElement;
   private boostFill: HTMLDivElement;
   private boostLabel: HTMLSpanElement;
@@ -112,7 +114,7 @@ export class Hud {
   private toastTimer = 0;
   private lastClock = '';
   private lastSpeed = -1;
-  private lastIntegrity = -1;
+  private lastIntegrityKey = '';
   private lastFareKey = '';
   private targetMoney = 0;
   private shownMoney = Number.NaN;
@@ -190,8 +192,15 @@ export class Hud {
     this.clockText = span('clock-text');
     this.clock.innerHTML = '<svg viewBox="0 0 16 16" width="1em" height="1em"><circle cx="8" cy="9" r="6" fill="none" stroke="currentColor" stroke-width="2"/><path d="M8 9V5.5M6 1.5h4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
     this.clock.appendChild(this.clockText);
+    this.hudRadioBtn = button('', 'hud-radio-pill', 'Switch Karachi FM radio station (R)');
+    const radioGlyph = span('hud-radio-glyph');
+    radioGlyph.textContent = '📻';
+    radioGlyph.setAttribute('aria-hidden', 'true');
+    this.hudRadioLabel = span('hud-radio-label');
+    this.hudRadioLabel.textContent = RADIO_STATIONS.dhol.hudLabel;
+    this.hudRadioBtn.append(radioGlyph, this.hudRadioLabel);
     const tr = div('hud-tr');
-    tr.append(spd, this.clock);
+    tr.append(spd, this.clock, this.hudRadioBtn);
 
     // ---- Right: combo meter + stunt strips -------------------------------------------------
     this.comboBox = div('combo hidden');
@@ -426,7 +435,8 @@ export class Hud {
       this.statAKey.textContent = 'LEFT';
       this.statBKey.textContent = 'NEXT';
     }
-    this.lastDistLeft = this.lastNextDist = this.lastScore = this.lastIntegrity = -1;
+    this.lastDistLeft = this.lastNextDist = this.lastScore = -1;
+    this.lastIntegrityKey = '';
     this.targetMoney = 0;
     this.shownMoney = this.lastMoneyShown = Number.NaN;
     if (mode !== 'city') {
@@ -478,6 +488,9 @@ export class Hud {
     const label = RADIO_STATIONS[id]?.hudLabel ?? 'OFF';
     setCard(this.radioBtn, label);
     setCard(this.pauseRadioBtn, label);
+    this.hudRadioLabel.textContent = label;
+    this.hudRadioBtn.classList.toggle('off', id === 'off');
+    this.hudRadioBtn.setAttribute('aria-pressed', id === 'off' ? 'false' : 'true');
   }
 
   setMuted(m: boolean): void {
@@ -717,13 +730,23 @@ export class Hud {
   /** Current fare (or a hint when looking for one); null hides the plate. */
   setFare(
     f:
-      | { name: string; distance: number; timeLeft: number; limit: number; kind?: FareKind; stop?: number; stops?: number; chain?: number }
+      | {
+          name: string;
+          distance: number;
+          timeLeft: number;
+          limit: number;
+          kind?: FareKind;
+          stop?: number;
+          stops?: number;
+          chain?: number;
+          spills?: number;
+        }
       | { hint: string }
       | null,
   ): void {
     if (!f) {
       this.farePanel.classList.add('hidden');
-      this.farePanel.classList.remove('vip', 'party');
+      this.farePanel.classList.remove('vip', 'party', 'chai', 'spilled');
       this.fareMeta.classList.add('hidden');
       this.lastFareKey = '';
       return;
@@ -734,22 +757,27 @@ export class Hud {
         this.fareName.textContent = f.hint;
         this.fareInfo.textContent = '';
         this.fareMeta.classList.add('hidden');
-        this.farePanel.classList.remove('vip', 'party');
+        this.farePanel.classList.remove('vip', 'party', 'chai', 'spilled');
         this.farePanel.classList.add('looking');
         this.lastFareKey = f.hint;
       }
       return;
     }
+    const spills = f.spills ?? 0;
     this.farePanel.classList.remove('looking');
     this.farePanel.classList.toggle('vip', f.kind === 'vip');
     this.farePanel.classList.toggle('party', f.kind === 'party');
-    const key = `${f.name}|${Math.round(f.distance / 10)}|${Math.ceil(f.timeLeft)}|${f.kind ?? 'standard'}|${f.stop ?? 1}|${f.chain ?? 0}`;
+    this.farePanel.classList.toggle('chai', f.kind === 'chai');
+    this.farePanel.classList.toggle('spilled', f.kind === 'chai' && spills > 0);
+    const key = `${f.name}|${Math.round(f.distance / 10)}|${Math.ceil(f.timeLeft)}|${f.kind ?? 'standard'}|${f.stop ?? 1}|${f.chain ?? 0}|${spills}`;
     if (key !== this.lastFareKey) {
       this.lastFareKey = key;
       const parts: string[] = [];
       if (f.kind === 'vip') parts.push('VIP · 2× PAY');
       else if (f.kind === 'party') parts.push(`PARTY · STOP ${f.stop ?? 1}/${f.stops ?? 2}`);
-      else if (f.kind === 'chai') parts.push('HOT CHAI · NO SPILLS');
+      else if (f.kind === 'chai') {
+        parts.push(spills > 0 ? `☕ HOT CHAI · ${spills} SPILL${spills > 1 ? 'S' : ''}` : '☕ HOT CHAI · INTACT');
+      }
       if ((f.chain ?? 0) >= 2) {
         const mul = (1 + Math.min(4, (f.chain ?? 0) - 1) * 0.25).toFixed(2).replace(/\.?0+$/, '');
         parts.push(`FEVER ×${mul}`);
@@ -829,7 +857,15 @@ export class Hud {
     window.setTimeout(() => el.remove(), 2000);
   }
 
-  update(dt: number, speedKmh: number, integrity: number, timeLeft: number, progress: number, nextCpDist = 0): void {
+  update(
+    dt: number,
+    speedKmh: number,
+    integrity: number,
+    timeLeft: number,
+    progress: number,
+    nextCpDist = 0,
+    maxIntegrity = 100,
+  ): void {
     if (this.mode === 'city' && this.shownMoney < this.targetMoney) {
       const step = Math.max(dt * 120, (this.targetMoney - this.shownMoney) * Math.min(1, dt * 10));
       this.shownMoney = Math.min(this.targetMoney, this.shownMoney + step);
@@ -841,12 +877,15 @@ export class Hud {
       this.speed.textContent = String(s);
       this.lastSpeed = s;
     }
-    const hp = Math.ceil(integrity);
-    if (hp !== this.lastIntegrity) {
-      this.integrityFill.style.width = `${hp}%`;
-      this.integrityFill.className = `integ-fill ${hp > 60 ? 'ok' : hp > 30 ? 'warn' : 'crit'}`;
-      this.integrityText.textContent = `${hp}%`;
-      this.lastIntegrity = hp;
+    const maxHp = Math.max(100, Math.round(maxIntegrity));
+    const hp = Math.max(0, Math.min(maxHp, Math.ceil(integrity)));
+    const hpKey = `${hp}/${maxHp}`;
+    if (hpKey !== this.lastIntegrityKey) {
+      const pct = Math.max(0, Math.min(100, (hp / maxHp) * 100));
+      this.integrityFill.style.width = `${pct.toFixed(1)}%`;
+      this.integrityFill.className = `integ-fill ${pct > 60 ? 'ok' : pct > 30 ? 'warn' : 'crit'}`;
+      this.integrityText.textContent = maxHp > 100 ? hpKey : `${hp}%`;
+      this.lastIntegrityKey = hpKey;
     }
     const tt = `${String(Math.floor(timeLeft / 60)).padStart(2, '0')}:${String(Math.floor(timeLeft % 60)).padStart(2, '0')}.${Math.floor((timeLeft % 1) * 10)}`;
     if (tt !== this.lastClock) {
@@ -892,6 +931,7 @@ function span(cls: string): HTMLSpanElement {
 
 function button(label: string, cls: string, title: string): HTMLButtonElement {
   const b = document.createElement('button');
+  b.type = 'button';
   b.className = cls;
   b.textContent = label;
   b.title = title;

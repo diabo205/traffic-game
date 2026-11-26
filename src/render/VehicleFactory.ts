@@ -3,7 +3,17 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import type { NpcKind, PlayerVehicle } from '../sim/types';
-import { headlightPoolTexture, routeBoardTexture, truckArtTexture, windscreenArtTexture, contactShadowTexture } from './textures';
+import { PAINT_CATALOG, UNDERGLOW_CATALOG } from '../sim/upgrades';
+import type { VehicleBuild } from '../sim/upgrades';
+import {
+  contactShadowTexture,
+  headlightPoolTexture,
+  routeBoardTexture,
+  truckArtTexture,
+  underglowTexture,
+  vehicleLiveryTexture,
+  windscreenArtTexture,
+} from './textures';
 
 /**
  * Builds low-poly procedural vehicles.
@@ -28,6 +38,8 @@ export interface VehicleVisual {
   setHazard(on: boolean): void;
   /** 0 = off, 1 = normal, 2 = flash (dipper). Pass pool=true at sunset/night. */
   setHeadlights(level: number, pool?: boolean): void;
+  /** Apply paint, livery texture, and ground underglow for an upgraded player build. */
+  applyBuild(build: VehicleBuild, defaultPaintHex?: number): void;
 }
 
 /** glTF UVs expect flipY=false; canvas textures default to true. Cached clone. */
@@ -301,6 +313,74 @@ function mergeMeshesVC(
  *   - 1 vertex-colored mesh inside each wheel pivot (when `keepWheels` is true)
  *   - 1 mesh per light group (`brake`, `hazard`, `head`)
  */
+/**
+ * Project deterministic 2-band box UVs onto a player `'paint'` mesh:
+ *   - Upper UV band (v 0.52..0.98): roof, hood, front, rear
+ *   - Lower UV band (v 0.02..0.48): left & right side panels
+ */
+function applyPaintBoxUvs(mesh: THREE.Mesh): void {
+  if (mesh.geometry.index) {
+    const nonIndexed = mesh.geometry.toNonIndexed();
+    mesh.geometry.dispose();
+    mesh.geometry = nonIndexed;
+  }
+  const geo = mesh.geometry;
+  geo.computeBoundingBox();
+  const bb = geo.boundingBox;
+  const pos = geo.getAttribute('position');
+  if (!bb || !pos || pos.count === 0) return;
+
+  const spanX = Math.max(1e-3, bb.max.x - bb.min.x);
+  const spanY = Math.max(1e-3, bb.max.y - bb.min.y);
+  const spanZ = Math.max(1e-3, bb.max.z - bb.min.z);
+  const uvs = new Float32Array(pos.count * 2);
+
+  const a = new THREE.Vector3();
+  const b = new THREE.Vector3();
+  const c = new THREE.Vector3();
+  const ab = new THREE.Vector3();
+  const ac = new THREE.Vector3();
+  const n = new THREE.Vector3();
+
+  for (let i = 0; i + 2 < pos.count; i += 3) {
+    a.fromBufferAttribute(pos, i);
+    b.fromBufferAttribute(pos, i + 1);
+    c.fromBufferAttribute(pos, i + 2);
+    ab.subVectors(b, a);
+    ac.subVectors(c, a);
+    n.crossVectors(ab, ac).normalize();
+
+    const anx = Math.abs(n.x);
+    const any = Math.abs(n.y);
+    const anz = Math.abs(n.z);
+
+    for (let k = 0; k < 3; k++) {
+      const idx = i + k;
+      const px = pos.getX(idx);
+      const py = pos.getY(idx);
+      const pz = pos.getZ(idx);
+      let u: number;
+      let v: number;
+      if (any > 0.6) {
+        // Roof / hood / horizontal decks -> upper band
+        u = (px - bb.min.x) / spanX;
+        v = 0.52 + 0.46 * ((pz - bb.min.z) / spanZ);
+      } else if (anz > anx) {
+        // Front / rear panels -> upper band
+        u = (px - bb.min.x) / spanX;
+        v = 0.52 + 0.46 * ((py - bb.min.y) / spanY);
+      } else {
+        // Left / right body sides -> lower band
+        u = (pz - bb.min.z) / spanZ;
+        v = 0.02 + 0.46 * ((py - bb.min.y) / spanY);
+      }
+      uvs[idx * 2] = u;
+      uvs[idx * 2 + 1] = v;
+    }
+  }
+  geo.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+}
+
 function finalize(p: Proto, keepWheels: boolean): void {
   const { body, lights } = p;
   body.updateMatrixWorld(true);
@@ -358,7 +438,10 @@ function finalize(p: Proto, keepWheels: boolean): void {
     const list = lights[name];
     if (list.length) mergeMeshes(body, list, list[0].material as THREE.Material, name, false);
   }
-  if (paintMeshes.length) mergeMeshes(body, paintMeshes, paintMeshes[0].material as THREE.Material, 'paint', true);
+  const paintMerged = paintMeshes.length
+    ? mergeMeshes(body, paintMeshes, paintMeshes[0].material as THREE.Material, 'paint', true)
+    : null;
+  if (keepWheels && paintMerged) applyPaintBoxUvs(paintMerged);
   if (vcMeshes.length) mergeMeshesVC(body, vcMeshes, 'part_vc', true);
   for (const [mat, list] of byMat) mergeMeshes(body, list, mat, 'part', true);
 
@@ -380,7 +463,41 @@ function finalize(p: Proto, keepWheels: boolean): void {
   if (lights.beam) lights.beam.name = 'beam';
   if (lights.pool) lights.pool.name = 'pool';
   for (const w of p.wheels) w.name = 'wheel';
-  if (!keepWheels) p.wheels = [];
+
+  if (keepWheels) {
+    body.updateMatrixWorld(true);
+    const ugBox = new THREE.Box3();
+    for (const o of body.children) {
+      if (o instanceof THREE.Mesh && o.name !== 'beam' && o.name !== 'pool') {
+        ugBox.expandByObject(o);
+      }
+    }
+    const spanX = ugBox.isEmpty() ? 1.8 : Math.max(1.2, ugBox.max.x - ugBox.min.x);
+    const spanZ = ugBox.isEmpty() ? 3.8 : Math.max(2.2, ugBox.max.z - ugBox.min.z);
+    const ugMat = new THREE.MeshBasicMaterial({
+      map: underglowTexture(),
+      color: 0x2bd9ec,
+      transparent: true,
+      opacity: 0.92,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      polygonOffset: true,
+      polygonOffsetFactor: -5,
+    });
+    const ug = new THREE.Mesh(new THREE.PlaneGeometry(spanX * 1.95, spanZ * 1.44).rotateX(-Math.PI / 2), ugMat);
+    ug.name = 'underglow';
+    ug.position.set(
+      ugBox.isEmpty() ? 0 : (ugBox.min.x + ugBox.max.x) * 0.5,
+      0.048,
+      ugBox.isEmpty() ? 0 : (ugBox.min.z + ugBox.max.z) * 0.5,
+    );
+    ug.visible = false;
+    ug.castShadow = false;
+    ug.renderOrder = 3;
+    body.add(ug);
+  } else {
+    p.wheels = [];
+  }
 }
 
 function bind(kind: VisualKind, root: THREE.Group, wheelRadius: number): VehicleVisual {
@@ -391,6 +508,14 @@ function bind(kind: VisualKind, root: THREE.Group, wheelRadius: number): Vehicle
   const headMesh = find('head');
   const beam = find('beam');
   const poolMesh = find('pool');
+  const paintMesh = find('paint');
+  const underglowMesh = find('underglow');
+  const initialPaintHex =
+    paintMesh && paintMesh.material instanceof THREE.MeshLambertMaterial
+      ? paintMesh.material.color.getHex()
+      : 0xd6dde2;
+  let paintCloned = false;
+  let underglowCloned = false;
   const wheels = body.children.filter((c) => c.name === 'wheel');
   let brake = false, hazard = false, head = -1, poolOn = false;
   return {
@@ -415,6 +540,39 @@ function bind(kind: VisualKind, root: THREE.Group, wheelRadius: number): Vehicle
         const showPool = level > 0 && (pool || level >= 2);
         poolMesh.visible = showPool;
         if (showPool) poolMesh.material = level >= 2 ? M.poolBright() : M.poolDim();
+      }
+    },
+    applyBuild(build, defaultPaintHex) {
+      if (paintMesh) {
+        if (!paintCloned) {
+          paintMesh.material = (paintMesh.material as THREE.Material).clone();
+          paintCloned = true;
+        }
+        const mat = paintMesh.material as THREE.MeshLambertMaterial;
+        const paintOpt = build.paint !== 'stock' ? PAINT_CATALOG.find((c) => c.id === build.paint) : undefined;
+        const targetHex = paintOpt ? paintOpt.hex : (defaultPaintHex ?? initialPaintHex);
+        if (build.livery === 'none') {
+          mat.map = null;
+          mat.color.setHex(targetHex);
+        } else {
+          mat.map = vehicleLiveryTexture(build.livery, targetHex);
+          mat.color.setHex(0xffffff);
+        }
+        mat.needsUpdate = true;
+      }
+      if (underglowMesh) {
+        if (build.underglow === 'none') {
+          underglowMesh.visible = false;
+        } else {
+          if (!underglowCloned) {
+            underglowMesh.material = (underglowMesh.material as THREE.Material).clone();
+            underglowCloned = true;
+          }
+          const ugOpt = UNDERGLOW_CATALOG.find((c) => c.id === build.underglow);
+          const mat = underglowMesh.material as THREE.MeshBasicMaterial;
+          mat.color.setHex(ugOpt && ugOpt.hex > 0 ? ugOpt.hex : 0x2bd9ec);
+          underglowMesh.visible = true;
+        }
       }
     },
   };

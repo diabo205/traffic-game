@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import type { CityWorld } from '../sim/city/CityWorld';
 import type { PlayerVehicle, SimEvent } from '../sim/types';
+import type { VehicleBuild } from '../sim/upgrades';
 import type { World } from '../sim/World';
 import { Birds } from './Birds';
 import { CameraOcclusion } from './CameraOcclusion';
@@ -339,6 +340,10 @@ export class Renderer {
     this.garage.setVehicle(vehicle, adjacentVehicle);
   }
 
+  setGarageBuild(vehicle: PlayerVehicle, build: VehicleBuild): void {
+    this.garage.setVehicleBuild(vehicle, build);
+  }
+
   getGarageProjection(): GarageProjection {
     return this.garage.getProjection();
   }
@@ -444,7 +449,7 @@ export class Renderer {
       this.playerVehicle = veh;
       this.player = this.factory.create(veh, 0, true);
       this.player.root.traverse((o) => {
-        if (o instanceof THREE.Mesh) {
+        if (o instanceof THREE.Mesh && o.name !== 'underglow') {
           const mat = o.material as THREE.Material;
           o.castShadow = !this.lowSpec && (mat?.name === 'paint' || o.name === 'part_vc');
         }
@@ -454,6 +459,7 @@ export class Renderer {
       this.flame.position.set(...FLAME_POS[veh]);
       this.player.body.add(this.flame);
     }
+    this.player.applyBuild(world.player.build);
     const preset = CAMERA_PRESETS[veh];
     this.chase.distScale = preset.distScale;
     this.chase.heightScale = preset.heightScale;

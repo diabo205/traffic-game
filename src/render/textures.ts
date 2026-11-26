@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { Rng } from '../sim/rng';
+import type { LiveryId } from '../sim/upgrades';
 
 /** Procedural canvas textures (no external image files). */
 
@@ -1955,4 +1956,138 @@ export function contactShadowTexture(): THREE.Texture {
 function smooth(a: number, b: number, x: number): number {
   const t = Math.max(0, Math.min(1, (x - a) / (b - a)));
   return t * t * (3 - 2 * t);
+}
+
+/**
+ * 2-band UV livery texture for player vehicle paint meshes:
+ *   - Upper half (y 0..128, v 0.5..1.0): roof, hood, front, rear
+ *   - Lower half (y 128..256, v 0.0..0.5): left & right side panels
+ */
+export function vehicleLiveryTexture(livery: Exclude<LiveryId, 'none'>, baseHex: number): THREE.Texture {
+  const hexKey = baseHex.toString(16).padStart(6, '0');
+  return cached(`livery:${livery}:${hexKey}`, () => {
+    const [c, ctx] = canvas(256, 256);
+    const baseCol = `#${hexKey}`;
+    const r = (baseHex >> 16) & 255;
+    const g = (baseHex >> 8) & 255;
+    const b = baseHex & 255;
+    const lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+    const ink = lum > 0.55 ? '#0f172a' : '#f8fafc';
+    const pop = lum > 0.55 ? '#ff2d6f' : '#ffc61a';
+
+    ctx.fillStyle = baseCol;
+    ctx.fillRect(0, 0, 256, 256);
+
+    if (livery === 'taxi-check') {
+      // Subtle hood emblem stripe + bold 2-row checkerboard taxi beltline on sides
+      ctx.fillStyle = ink;
+      ctx.fillRect(118, 0, 20, 128);
+      ctx.fillStyle = pop;
+      ctx.fillRect(113, 0, 5, 128);
+      ctx.fillRect(138, 0, 5, 128);
+
+      const cell = 14;
+      const y0 = 172;
+      ctx.fillStyle = '#ffc61a';
+      ctx.fillRect(0, y0 - 4, 256, 4);
+      ctx.fillRect(0, y0 + cell * 2, 256, 4);
+      for (let row = 0; row < 2; row++) {
+        for (let col = 0; col < Math.ceil(256 / cell); col++) {
+          ctx.fillStyle = (row + col) % 2 === 0 ? '#111827' : '#ffffff';
+          ctx.fillRect(col * cell, y0 + row * cell, cell, cell);
+        }
+      }
+    } else if (livery === 'street-stripe') {
+      // Bold twin Over-The-Top racing stripes + crisp rocker panel side stripe
+      ctx.fillStyle = ink;
+      ctx.fillRect(98, 0, 20, 128);
+      ctx.fillRect(138, 0, 20, 128);
+      ctx.fillStyle = pop;
+      ctx.fillRect(90, 0, 5, 128);
+      ctx.fillRect(161, 0, 5, 128);
+
+      ctx.fillStyle = ink;
+      ctx.fillRect(0, 198, 256, 20);
+      ctx.fillStyle = pop;
+      ctx.fillRect(0, 192, 256, 4);
+      ctx.fillRect(0, 220, 256, 4);
+      ctx.fillStyle = ink;
+      for (let x = 24; x < 240; x += 48) {
+        ctx.beginPath();
+        ctx.moveTo(x, 188);
+        ctx.lineTo(x + 14, 188);
+        ctx.lineTo(x + 2, 166);
+        ctx.lineTo(x - 12, 166);
+        ctx.closePath();
+        ctx.fill();
+      }
+    } else if (livery === 'truck-art') {
+      // Karachi Bedford / Chameli truck art: vibrant panels, scalloped arches & diamond rosettes
+      const pal = ['#ff006e', '#ffbe0b', '#06d6a0', '#ffffff', '#1d3557', '#fb5607'];
+      // Upper band: decorative border + diamond medallion
+      ctx.strokeStyle = '#ffbe0b';
+      ctx.lineWidth = 6;
+      ctx.strokeRect(8, 8, 240, 112);
+      ctx.strokeStyle = '#06d6a0';
+      ctx.lineWidth = 3;
+      ctx.strokeRect(16, 16, 224, 96);
+      for (let i = 0; i < 6; i++) {
+        ctx.fillStyle = pal[i % pal.length];
+        ctx.beginPath();
+        ctx.arc(36 + i * 36, 26, 8, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.fillStyle = '#ff006e';
+      ctx.beginPath();
+      ctx.moveTo(128, 30);
+      ctx.lineTo(170, 66);
+      ctx.lineTo(128, 102);
+      ctx.lineTo(86, 66);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = '#ffbe0b';
+      ctx.beginPath();
+      ctx.arc(128, 66, 14, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Lower band: festive scalloped arch trim + rosette gallery along the sides
+      ctx.fillStyle = '#1d3557';
+      ctx.fillRect(0, 164, 256, 66);
+      ctx.fillStyle = '#ffbe0b';
+      ctx.fillRect(0, 160, 256, 5);
+      ctx.fillRect(0, 229, 256, 5);
+      for (let x = 16; x < 256; x += 32) {
+        const idx = Math.floor(x / 32);
+        ctx.fillStyle = pal[idx % pal.length];
+        ctx.beginPath();
+        ctx.arc(x, 197, 13, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath();
+        ctx.arc(x, 197, 6, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#ff006e';
+        ctx.beginPath();
+        ctx.arc(x, 152, 7, 0, Math.PI);
+        ctx.fill();
+      }
+    }
+
+    return finish(c);
+  });
+}
+
+/** Soft white radial gradient texture tinted per underglow color. */
+export function underglowTexture(): THREE.Texture {
+  return cached('underglow_v2', () => {
+    const [c, ctx] = canvas(128, 128);
+    const g = ctx.createRadialGradient(64, 64, 16, 64, 64, 63);
+    g.addColorStop(0, 'rgba(255,255,255,1.0)');
+    g.addColorStop(0.55, 'rgba(255,255,255,0.72)');
+    g.addColorStop(0.82, 'rgba(255,255,255,0.24)');
+    g.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, 128, 128);
+    return finish(c);
+  });
 }
